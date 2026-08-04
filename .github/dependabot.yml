@@ -1,0 +1,46 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    labels: [dependencies, ci]
+
+  - package-ecosystem: npm
+    directory: /packages/protocol
+    schedule: { interval: weekly }
+    labels: [dependencies, protocol]
+
+  - package-ecosystem: npm
+    directory: /packages/call-control
+    schedule: { interval: weekly }
+    labels: [dependencies, calls]
+
+  - package-ecosystem: npm
+    directory: /packages/passkey-domain
+    schedule: { interval: weekly }
+    labels: [dependencies, identity]
+
+  - package-ecosystem: npm
+    directory: /services/api
+    schedule: { interval: weekly }
+    labels: [dependencies, backend]
+
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule: { interval: weekly }
+    labels: [dependencies, web]
+
+  - package-ecosystem: npm
+    directory: /apps/desktop
+    schedule: { interval: weekly }
+    labels: [dependencies, desktop]
+
+  - package-ecosystem: gradle
+    directory: /apps/android
+    schedule: { interval: weekly }
+    labels: [dependencies, android]
+
+  - package-ecosystem: docker
+    directory: /services/api
+    schedule: { interval: weekly }
+    labels: [dependencies, container]

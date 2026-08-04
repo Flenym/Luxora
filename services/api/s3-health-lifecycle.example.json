@@ -1,0 +1,30 @@
+{
+  "Rules": [
+    {
+      "ID": "luxora-health-canary-current-and-noncurrent",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "attachments/.health/"
+      },
+      "Expiration": {
+        "Days": 1
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 1
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+      }
+    },
+    {
+      "ID": "luxora-health-canary-expired-delete-markers",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "attachments/.health/"
+      },
+      "Expiration": {
+        "ExpiredObjectDeleteMarker": true
+      }
+    }
+  ]
+}

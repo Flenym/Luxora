@@ -1,0 +1,21 @@
+{
+  "fixtureVersion": 1,
+  "role": "one_version_back",
+  "endpoint": "/v1/realtime",
+  "protocolVersion": 1,
+  "messages": [
+    {
+      "type": "hello",
+      "protocolVersion": 1,
+      "connectionId": "9ec9347c-9306-4108-aab4-e7762b73b201",
+      "heartbeatIntervalMs": 25000
+    },
+    {
+      "type": "ready",
+      "userId": "a0df9334-2ec0-422d-b5de-11c775a42344",
+      "sessionId": "b650e2ab-4185-493d-81a2-bd4f19b84f0c",
+      "sequence": 41,
+      "resumed": true
+    }
+  ]
+}

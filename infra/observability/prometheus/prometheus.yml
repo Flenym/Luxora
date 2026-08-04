@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+  evaluation_interval: 15s
+  external_labels:
+    product: luxora
+    release: Beta-0.1
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: luxora-api
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ["api:8080"]
+        labels:
+          environment: local-preview

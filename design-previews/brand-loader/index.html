@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Luxora contour loader — design preview</title>
+    <link rel="stylesheet" href="./loader.css" />
+  </head>
+  <body>
+    <main class="preview-shell">
+      <section class="preview-stage" aria-labelledby="preview-title">
+        <div class="luxora-loader" role="status" aria-live="polite" aria-label="Luxora загружается">
+          <canvas class="luxora-loader__canvas" width="720" height="720" aria-hidden="true"></canvas>
+          <span class="sr-only">Luxora загружается</span>
+        </div>
+      </section>
+
+      <aside class="preview-controls">
+        <p class="preview-kicker">Flenym · Luxora · Beta-0.1</p>
+        <h1 id="preview-title">Contour loader</h1>
+        <p>Сам логотип полностью скрыт. Только две точки и короткие лучи проявляют его внешнюю и внутреннюю ленточную петлю, синхронно идут в одном направлении и всегда остаются напротив друг друга. Они не встречаются. Это отдельный design preview, не готовый экран приложения.</p>
+        <div class="preview-actions" aria-label="Настройки предпросмотра">
+          <button type="button" data-theme-button aria-pressed="false">Светлый фон</button>
+          <button type="button" data-motion-button aria-pressed="false">Reduce Motion</button>
+        </div>
+      </aside>
+    </main>
+
+    <script type="module" src="./loader.js"></script>
+  </body>
+</html>

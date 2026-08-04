@@ -1,0 +1,67 @@
+{
+  "name": "@luxora/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Luxora desktop client — Beta-0.1",
+  "author": "Flenym",
+  "license": "UNLICENSED",
+  "main": "dist/main/main.js",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "compile": "tsc",
+    "start": "npm run compile && electron .",
+    "dist": "npm run compile && electron-builder",
+    "dist:linux": "npm run compile && electron-builder --linux",
+    "dist:windows": "npm run compile && electron-builder --win"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "typescript": "7.0.2"
+  },
+  "build": {
+    "appId": "app.luxora.desktop",
+    "productName": "Luxora",
+    "buildVersion": "1",
+    "copyright": "Copyright © 2026 Flenym",
+    "asar": true,
+    "files": [
+      "dist/main/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web",
+        "filter": ["**/*"]
+      }
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "../web/public"
+    },
+    "mac": {
+      "category": "public.app-category.social-networking",
+      "icon": "../web/public/logo.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "icon": "../web/public/logo.png",
+      "target": ["nsis", "portable"]
+    },
+    "linux": {
+      "icon": "../web/public/logo.png",
+      "category": "Network;InstantMessaging",
+      "target": ["AppImage", "deb"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  }
+}

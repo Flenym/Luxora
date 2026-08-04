@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+GRADLE_VERSION="8.13"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CACHE_ROOT="${XDG_CACHE_HOME:-$PROJECT_DIR/.gradle-bootstrap}"
+GRADLE_HOME="$CACHE_ROOT/gradle-$GRADLE_VERSION"
+ARCHIVE="$CACHE_ROOT/gradle-$GRADLE_VERSION-bin.zip"
+
+if [[ -z "${ANDROID_HOME:-}" && -d "$HOME/Library/Android/sdk" ]]; then
+  export ANDROID_HOME="$HOME/Library/Android/sdk"
+fi
+if [[ -n "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
+  export ANDROID_SDK_ROOT="$ANDROID_HOME"
+fi
+
+if [[ ! -x "$GRADLE_HOME/bin/gradle" ]]; then
+  mkdir -p "$CACHE_ROOT"
+  if [[ ! -f "$ARCHIVE" ]]; then
+    curl --fail --location --retry 3 \
+      "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" \
+      --output "$ARCHIVE"
+  fi
+  unzip -q -o "$ARCHIVE" -d "$CACHE_ROOT"
+fi
+
+exec "$GRADLE_HOME/bin/gradle" --project-dir "$PROJECT_DIR" "$@"

@@ -1,0 +1,135 @@
+name: luxora-calls
+
+# Local infrastructure harness only. It proves that the selected SFU/TURN
+# components can be configured together; it is not a working Luxora call API.
+services:
+  sfu:
+    image: livekit/livekit-server:v1.13.5@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1
+    command: ["--node-ip", "${CALLS_NODE_IP:-172.31.80.10}"]
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}"
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          tcp_port: 7881
+          udp_port: 7882
+          use_external_ip: false
+          strict_acks: true
+          data_channel_max_buffered_amount: 16777216
+          turn_servers:
+            - host: "${TURN_PUBLIC_HOST:-127.0.0.1}"
+              port: ${TURN_PORT:-3478}
+              protocol: udp
+              secret: "${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}"
+              ttl: 300
+            - host: "${TURN_PUBLIC_HOST:-127.0.0.1}"
+              port: ${TURN_PORT:-3478}
+              protocol: tcp
+              secret: "${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}"
+              ttl: 300
+        prometheus:
+          port: 6789
+        room:
+          auto_create: false
+          empty_timeout: 60
+          departure_timeout: 20
+          max_participants: 50
+          enabled_codecs:
+            - mime: audio/opus
+            - mime: video/h264
+            - mime: video/vp8
+          enable_remote_unmute: false
+        logging:
+          level: info
+          json: true
+          sample: false
+        limit:
+          max_metadata_size: 16384
+          max_attributes_size: 16384
+          max_room_name_length: 128
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    ports:
+      - "127.0.0.1:7880:7880/tcp"
+      - "127.0.0.1:7881:7881/tcp"
+      - "127.0.0.1:7882:7882/udp"
+      - "127.0.0.1:6789:6789/tcp"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:7880"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      turn:
+        condition: service_healthy
+    networks:
+      calls:
+        ipv4_address: 172.31.80.10
+
+  turn:
+    image: coturn/coturn:4.16.0-alpine3.24@sha256:901954a6b057079e1b12b2e4b4de06e3419e503336ba76c18f62debca3ac4b42
+    command:
+      - --listening-ip=0.0.0.0
+      - --relay-ip=172.31.80.20
+      - --external-ip=${TURN_PUBLIC_IP:-127.0.0.1}/172.31.80.20
+      - --listening-port=${TURN_PORT:-3478}
+      - --min-port=49160
+      - --max-port=49200
+      - --realm=${TURN_REALM:-calls.luxora.local}
+      - --server-name=${TURN_REALM:-calls.luxora.local}
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}
+      - --fingerprint
+      - --no-multicast-peers
+      - --allowed-peer-ip=172.31.80.10
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --no-tls
+      - --no-dtls
+      - --prometheus
+      - --log-file=stdout
+      - --simple-log
+      - --pidfile=/tmp/turnserver.pid
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777,noexec,nosuid,nodev
+    ports:
+      - "127.0.0.1:${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
+      - "127.0.0.1:${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
+      - "127.0.0.1:49160-49200:49160-49200/udp"
+      - "127.0.0.1:9641:9641/tcp"
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/${TURN_PORT:-3478}; exec 3>&-"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # The official binary cannot exec after the capability bounding set is
+      # emptied; retain only this image-declared file-capability dependency.
+      - NET_BIND_SERVICE
+    networks:
+      calls:
+        ipv4_address: 172.31.80.20
+
+networks:
+  calls:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.80.0/24

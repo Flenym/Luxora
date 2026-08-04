@@ -1,0 +1,154 @@
+name: Luxora
+options:
+  bundleIdPrefix: app.luxora
+  developmentLanguage: ru
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+  xcodeVersion: "26.0"
+  generateEmptyDirectories: true
+packages:
+  LuxoraApple:
+    path: .
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Apple requires a numeric bundle version; Beta-0.1 remains the sole
+    # user-facing product release label inside Luxora.
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: 1
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+targets:
+  LuxoraMobile:
+    type: application
+    platform: iOS
+    sources:
+      - Apps/iOS
+      - path: ../../logo.png
+        buildPhase: resources
+    dependencies:
+      - package: LuxoraApple
+        product: LuxoraKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.luxora.mobile
+        DEVELOPMENT_LANGUAGE: ru
+        INFOPLIST_KEY_CFBundleDevelopmentRegion: ru
+        INFOPLIST_KEY_CFBundleDisplayName: Luxora
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Flenym. All rights reserved."
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
+        INFOPLIST_KEY_NSContactsUsageDescription: "Luxora использует контакты только с вашего разрешения, чтобы помочь найти знакомых."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Камера нужна только когда вы снимаете фото, видео или начинаете видеозвонок."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Микрофон нужен только для голосовых сообщений и звонков."
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Доступ к фото нужен только когда вы выбираете изображение или видео для отправки."
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: true
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        # Full iPad remains frozen until the complete iPhone client is stable.
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: true
+  LuxoraDesignLab:
+    type: application
+    platform: iOS
+    sources:
+      - Apps/DesignLab
+      - path: ../../logo.png
+        buildPhase: resources
+    dependencies:
+      - package: LuxoraApple
+        product: LuxoraKit
+      - package: LuxoraApple
+        product: LuxoraDesignFixtures
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.luxora.designlab
+        INFOPLIST_KEY_CFBundleDisplayName: Luxora Design Lab
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Flenym. All rights reserved."
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: true
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: true
+  LuxoraMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - Tests/LuxoraMobileUITests
+    dependencies:
+      - target: LuxoraMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.luxora.mobile.ui-tests
+        GENERATE_INFOPLIST_FILE: true
+  LuxoraDesignLabUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - Tests/LuxoraDesignLabUITests
+    dependencies:
+      - target: LuxoraDesignLab
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.luxora.designlab.ui-tests
+        GENERATE_INFOPLIST_FILE: true
+  LuxoraDesktop:
+    type: application
+    platform: macOS
+    sources:
+      - Apps/macOS
+      - path: ../../logo.png
+        buildPhase: resources
+    dependencies:
+      - package: LuxoraApple
+        product: LuxoraKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.luxora.desktop
+        INFOPLIST_KEY_CFBundleDisplayName: Luxora
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Flenym. All rights reserved."
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
+        GENERATE_INFOPLIST_FILE: true
+schemes:
+  LuxoraMobile:
+    build:
+      targets:
+        LuxoraMobile: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - LuxoraMobileUITests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+  LuxoraDesignLab:
+    build:
+      targets:
+        LuxoraDesignLab: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - LuxoraDesignLabUITests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+  LuxoraDesktop:
+    build:
+      targets:
+        LuxoraDesktop: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

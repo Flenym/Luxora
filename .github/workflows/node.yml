@@ -1,0 +1,86 @@
+name: Node, Web and Desktop
+
+on:
+  pull_request:
+    paths:
+      - "packages/protocol/**"
+      - "packages/passkey-domain/**"
+      - "packages/call-control/**"
+      - "services/api/**"
+      - "apps/web/**"
+      - "apps/desktop/**"
+      - "Makefile"
+      - ".github/workflows/node.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/protocol/**"
+      - "packages/passkey-domain/**"
+      - "packages/call-control/**"
+      - "services/api/**"
+      - "apps/web/**"
+      - "apps/desktop/**"
+      - "Makefile"
+      - ".github/workflows/node.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.2
+          cache: npm
+          cache-dependency-path: |
+            packages/protocol/package-lock.json
+            packages/passkey-domain/package-lock.json
+            packages/call-control/package-lock.json
+            services/api/package-lock.json
+            apps/web/package-lock.json
+            apps/desktop/package-lock.json
+      - name: Install protocol
+        run: npm --prefix packages/protocol ci --no-audit --no-fund
+      - name: Build and test protocol
+        run: |
+          npm --prefix packages/protocol run typecheck
+          npm --prefix packages/protocol test
+          npm --prefix packages/protocol run build
+      - name: Install and verify passkey ceremony domain
+        run: |
+          npm --prefix packages/passkey-domain ci --no-audit --no-fund
+          npm --prefix packages/passkey-domain run typecheck
+          npm --prefix packages/passkey-domain test
+          npm --prefix packages/passkey-domain run build
+      - name: Install and verify call-control domain
+        run: |
+          npm --prefix packages/call-control ci --no-audit --no-fund
+          npm --prefix packages/call-control run typecheck
+          npm --prefix packages/call-control test
+          npm --prefix packages/call-control run build
+      - name: Install and verify API
+        run: |
+          npm --prefix services/api ci --no-audit --no-fund
+          npm --prefix services/api run typecheck
+          npm --prefix services/api test
+          npm --prefix services/api run build
+      - name: Install and build Web
+        run: |
+          npm --prefix apps/web ci --no-audit --no-fund
+          npm --prefix apps/web run build
+      - name: Install and type-check desktop shell
+        run: |
+          npm --prefix apps/desktop ci --no-audit --no-fund
+          npm --prefix apps/desktop run typecheck
+      - name: Guard known release-truth regressions
+        run: make check-truth

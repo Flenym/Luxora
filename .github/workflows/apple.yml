@@ -1,0 +1,78 @@
+name: Apple Swift
+
+on:
+  pull_request:
+    paths:
+      - "apps/apple/**"
+      - "logo.png"
+      - ".github/workflows/apple.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/apple/**"
+      - "logo.png"
+      - ".github/workflows/apple.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  swift-package:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain identity
+        run: |
+          swift --version
+          xcodebuild -version
+      - name: Test shared Apple package
+        run: swift test --package-path apps/apple
+
+  ios-compile:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned XcodeGen
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+          XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          install_dir="$RUNNER_TEMP/xcodegen-${XCODEGEN_VERSION}"
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
+            --output "$archive"
+          printf '%s  %s\n' "$XCODEGEN_SHA256" "$archive" | shasum -a 256 --check
+          ditto -x -k "$archive" "$install_dir"
+          "$install_dir/xcodegen/bin/xcodegen" --version
+          echo "$install_dir/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Generate project reproducibly
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+          cp -R Luxora.xcodeproj "$RUNNER_TEMP/Luxora.first.xcodeproj"
+          xcodegen generate --spec project.yml
+          diff -ru "$RUNNER_TEMP/Luxora.first.xcodeproj" Luxora.xcodeproj
+      - name: Compile iPhone target without signing
+        working-directory: apps/apple
+        run: >-
+          xcodebuild
+          -project Luxora.xcodeproj
+          -scheme LuxoraMobile
+          -configuration Debug
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/LuxoraDerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          build

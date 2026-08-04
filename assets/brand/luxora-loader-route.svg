@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254" role="img" aria-labelledby="title description">
+  <title id="title">Luxora loader motion route</title>
+  <desc id="description">Reviewed closed route following the outer and internal ribbon edges of the canonical Luxora mark.</desc>
+  <path
+    data-luxora-loader-route="true"
+    d="M 584 264
+       C 535 292 420 592 375 775
+       C 350 875 390 932 439 940
+       C 454 890 493 825 537 799
+       C 646 748 866 724 947 768
+       C 970 788 866 858 809 874
+       C 704 892 607 835 537 799
+       C 493 760 514 682 525 611
+       C 539 501 571 327 584 264
+       Z"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

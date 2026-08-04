@@ -1,0 +1,135 @@
+{
+  "product": "Luxora",
+  "release": "Beta-0.1",
+  "owner": "Flenym",
+  "repositoryState": "uncommitted-no-head",
+  "validatedAt": "2026-08-04T08:12:11Z",
+  "capture": {
+    "format": "PNG",
+    "pixelWidth": 1206,
+    "pixelHeight": 2622,
+    "method": "Built from SwiftUI, launched in iOS Simulator, captured with simctl, and visually inspected as a complete frame"
+  },
+  "simulator": {
+    "name": "iPhone 17 Pro",
+    "id": "22D9F7E5-36B4-4A6E-9696-EEC13CF2C2DA",
+    "runtime": "iOS 26.5"
+  },
+  "screens": [
+    {
+      "file": "production/01-real-auth-server-unavailable.png",
+      "sha256": "029b8672b6d538b2b4879bbe45f9d12a9720af5bc2e88f65dd59a3152aa93e79",
+      "screen": "Real authentication with unavailable server capability contract",
+      "scheme": "LuxoraMobile",
+      "scenario": "production-auth-server-unavailable",
+      "implementation": "implemented",
+      "dataSource": "real-client-state-no-fixtures",
+      "validation": "validated",
+      "notes": "Debug Simulator build pointed at an intentionally unavailable API endpoint; no DesignLab dependency, concept banner, or local preview entry is present."
+    },
+    {
+      "file": "concepts/01-auth-sign-in.png",
+      "sha256": "74e77413bd71579a4c1457643000cee612003bbf5551cdd5295344bd115de20a",
+      "screen": "Sign in and passkey gate",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "login-passkey-unavailable",
+      "implementation": "implemented",
+      "dataSource": "deterministic-fixture-no-server",
+      "validation": "validated"
+    },
+    {
+      "file": "concepts/02-auth-registration.png",
+      "sha256": "573dc446cd96939c977a0f384092a3a0e977b8bad005130d0278ebbc6f89d5ca",
+      "screen": "Registration",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "registration",
+      "implementation": "implemented",
+      "dataSource": "deterministic-fixture-no-server",
+      "validation": "validated",
+      "notes": "Full-frame inspection confirms the status bar, fixture banner, brand header, complete form, and build identity are visible."
+    },
+    {
+      "file": "concepts/03-chat-list.png",
+      "sha256": "2e0612aadf2b409357e114d526b02100796a3fb067ee2d79346f368b259b9ced",
+      "screen": "Chat list and primary tab shell",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "chat-list",
+      "implementation": "implemented",
+      "dataSource": "deterministic-fixture-no-server",
+      "validation": "validated"
+    },
+    {
+      "file": "concepts/04-text-conversation.png",
+      "sha256": "9287740670711898db2d554ff70698391a98f08a544ba4ac67ce8158189e2dd7",
+      "screen": "Server-backed text conversation",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "conversation",
+      "implementation": "implemented",
+      "dataSource": "deterministic-fixture-no-server",
+      "validation": "validated"
+    },
+    {
+      "file": "concepts/05-rich-messaging.png",
+      "sha256": "e72cc7867b5b53cd8a11c3ea9ab5aa2e5b8530e121aca8f75c4571305d276a65",
+      "screen": "Attachments, voice message, video message and rich composer",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "concept-conversation-media",
+      "implementation": "concept-not-implemented",
+      "dataSource": "design-only",
+      "validation": "validated"
+    },
+    {
+      "file": "concepts/06-call.png",
+      "sha256": "4957ecc22dd0574413cd9d31b880579b0548a02486cecc5bb1b1f4d3a5f52bac",
+      "screen": "Active call",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "concept-call",
+      "implementation": "concept-not-implemented",
+      "dataSource": "design-only",
+      "validation": "validated",
+      "notes": "The system status bar and the explicit CONCEPT · NOT IMPLEMENTED banner remain visible above the immersive call surface."
+    },
+    {
+      "file": "concepts/07-contacts-search.png",
+      "sha256": "9e9cab2ebcbac0d0e09da5000756aef480b160810d4ed9fc65296b685475b166",
+      "screen": "Contacts and global search direction",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "concept-contacts-search",
+      "implementation": "concept-not-implemented",
+      "dataSource": "design-only",
+      "validation": "validated",
+      "notes": "Recaptured after removing a clipped footer; all four contact rows are fully visible."
+    },
+    {
+      "file": "concepts/08-profile-settings.png",
+      "sha256": "e84d4a8b3bc57ba89ac883c17d2aeb493c65d63c567ee1721753f2f70355d0d7",
+      "screen": "Profile, privacy, devices and settings direction",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "concept-profile-settings",
+      "implementation": "concept-not-implemented",
+      "dataSource": "design-only",
+      "validation": "validated"
+    },
+    {
+      "file": "concepts/09-invisible-logo-loading.png",
+      "sha256": "7b7d492f31dac50bf0f106fd960c2b143f4f0da8e530b6f4100e6115f59eb800",
+      "screen": "Invisible logo contour loading motion",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "concept-loading",
+      "implementation": "concept-not-implemented",
+      "dataSource": "design-only",
+      "validation": "validated",
+      "notes": "Static evidence shows only two moving trace segments and points; the full logo contour is not drawn. Both traces use the same path direction with a half-cycle offset."
+    },
+    {
+      "file": "concepts/10-component-board.png",
+      "sha256": "c92493b1ae0a3942d9a5563d02a343e1fcf5a1f58a2c3673986f4e009f2c4a54",
+      "screen": "Primary component and control states",
+      "scheme": "LuxoraDesignLab",
+      "scenario": "concept-component-board",
+      "implementation": "concept-not-implemented",
+      "dataSource": "design-only",
+      "validation": "validated"
+    }
+  ]
+}

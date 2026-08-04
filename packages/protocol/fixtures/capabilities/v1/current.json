@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "versions": {
+    "http": [1],
+    "reconciliation": [2],
+    "realtime": {
+      "supported": [1, 2],
+      "preferred": 2,
+      "minimum": 1
+    }
+  },
+  "identityContractVersion": 1,
+  "trust": {
+    "profile": "cloud_preview",
+    "contentReadableByServer": true,
+    "endToEndEncryption": false
+  },
+  "features": {
+    "passwordAuthentication": true,
+    "phoneAuthentication": false,
+    "deviceSessions": true,
+    "messaging": true,
+    "identityAccess": true,
+    "safetyReports": true,
+    "realtime": true,
+    "reconciliation": true,
+    "mediaUploads": true,
+    "serverSearchConfigured": false,
+    "calls": false,
+    "passkeys": false,
+    "push": false
+  },
+  "limits": {
+    "maxMessageCodePoints": 10000,
+    "maxMessageRequestCodePoints": 1000,
+    "maxChatTitleLength": 120,
+    "maxAttachmentsPerMessage": 10,
+    "maxDisplayNameLength": 80,
+    "maxSafetyReportCommentCodePoints": 2000,
+    "maxSafetyReportEvidence": 20,
+    "defaultPageItems": 30,
+    "maxPageItems": 100,
+    "realtimeMaxReplayEvents": 500,
+    "realtimeCursorTtlSeconds": 604800,
+    "maxAttachmentBytes": 104857600,
+    "userStorageQuotaBytes": 1073741824,
+    "uploadChunkSizeBytes": 1048576,
+    "uploadSessionTtlSeconds": 3600
+  },
+  "compatibility": {
+    "additiveResponseFields": "ignore",
+    "unknownMutationFields": "reject",
+    "securityCriticalIncompatibility": "required_upgrade",
+    "realtimeBelowMinimum": "no_downgrade"
+  }
+}

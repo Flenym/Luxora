@@ -1,0 +1,31 @@
+# The API image is built from the repository root because it consumes the
+# shared server packages. Keep the BuildKit context intentionally minimal so
+# local credentials, VCS history, client sources, and generated artefacts are
+# never uploaded to the builder.
+**
+
+!services/
+!services/api/
+!services/api/package.json
+!services/api/package-lock.json
+!services/api/tsconfig.json
+!services/api/src/
+!services/api/src/**
+
+!packages/
+!packages/protocol/
+!packages/protocol/package.json
+!packages/protocol/package-lock.json
+!packages/protocol/tsconfig.json
+!packages/protocol/src/
+!packages/protocol/src/**
+
+!packages/passkey-domain/
+!packages/passkey-domain/package.json
+!packages/passkey-domain/package-lock.json
+!packages/passkey-domain/tsconfig.json
+!packages/passkey-domain/src/
+!packages/passkey-domain/src/**
+
+!services/api/Dockerfile
+!.dockerignore

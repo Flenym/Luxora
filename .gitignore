@@ -1,0 +1,78 @@
+# Operating-system and editor state
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Codex-local state
+.codex/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+.envrc
+.secrets/
+*.secret
+*.pem
+*.key
+*.cer
+*.p12
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
+
+# Node / web / Electron
+**/node_modules/
+**/dist/
+**/.vite/
+**/*.tsbuildinfo
+**/release/
+*.log
+npm-debug.log*
+
+# Swift / Xcode
+**/.build/
+**/DerivedData/
+**/*.xcodeproj/
+**/*.xcworkspace/
+*.xcuserstate
+xcuserdata/
+
+# The checked-in Luxora iOS project is source, not DerivedData. Keep only its
+# shared project/workspace metadata; per-user Xcode state remains ignored.
+!apps/apple/Luxora.xcodeproj/
+!apps/apple/Luxora.xcodeproj/project.pbxproj
+!apps/apple/Luxora.xcodeproj/project.xcworkspace/
+!apps/apple/Luxora.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+
+# Android / Gradle
+**/.gradle/
+**/.gradle-bootstrap/
+**/build/
+local.properties
+*.apk
+*.aab
+
+# Runtime data, coverage, and reports
+/data/
+/services/api/data/
+coverage/
+**/coverage/
+reports/
+**/reports/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Container-local volumes and backups
+.docker-data/
+backups/
+*.tfstate
+*.tfstate.*
+.terraform/

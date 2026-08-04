@@ -1,0 +1,33 @@
+groups:
+  - name: luxora-preview
+    rules:
+      - alert: LuxoraApiUnavailable
+        expr: up{job="luxora-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Luxora API is unavailable
+          runbook: DEPLOY.md#11-incident-and-rollback-baseline
+
+      - alert: LuxoraApiHighServerErrorRatio
+        expr: |
+          sum(rate(luxora_http_requests_total{job="luxora-api",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(luxora_http_requests_total{job="luxora-api"}[5m])), 0.001)
+          > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 5% of Luxora API requests return 5xx
+          runbook: DEPLOY.md#11-incident-and-rollback-baseline
+
+      - alert: LuxoraApiApplicationErrors
+        expr: sum(rate(luxora_errors_total{job="luxora-api",code="INTERNAL_ERROR"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Luxora API reports internal application errors
+          runbook: DEPLOY.md#11-incident-and-rollback-baseline

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "toolchain": {
+    "python": "3.9.6",
+    "pillow": "11.3.0"
+  },
+  "reference": {
+    "path": "screens_app_iphone/telegram_reference_concepts/04_Глобальный_поиск.png",
+    "sha256": "1efb6068a2c3f8605ef58bb03ee3d159dc8fc1351ded346507f47bf56c0d3681"
+  },
+  "candidate": {
+    "path": "screens_app_iphone/production/v4-telegram-reference-ru/07-global-search.png",
+    "sha256": "6666a3756545981543bc2bd96884cedc458ccb6c8c4146095893de8d10312a20"
+  },
+  "mask": null,
+  "viewport": {
+    "widthPx": 1179,
+    "heightPx": 2556,
+    "scale": 3,
+    "widthPt": 393,
+    "heightPt": 852
+  },
+  "parameters": {
+    "edgeThreshold": 28,
+    "tolerancePx": 3
+  },
+  "rawPixelDifference": {
+    "meanAbsoluteChannelValues": [
+      25.08287971159347,
+      23.683191506024176,
+      27.114077405721673
+    ],
+    "normalizedMeanAbsoluteError": 0.09918973676253506,
+    "note": "Brand and dynamic copy differences make this diagnostic, not an acceptance score."
+  },
+  "geometryEdges": {
+    "referenceEdgePixels": 131404,
+    "candidateEdgePixels": 109422,
+    "matchedReferenceEdgePixels": 43677,
+    "matchedCandidateEdgePixels": 41294,
+    "precision": 0.37738297600116977,
+    "recall": 0.33238714194392865,
+    "f1": 0.3534588048718776
+  },
+  "artifacts": {
+    "overlay50": "overlay-50.png",
+    "differenceHeatmap": "difference-heatmap.png",
+    "referenceEdges": "reference-edges.png",
+    "candidateEdges": "candidate-edges.png"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "fixtureVersion": 1,
+  "scenario": "security_minimum_exceeds_one_version_back_client",
+  "serverPolicy": {
+    "supported": [2],
+    "preferred": 2,
+    "minimum": 2
+  },
+  "clientSupported": [1],
+  "expected": {
+    "status": "required_upgrade",
+    "reason": "security_minimum_not_supported",
+    "minimumRealtimeVersion": 2,
+    "downgradeAllowed": false
+  }
+}
