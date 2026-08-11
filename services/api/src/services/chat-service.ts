@@ -6,6 +6,7 @@ import type {
   ChatMember,
   ChatMembership,
   ChatMembershipMutationResponse,
+  ChatPreferences,
   CreateChatRequest,
   CreateTopicRequest,
   EditMessageRequest,
@@ -14,6 +15,7 @@ import type {
   MessagePin,
   MessageReceipt,
   MessageVersion,
+  PatchChatPreferences,
   RealtimeEvent,
   RemoveChatMemberRequest,
   SendMessageRequest,
@@ -224,6 +226,47 @@ export class ChatService {
     return chat;
   }
 
+  getPreferences(userId: string, chatId: string): ChatPreferences {
+    this.#requireMember(chatId, userId);
+    const preferences = this.store.getChatPreferences(chatId, userId);
+    if (preferences === null) throw forbidden("You are not a member of this chat");
+    return preferences;
+  }
+
+  updatePreferences(
+    userId: string,
+    chatId: string,
+    input: PatchChatPreferences
+  ): ChatPreferences {
+    const changedAt = new Date().toISOString();
+    const result = this.store.immediateTransaction(() => {
+      this.#requireMember(chatId, userId);
+      const previous = this.store.getChatPreferences(chatId, userId);
+      if (previous === null) throw forbidden("You are not a member of this chat");
+      const preferences = this.store.updateChatPreferences(chatId, userId, {
+        changedAt,
+        ...(input.archived === undefined ? {} : { archived: input.archived }),
+        ...(input.mutedUntil === undefined ? {} : { mutedUntil: input.mutedUntil })
+      });
+      if (preferences === null) throw forbidden("You are not a member of this chat");
+      const changed = previous.archivedAt !== preferences.archivedAt ||
+        previous.mutedUntil !== preferences.mutedUntil;
+      const events = changed
+        ? [this.store.appendEvent(userId, {
+            type: "chat.preferences.updated",
+            audience: "member_account",
+            accountId: userId,
+            chatId,
+            preferences,
+            changedAt
+          }, changedAt)]
+        : [];
+      return { preferences, events };
+    });
+    this.publisher.publish(result.events);
+    return result.preferences;
+  }
+
   listMembers(userId: string, chatId: string): { items: ChatMember[] } {
     this.#requireMember(chatId, userId);
     return { items: this.store.listChatMembers(chatId).map((member) => this.#memberView(member)) };
@@ -269,6 +312,7 @@ export class ChatService {
       const now = new Date().toISOString();
       const membership = this.store.createChatMember(chatId, input.userId, input.role, now);
       if (membership === null) throw conflict("User is already a member of this chat");
+      const effectiveAt = membership.updatedAt;
       this.#storeMembershipReceipt({
         actorUserId,
         clientNonce: input.clientNonce,
@@ -277,19 +321,23 @@ export class ChatService {
         targetUserId: input.userId,
         fingerprint,
         membership,
-        createdAt: now
+        createdAt: effectiveAt
       });
 
       const events: StoredEvent[] = [];
       const addedChat = this.store.getChatForUser(chatId, input.userId);
       if (addedChat === null) throw new Error("Created membership is not visible to its account");
-      events.push(this.store.appendEvent(input.userId, { type: "chat.created", chat: addedChat }, now));
+      events.push(this.store.appendEvent(
+        input.userId,
+        { type: "chat.created", chat: addedChat },
+        effectiveAt
+      ));
       events.push(...this.#appendMembershipChanged(
         chatId,
         "added",
         membership,
         actorUserId,
-        now
+        effectiveAt
       ));
       return { response: { membership: this.#membershipView(membership), replayed: false }, events };
     });
@@ -385,6 +433,12 @@ export class ChatService {
       }
 
       const now = timestampAfter(new Date().toISOString(), target.updatedAt);
+      const affectedFolders = this.store.listChatFolders(targetUserId)
+        .filter((folder) => folder.overrides.some((override) => override.chatId === chatId));
+      const folderChangedAt = affectedFolders.reduce(
+        (candidate, folder) => timestampAfter(candidate, folder.updatedAt),
+        now
+      );
       const membership = this.store.removeChatMember(
         chatId,
         targetUserId,
@@ -410,6 +464,28 @@ export class ChatService {
         now,
         targetUserId
       );
+      if (affectedFolders.length > 0) {
+        for (const folder of affectedFolders) {
+          const updated = this.store.updateChatFolder(targetUserId, folder.id, {
+            title: folder.title,
+            rules: folder.rules,
+            overrides: folder.overrides.filter((override) => override.chatId !== chatId),
+            expectedRevision: folder.revision,
+            updatedAt: folderChangedAt
+          });
+          if (updated === null) {
+            throw new Error("Could not reconcile chat folder after membership removal");
+          }
+        }
+        const stateRevision = this.store.advanceChatFolderStateRevision(targetUserId, folderChangedAt);
+        events.push(this.store.appendEvent(targetUserId, {
+          type: "chat.folders.updated",
+          audience: "actor_account",
+          accountId: targetUserId,
+          stateRevision,
+          changedAt: folderChangedAt
+        }, folderChangedAt));
+      }
       return { response: { membership: this.#membershipView(membership), replayed: false }, events };
     });
     this.publisher.publish(result.events);
@@ -885,6 +961,7 @@ export class ChatService {
       displayName: user.displayName,
       bio: user.bio,
       avatarUrl: user.avatarUrl,
+      avatarPath: user.avatarPath ?? null,
       createdAt: user.createdAt
     };
   }

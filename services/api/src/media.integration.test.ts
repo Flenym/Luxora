@@ -410,15 +410,16 @@ describe("resumable media uploads", () => {
     temporaryRoots.push(root);
     const databasePath = join(root, "luxora.db");
     const key = Buffer.alloc(32, 83).toString("base64url");
+    const config = testConfig({
+      databasePath,
+      storageLocalPath: join(root, "blobs"),
+      uploadStagingPath: join(root, "uploads"),
+      dataEncryptionKeys: { active: key },
+      activeDataEncryptionKeyId: "active",
+      orphanAttachmentTtlHours: 1
+    });
     app = await buildApp({
-      config: testConfig({
-        databasePath,
-        storageLocalPath: join(root, "blobs"),
-        uploadStagingPath: join(root, "uploads"),
-        dataEncryptionKeys: { active: key },
-        activeDataEncryptionKeyId: "active",
-        orphanAttachmentTtlHours: 1
-      }),
+      config,
       logger: false
     });
     const alice = await register("cleanup_alice");
@@ -427,6 +428,7 @@ describe("resumable media uploads", () => {
     const uploadId = created.response.json().upload.id as string;
     expect((await putChunk(alice, uploadId, PNG)).statusCode).toBe(200);
     const completed = await app.inject({ method: "POST", url: `/v1/uploads/${uploadId}/complete`, headers });
+    expect(completed.statusCode, completed.body).toBe(200);
     const attachmentId = completed.json().upload.attachment.id as string;
 
     const lateDirectory = join(root, "uploads", uploadId);
@@ -437,13 +439,44 @@ describe("resumable media uploads", () => {
     await expect(readFile(lateFile)).rejects.toThrow();
 
     const database = new Database(databasePath);
-    database.prepare("UPDATE attachments SET created_at = ? WHERE id = ?")
-      .run("2000-01-01T00:00:00.000Z", attachmentId);
+    expect(database.prepare("UPDATE attachments SET created_at = ? WHERE id = ?")
+      .run("2000-01-01T00:00:00.000Z", attachmentId).changes).toBe(1);
+    expect(database.prepare(`
+      SELECT storage_provider, linked_at, deleting_at, deleted_at, created_at
+      FROM attachments WHERE id = ?
+    `).get(attachmentId)).toEqual({
+      storage_provider: "local",
+      linked_at: null,
+      deleting_at: null,
+      deleted_at: null,
+      created_at: "2000-01-01T00:00:00.000Z"
+    });
     database.close();
     const storage = app.luxora.storage;
     const originalDelete = storage.delete.bind(storage);
     storage.delete = vi.fn().mockRejectedValue(new Error("ambiguous network failure"));
-    await app.luxora.uploads.cleanup();
+    const beforeFirstClaim = app.luxora.store.getLatestSequence();
+    expect(await app.luxora.uploads.cleanup()).toMatchObject({
+      orphanAttachments: 0,
+      cleanupFailures: 1
+    });
+    const afterFirstClaim = app.luxora.store.getLatestSequence();
+    expect(afterFirstClaim).toBeGreaterThan(beforeFirstClaim);
+    expect(app.luxora.store.replayEvents(
+      alice.id,
+      beforeFirstClaim,
+      afterFirstClaim,
+      100
+    ).map(({ event }) => event)).toEqual([
+      expect.objectContaining({
+        type: "sync.invalidated",
+        audience: "account_projection",
+        accountId: alice.id,
+        reason: "attachment_removed"
+      })
+    ]);
+    expect(app.luxora.store.listOwnedAttachments(alice.id, 100).items
+      .some(({ id }) => id === attachmentId)).toBe(false);
     const hidden = await app.inject({
       method: "GET",
       url: `/v1/attachments/${attachmentId}/content`,
@@ -452,15 +485,46 @@ describe("resumable media uploads", () => {
     expect(hidden.statusCode).toBe(404);
 
     storage.delete = originalDelete;
+    const beforeStaleRetry = app.luxora.store.getLatestSequence();
+    await app.close();
+    app = undefined;
     const retryDatabase = new Database(databasePath);
-    retryDatabase.prepare("UPDATE attachments SET deleting_at = ? WHERE id = ?")
-      .run("2000-01-01T00:00:00.000Z", attachmentId);
+    expect(retryDatabase.prepare(`
+      SELECT deleted_at, deleting_at FROM attachments WHERE id = ?
+    `).get(attachmentId)).toMatchObject({ deleted_at: null });
+    expect(retryDatabase.prepare("UPDATE attachments SET deleting_at = ? WHERE id = ?")
+      .run("2000-01-01T00:00:00.000Z", attachmentId).changes).toBe(1);
+    expect(retryDatabase.prepare(`
+      SELECT storage_provider, linked_at, deleting_at, deleted_at, created_at
+      FROM attachments WHERE id = ?
+    `).get(attachmentId)).toEqual({
+      storage_provider: "local",
+      linked_at: null,
+      deleting_at: "2000-01-01T00:00:00.000Z",
+      deleted_at: null,
+      created_at: "2000-01-01T00:00:00.000Z"
+    });
     retryDatabase.close();
-    await app.luxora.uploads.cleanup();
+    app = await buildApp({ config, logger: false });
+    const afterStaleRetry = app.luxora.store.getLatestSequence();
+    expect(afterStaleRetry).toBeGreaterThan(beforeStaleRetry);
+    expect(app.luxora.store.replayEvents(
+      alice.id,
+      beforeStaleRetry,
+      afterStaleRetry,
+      100
+    ).map(({ event }) => event)).toEqual([
+      expect.objectContaining({
+        type: "sync.invalidated",
+        accountId: alice.id,
+        reason: "attachment_removed"
+      })
+    ]);
     expect((await app.inject({
       method: "GET",
       url: `/v1/attachments/${attachmentId}/content`,
       headers
     })).statusCode).toBe(404);
+    expect(app.luxora.store.findAttachmentRecord(attachmentId)).toBeNull();
   });
 });

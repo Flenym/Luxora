@@ -35,6 +35,11 @@ Validated deterministic production-UI sets:
 - [`v7-telegram-navigation-settings-ru`](v7-telegram-navigation-settings-ru/README.md)
   — Russian Settings, own profile, chat folders, safe profile QR and Privacy
   visual/interaction evidence from the deterministic Debug messenger fixture.
+- [`v13-chat-folders-ru`](v13-chat-folders-ru/README.md) — synchronized All,
+  Archive and custom-folder states, folder settings/editor, and Spaces/create
+  surfaces. Archive evidence uses a real swipe through the production
+  confirmation path; the retained screenshots remain deterministic Debug
+  fixture evidence, not live-backend proof.
 
 Validated live-backend set:
 

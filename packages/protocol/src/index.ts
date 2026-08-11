@@ -7,6 +7,11 @@ export const RELEASE_LABEL = "Beta-0.1" as const;
 export const MAX_MESSAGE_LENGTH = 10_000;
 export const MAX_MESSAGE_REQUEST_LENGTH = 1_000;
 export const MAX_CHAT_TITLE_LENGTH = 120;
+export const MAX_CHAT_FOLDERS = 10;
+export const MAX_CHAT_FOLDER_TITLE_LENGTH = 48;
+export const MAX_CHAT_FOLDER_OVERRIDES = 100;
+export const CHAT_FOLDER_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
+export const MAX_CHAT_FOLDER_ACTIVE_COMMAND_RECEIPTS = 64;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 export const MAX_DISPLAY_NAME_LENGTH = 80;
 export const MAX_SAFETY_REPORT_COMMENT_LENGTH = 2_000;
@@ -47,7 +52,18 @@ export const ApiErrorCodeSchema = z.enum([
   "RATE_LIMITED",
   "VALIDATION_FAILED",
   "INTERNAL_ERROR",
-  "SERVICE_UNAVAILABLE"
+  "SERVICE_UNAVAILABLE",
+  "PHONE_AUTH_CODE_INVALID",
+  "PHONE_AUTH_ATTEMPTS_EXHAUSTED",
+  "PHONE_AUTH_CHALLENGE_EXPIRED",
+  "PHONE_AUTH_CHALLENGE_INVALID",
+  "PHONE_AUTH_RESEND_COOLDOWN",
+  "PHONE_AUTH_DELIVERY_UNAVAILABLE",
+  "PHONE_AUTH_TEMPORARILY_UNAVAILABLE",
+  "PHONE_AUTH_REGISTRATION_EXPIRED",
+  "PHONE_AUTH_PASSWORD_INVALID",
+  "PHONE_AUTH_PASSWORD_ATTEMPTS_EXHAUSTED",
+  "PHONE_AUTH_PASSWORD_TOKEN_INVALID"
 ]);
 
 export const ApiErrorSchema = z.object({
@@ -65,10 +81,23 @@ export const UserSchema = z.object({
   displayName: z.string(),
   bio: z.string(),
   avatarUrl: z.string().url().nullable(),
+  avatarPath: z.string().startsWith("/v1/attachments/").nullable().optional(),
   createdAt: TimestampSchema,
   presence: z.enum(["online", "offline"]).optional(),
   lastSeenAt: TimestampSchema.nullable().optional()
 });
+
+export const PatchCurrentUserSchema = z.object({
+  displayName: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH).optional(),
+  bio: z.string().trim().max(500).optional()
+}).strict().refine(
+  (value) => value.displayName !== undefined || value.bio !== undefined,
+  { message: "At least one profile field must be changed" }
+);
+
+export const SetProfileAvatarSchema = z.object({
+  attachmentId: IdSchema
+}).strict();
 
 // Stranger-facing identity is deliberately narrower than UserSchema. In
 // particular, it has no presence, last-seen, identifier, session, or graph
@@ -79,7 +108,8 @@ export const PublicProfileSchema = z.object({
   username: UsernameSchema,
   displayName: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
   bio: z.string().max(500),
-  avatarUrl: z.string().url().nullable()
+  avatarUrl: z.string().url().nullable(),
+  avatarPath: z.string().startsWith("/v1/attachments/").nullable().optional()
 }).strict();
 
 export const UserLookupResponseSchema = z.object({
@@ -99,6 +129,56 @@ export const PatchPrivacySettingsSchema = z.object({
 }).strict().refine(
   (value) => value.usernameDiscoverable !== undefined || value.messageRequests !== undefined,
   { message: "At least one privacy setting must be changed" }
+);
+
+export const PushPlatformSchema = z.literal("apns");
+export const PushEnvironmentSchema = z.enum(["development", "production"]);
+export const PushTopicSchema = z.literal("app.luxora.mobile");
+export const APNSDeviceTokenSchema = z.string()
+  .trim()
+  // APNs tokens are opaque and their byte length must not be hard-coded. The
+  // client transports Apple's bytes as bounded hexadecimal text; even length
+  // preserves whole bytes while the generous upper bound limits abuse.
+  .regex(/^[0-9a-fA-F]{32,1024}$/u, "APNs token must be bounded hexadecimal bytes")
+  .refine((value) => value.length % 2 === 0, "APNs token must contain complete bytes")
+  .transform((value) => value.toLowerCase());
+
+export const UpsertPushRegistrationSchema = z.object({
+  platform: PushPlatformSchema,
+  environment: PushEnvironmentSchema,
+  token: APNSDeviceTokenSchema
+}).strict();
+
+export const PushRegistrationSchema = z.object({
+  id: IdSchema,
+  platform: PushPlatformSchema,
+  environment: PushEnvironmentSchema,
+  topic: PushTopicSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema
+}).strict();
+
+export const NotificationPreviewModeSchema = z.enum(["hidden", "sender", "full"]);
+export const NotificationSettingsSchema = z.object({
+  messageAlerts: z.boolean(),
+  messageRequestAlerts: z.boolean(),
+  mentionAlerts: z.boolean(),
+  sound: z.boolean(),
+  badge: z.boolean(),
+  previewMode: NotificationPreviewModeSchema,
+  updatedAt: TimestampSchema
+}).strict();
+
+export const PatchNotificationSettingsSchema = z.object({
+  messageAlerts: z.boolean().optional(),
+  messageRequestAlerts: z.boolean().optional(),
+  mentionAlerts: z.boolean().optional(),
+  sound: z.boolean().optional(),
+  badge: z.boolean().optional(),
+  previewMode: NotificationPreviewModeSchema.optional()
+}).strict().refine(
+  (value) => Object.values(value).some((item) => item !== undefined),
+  { message: "At least one notification setting must be changed" }
 );
 
 export const SessionSchema = z.object({
@@ -149,6 +229,8 @@ export const PhoneVerificationCodeSchema = z.string()
   .regex(/^[0-9]{6}$/u, "Verification code must contain exactly 6 digits");
 export const PhoneRegistrationTokenSchema = z.string()
   .regex(/^luxpr_[A-Za-z0-9_-]{43}$/u, "Invalid phone registration token");
+export const PhonePasswordTokenSchema = z.string()
+  .regex(/^luxpw_[A-Za-z0-9_-]{43}$/u, "Invalid phone password token");
 
 export const RequestPhoneChallengeSchema = z.object({
   countryCode: PhoneCountryCallingCodeSchema,
@@ -192,10 +274,41 @@ export const PhoneProfileRequiredResponseSchema = z.object({
   expiresAt: TimestampSchema
 }).strict();
 
+export const PhonePasswordRequiredResponseSchema = z.object({
+  status: z.literal("password_required"),
+  passwordToken: PhonePasswordTokenSchema,
+  maskedPhone: z.string().min(4).max(40),
+  expiresAt: TimestampSchema
+}).strict();
+
 export const VerifyPhoneChallengeResponseSchema = z.discriminatedUnion("status", [
   PhoneAuthenticatedResponseSchema,
-  PhoneProfileRequiredResponseSchema
+  PhoneProfileRequiredResponseSchema,
+  PhonePasswordRequiredResponseSchema
 ]);
+
+export const CompletePhonePasswordChallengeSchema = z.object({
+  passwordToken: PhonePasswordTokenSchema,
+  password: z.string().min(1).max(128),
+  deviceName: z.string().trim().min(1).max(120).default("Unknown device"),
+  clientNonce: IdSchema
+}).strict();
+
+export const ConfigurePhonePasswordSchema = z.object({
+  password: PasswordSchema,
+  currentPassword: z.string().min(1).max(128).optional()
+}).strict();
+
+export const DisablePhonePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128)
+}).strict();
+
+export const PhonePasswordStatusSchema = z.object({
+  eligible: z.boolean(),
+  enabled: z.boolean()
+}).strict().refine((value) => !value.enabled || value.eligible, {
+  message: "Phone password cannot be enabled without a verified phone identity"
+});
 
 export const CompletePhoneRegistrationSchema = z.object({
   registrationToken: PhoneRegistrationTokenSchema,
@@ -990,7 +1103,8 @@ export const ChatRoleSchema = z.enum(["owner", "admin", "member"]);
 
 const ImageMetadataSchema = z.object({
   width: z.number().int().positive().max(32_768).optional(),
-  height: z.number().int().positive().max(32_768).optional()
+  height: z.number().int().positive().max(32_768).optional(),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/).optional()
 }).strict();
 
 const TimedMediaMetadataSchema = z.object({
@@ -1011,8 +1125,8 @@ const AttachmentBaseSchema = z.object({
   sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   downloadPath: z.string().startsWith("/v1/attachments/"),
-  safetyStatus: z.literal("unscanned"),
-  metadataTrust: z.literal("client_declared"),
+  safetyStatus: z.enum(["unscanned", "reencoded"]),
+  metadataTrust: z.enum(["client_declared", "server_verified"]),
   createdAt: TimestampSchema
 });
 
@@ -1085,8 +1199,191 @@ export const ChatSchema = z.object({
   lastMessage: MessageSchema.nullable(),
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,
-  unreadCount: z.number().int().nonnegative()
+  unreadCount: z.number().int().nonnegative(),
+  archivedAt: TimestampSchema.nullable(),
+  mutedUntil: TimestampSchema.nullable()
 });
+
+export const ChatPreferencesSchema = z.object({
+  archivedAt: TimestampSchema.nullable(),
+  mutedUntil: TimestampSchema.nullable()
+}).strict();
+
+export const PatchChatPreferencesSchema = z.object({
+  archived: z.boolean().optional(),
+  mutedUntil: TimestampSchema.nullable().optional()
+}).strict().refine(
+  (value) => value.archived !== undefined || value.mutedUntil !== undefined,
+  { message: "At least one chat preference must be changed" }
+);
+
+const ChatFolderRevisionSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const ChatFolderStateRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const ChatFolderPositionSchema = z.number().int().nonnegative().max(9_999);
+
+export const ChatFolderTitleSchema = z.string().trim().min(1).refine(
+  (title) => [...title].length <= MAX_CHAT_FOLDER_TITLE_LENGTH,
+  `Chat folder title must contain at most ${MAX_CHAT_FOLDER_TITLE_LENGTH} Unicode code points`
+);
+
+export const ChatFolderRulesSchema = z.object({
+  includeKinds: z.array(ChatKindSchema).max(3).refine(
+    (kinds) => new Set(kinds).size === kinds.length,
+    "Chat folder kinds must be unique"
+  ),
+  unreadOnly: z.boolean(),
+  excludeMuted: z.boolean(),
+  includeArchived: z.boolean()
+}).strict();
+
+export const ChatFolderOverrideModeSchema = z.enum(["include", "exclude"]);
+
+export const ChatFolderOverrideSchema = z.object({
+  chatId: IdSchema,
+  mode: ChatFolderOverrideModeSchema,
+  pinnedPosition: z.number().int().min(0).max(99).nullable()
+}).strict().superRefine((override, context) => {
+  if (override.mode !== "include" && override.pinnedPosition !== null) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Only included chats can have a pinned position",
+      path: ["pinnedPosition"]
+    });
+  }
+});
+
+export const ChatFolderOverridesSchema = z.array(ChatFolderOverrideSchema)
+  .max(MAX_CHAT_FOLDER_OVERRIDES)
+  .superRefine((overrides, context) => {
+    const chatIds = new Set<string>();
+    const pinnedPositions = new Set<number>();
+
+    overrides.forEach((override, index) => {
+      if (chatIds.has(override.chatId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "A chat can appear only once in a folder override list",
+          path: [index, "chatId"]
+        });
+      }
+      chatIds.add(override.chatId);
+
+      if (override.pinnedPosition === null) {
+        return;
+      }
+      if (pinnedPositions.has(override.pinnedPosition)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Pinned positions must be unique within a folder",
+          path: [index, "pinnedPosition"]
+        });
+      }
+      pinnedPositions.add(override.pinnedPosition);
+    });
+  });
+
+export const ChatFolderSchema = z.object({
+  id: IdSchema,
+  title: ChatFolderTitleSchema,
+  position: ChatFolderPositionSchema,
+  revision: ChatFolderRevisionSchema,
+  rules: ChatFolderRulesSchema,
+  overrides: ChatFolderOverridesSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema
+}).strict().superRefine((folder, context) => {
+  if (Date.parse(folder.updatedAt) < Date.parse(folder.createdAt)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Chat folder update cannot precede creation time",
+      path: ["updatedAt"]
+    });
+  }
+});
+
+export const CreateChatFolderRequestSchema = z.object({
+  title: ChatFolderTitleSchema,
+  rules: ChatFolderRulesSchema,
+  overrides: ChatFolderOverridesSchema,
+  clientNonce: IdSchema
+}).strict();
+
+export const PatchChatFolderRequestSchema = z.object({
+  title: ChatFolderTitleSchema.optional(),
+  rules: ChatFolderRulesSchema.optional(),
+  overrides: ChatFolderOverridesSchema.optional(),
+  expectedRevision: ChatFolderRevisionSchema,
+  clientNonce: IdSchema
+}).strict().refine(
+  (request) => request.title !== undefined
+    || request.rules !== undefined
+    || request.overrides !== undefined,
+  { message: "At least one chat folder field must be changed" }
+);
+
+export const DeleteChatFolderRequestSchema = z.object({
+  expectedRevision: ChatFolderRevisionSchema,
+  clientNonce: IdSchema
+}).strict();
+
+export const ReorderChatFoldersRequestSchema = z.object({
+  folderIds: z.array(IdSchema).min(1).max(MAX_CHAT_FOLDERS).refine(
+    (folderIds) => new Set(folderIds).size === folderIds.length,
+    "Chat folder ids must be unique"
+  ),
+  expectedStateRevision: ChatFolderStateRevisionSchema,
+  clientNonce: IdSchema
+}).strict();
+
+const ChatFolderCollectionSchema = z.array(ChatFolderSchema)
+  .max(MAX_CHAT_FOLDERS)
+  .superRefine((folders, context) => {
+    const folderIds = new Set<string>();
+    const positions = new Set<number>();
+
+    folders.forEach((folder, index) => {
+      if (folderIds.has(folder.id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Chat folder ids must be unique",
+          path: [index, "id"]
+        });
+      }
+      folderIds.add(folder.id);
+
+      if (positions.has(folder.position)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Chat folder positions must be unique",
+          path: [index, "position"]
+        });
+      }
+      positions.add(folder.position);
+    });
+  });
+
+export const ChatFolderListResponseSchema = z.object({
+  items: ChatFolderCollectionSchema,
+  stateRevision: ChatFolderStateRevisionSchema
+}).strict();
+
+export const ChatFolderMutationResponseSchema = z.object({
+  folder: ChatFolderSchema,
+  stateRevision: ChatFolderStateRevisionSchema,
+  replayed: z.boolean()
+}).strict();
+
+export const ChatFolderDeleteResponseSchema = z.object({
+  folderId: IdSchema,
+  stateRevision: ChatFolderStateRevisionSchema,
+  replayed: z.boolean()
+}).strict();
+
+export const ChatFolderReorderResponseSchema = z.object({
+  items: ChatFolderCollectionSchema,
+  stateRevision: ChatFolderStateRevisionSchema,
+  replayed: z.boolean()
+}).strict();
 
 export const ChatMembershipMutableRoleSchema = z.enum(["admin", "member"]);
 export const ChatMembershipSchema = z.object({
@@ -1285,6 +1582,11 @@ export const CapabilitiesResponseV1Schema = z.object({
     safetyReports: z.literal(true),
     realtime: z.literal(true),
     reconciliation: z.literal(true),
+    // Older Beta-0.1 servers predate this additive field. A new client must
+    // conservatively assume the projection invalidation signal is unavailable
+    // instead of rejecting an otherwise compatible response.
+    syncInvalidation: z.boolean().default(false),
+    chatFolders: z.literal(true),
     mediaUploads: z.literal(true),
     serverSearchConfigured: z.boolean(),
     calls: z.literal(false),
@@ -1295,6 +1597,11 @@ export const CapabilitiesResponseV1Schema = z.object({
     maxMessageCodePoints: z.literal(MAX_MESSAGE_LENGTH),
     maxMessageRequestCodePoints: z.literal(MAX_MESSAGE_REQUEST_LENGTH),
     maxChatTitleLength: z.literal(MAX_CHAT_TITLE_LENGTH),
+    maxChatFolders: z.literal(MAX_CHAT_FOLDERS),
+    maxChatFolderTitleLength: z.literal(MAX_CHAT_FOLDER_TITLE_LENGTH),
+    maxChatFolderOverrides: z.literal(MAX_CHAT_FOLDER_OVERRIDES),
+    chatFolderIdempotencyTtlSeconds: z.literal(CHAT_FOLDER_IDEMPOTENCY_TTL_SECONDS),
+    maxChatFolderActiveCommandReceipts: z.literal(MAX_CHAT_FOLDER_ACTIVE_COMMAND_RECEIPTS),
     maxAttachmentsPerMessage: z.literal(MAX_ATTACHMENTS_PER_MESSAGE),
     maxDisplayNameLength: z.literal(MAX_DISPLAY_NAME_LENGTH),
     maxSafetyReportCommentCodePoints: z.literal(MAX_SAFETY_REPORT_COMMENT_LENGTH),
@@ -1317,7 +1624,8 @@ export type CapabilitiesRuntimeState = z.infer<typeof CapabilitiesRuntimeStateSc
 export type CapabilitiesResponseV1 = z.infer<typeof CapabilitiesResponseV1Schema>;
 
 export function createCapabilitiesResponseV1(
-  runtimeState: CapabilitiesRuntimeState
+  runtimeState: CapabilitiesRuntimeState,
+  syncInvalidationAvailable = true
 ): CapabilitiesResponseV1 {
   const state = CapabilitiesRuntimeStateSchema.parse(runtimeState);
   const {
@@ -1351,6 +1659,8 @@ export function createCapabilitiesResponseV1(
       safetyReports: true,
       realtime: true,
       reconciliation: true,
+      syncInvalidation: syncInvalidationAvailable,
+      chatFolders: true,
       mediaUploads: true,
       serverSearchConfigured,
       calls: false,
@@ -1361,6 +1671,11 @@ export function createCapabilitiesResponseV1(
       maxMessageCodePoints: MAX_MESSAGE_LENGTH,
       maxMessageRequestCodePoints: MAX_MESSAGE_REQUEST_LENGTH,
       maxChatTitleLength: MAX_CHAT_TITLE_LENGTH,
+      maxChatFolders: MAX_CHAT_FOLDERS,
+      maxChatFolderTitleLength: MAX_CHAT_FOLDER_TITLE_LENGTH,
+      maxChatFolderOverrides: MAX_CHAT_FOLDER_OVERRIDES,
+      chatFolderIdempotencyTtlSeconds: CHAT_FOLDER_IDEMPOTENCY_TTL_SECONDS,
+      maxChatFolderActiveCommandReceipts: MAX_CHAT_FOLDER_ACTIVE_COMMAND_RECEIPTS,
       maxAttachmentsPerMessage: MAX_ATTACHMENTS_PER_MESSAGE,
       maxDisplayNameLength: MAX_DISPLAY_NAME_LENGTH,
       maxSafetyReportCommentCodePoints: MAX_SAFETY_REPORT_COMMENT_LENGTH,
@@ -1786,8 +2101,9 @@ export const RealtimeSnapshotResponseSchema = z.object({
       "reactions",
       "receipts",
       "attachments",
-      "safety_reports"
-    ])).length(11).refine((collections) => new Set(collections).size === 11, {
+      "safety_reports",
+      "chat_folders"
+    ])).length(12).refine((collections) => new Set(collections).size === 12, {
       message: "Every reconciliation collection must appear exactly once"
     })
   }).strict(),
@@ -1798,6 +2114,7 @@ export const RealtimeSnapshotResponseSchema = z.object({
     chats: z.literal("/v2/sync/chats"),
     attachments: z.literal("/v1/attachments"),
     safetyReports: z.literal("/v1/safety/reports"),
+    chatFolders: z.literal("/v1/chat-folders"),
     membersTemplate: z.literal("/v1/chats/{chatId}/members"),
     messagesTemplate: z.literal("/v1/chats/{chatId}/messages"),
     pinsTemplate: z.literal("/v1/chats/{chatId}/pins"),
@@ -1929,12 +2246,46 @@ export const ChatMembershipRealtimeEventSchema = z.object({
   }
 });
 
+export const ChatPreferencesRealtimeEventSchema = z.object({
+  type: z.literal("chat.preferences.updated"),
+  audience: z.literal("member_account"),
+  accountId: IdSchema,
+  chatId: IdSchema,
+  preferences: ChatPreferencesSchema,
+  changedAt: TimestampSchema
+}).strict();
+
+export const ChatFoldersRealtimeEventSchema = z.object({
+  type: z.literal("chat.folders.updated"),
+  audience: z.literal("actor_account"),
+  accountId: IdSchema,
+  stateRevision: ChatFolderStateRevisionSchema,
+  changedAt: TimestampSchema
+}).strict();
+
+export const SyncInvalidationReasonSchema = z.enum([
+  "profile_updated",
+  "avatar_updated",
+  "attachment_removed"
+]);
+
+export const SyncInvalidatedRealtimeEventSchema = z.object({
+  type: z.literal("sync.invalidated"),
+  audience: z.literal("account_projection"),
+  accountId: IdSchema,
+  reason: SyncInvalidationReasonSchema,
+  changedAt: TimestampSchema
+}).strict();
+
 // Realtime v2 is additive: all existing messaging events remain valid while
-// IA-1 events are isolated from the strict v1 union.
+// IA-1 and reconciliation-invalidating events are isolated from the strict v1 union.
 export const DurableRealtimeEventSchema = z.union([
   RealtimeEventSchema,
   IA1RealtimeEventSchema,
-  ChatMembershipRealtimeEventSchema
+  ChatMembershipRealtimeEventSchema,
+  ChatPreferencesRealtimeEventSchema,
+  ChatFoldersRealtimeEventSchema,
+  SyncInvalidatedRealtimeEventSchema
 ]);
 
 export const ServerRealtimeMessageSchema = z.discriminatedUnion("type", [
@@ -2081,11 +2432,20 @@ export const ClientRealtimeMessageSchema = z.discriminatedUnion("type", [
 
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
 export type User = z.infer<typeof UserSchema>;
+export type PatchCurrentUser = z.infer<typeof PatchCurrentUserSchema>;
+export type SetProfileAvatar = z.infer<typeof SetProfileAvatarSchema>;
 export type PublicProfile = z.infer<typeof PublicProfileSchema>;
 export type UserLookupResponse = z.infer<typeof UserLookupResponseSchema>;
 export type MessageRequestPolicy = z.infer<typeof MessageRequestPolicySchema>;
 export type PrivacySettings = z.infer<typeof PrivacySettingsSchema>;
 export type PatchPrivacySettings = z.infer<typeof PatchPrivacySettingsSchema>;
+export type PushPlatform = z.infer<typeof PushPlatformSchema>;
+export type PushEnvironment = z.infer<typeof PushEnvironmentSchema>;
+export type UpsertPushRegistration = z.infer<typeof UpsertPushRegistrationSchema>;
+export type PushRegistration = z.infer<typeof PushRegistrationSchema>;
+export type NotificationPreviewMode = z.infer<typeof NotificationPreviewModeSchema>;
+export type NotificationSettings = z.infer<typeof NotificationSettingsSchema>;
+export type PatchNotificationSettings = z.infer<typeof PatchNotificationSettingsSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
@@ -2100,7 +2460,12 @@ export type PhoneChallengeResponse = z.infer<typeof PhoneChallengeResponseSchema
 export type VerifyPhoneChallenge = z.infer<typeof VerifyPhoneChallengeSchema>;
 export type PhoneAuthenticatedResponse = z.infer<typeof PhoneAuthenticatedResponseSchema>;
 export type PhoneProfileRequiredResponse = z.infer<typeof PhoneProfileRequiredResponseSchema>;
+export type PhonePasswordRequiredResponse = z.infer<typeof PhonePasswordRequiredResponseSchema>;
 export type VerifyPhoneChallengeResponse = z.infer<typeof VerifyPhoneChallengeResponseSchema>;
+export type CompletePhonePasswordChallenge = z.infer<typeof CompletePhonePasswordChallengeSchema>;
+export type ConfigurePhonePassword = z.infer<typeof ConfigurePhonePasswordSchema>;
+export type DisablePhonePassword = z.infer<typeof DisablePhonePasswordSchema>;
+export type PhonePasswordStatus = z.infer<typeof PhonePasswordStatusSchema>;
 export type CompletePhoneRegistration = z.infer<typeof CompletePhoneRegistrationSchema>;
 export type CheckPhoneUsername = z.infer<typeof CheckPhoneUsernameSchema>;
 export type PhoneUsernameAvailabilityResponse = z.infer<typeof PhoneUsernameAvailabilityResponseSchema>;
@@ -2170,6 +2535,21 @@ export type PasskeyPrimaryAuthenticationRejection = z.infer<typeof PasskeyPrimar
 export type ChatKind = z.infer<typeof ChatKindSchema>;
 export type ChatRole = z.infer<typeof ChatRoleSchema>;
 export type Chat = z.infer<typeof ChatSchema>;
+export type ChatPreferences = z.infer<typeof ChatPreferencesSchema>;
+export type PatchChatPreferences = z.infer<typeof PatchChatPreferencesSchema>;
+export type ChatFolderRules = z.infer<typeof ChatFolderRulesSchema>;
+export type ChatFolderOverrideMode = z.infer<typeof ChatFolderOverrideModeSchema>;
+export type ChatFolderOverride = z.infer<typeof ChatFolderOverrideSchema>;
+export type ChatFolderOverrides = z.infer<typeof ChatFolderOverridesSchema>;
+export type ChatFolder = z.infer<typeof ChatFolderSchema>;
+export type CreateChatFolderRequest = z.infer<typeof CreateChatFolderRequestSchema>;
+export type PatchChatFolderRequest = z.infer<typeof PatchChatFolderRequestSchema>;
+export type DeleteChatFolderRequest = z.infer<typeof DeleteChatFolderRequestSchema>;
+export type ReorderChatFoldersRequest = z.infer<typeof ReorderChatFoldersRequestSchema>;
+export type ChatFolderListResponse = z.infer<typeof ChatFolderListResponseSchema>;
+export type ChatFolderMutationResponse = z.infer<typeof ChatFolderMutationResponseSchema>;
+export type ChatFolderDeleteResponse = z.infer<typeof ChatFolderDeleteResponseSchema>;
+export type ChatFolderReorderResponse = z.infer<typeof ChatFolderReorderResponseSchema>;
 export type ChatMembershipMutableRole = z.infer<typeof ChatMembershipMutableRoleSchema>;
 export type ChatMembership = z.infer<typeof ChatMembershipSchema>;
 export type ChatMember = z.infer<typeof ChatMemberSchema>;
@@ -2219,6 +2599,10 @@ export type RealtimeSnapshotResponse = z.infer<typeof RealtimeSnapshotResponseSc
 export type RealtimeEvent = z.infer<typeof RealtimeEventSchema>;
 export type IA1RealtimeEvent = z.infer<typeof IA1RealtimeEventSchema>;
 export type ChatMembershipRealtimeEvent = z.infer<typeof ChatMembershipRealtimeEventSchema>;
+export type ChatPreferencesRealtimeEvent = z.infer<typeof ChatPreferencesRealtimeEventSchema>;
+export type ChatFoldersRealtimeEvent = z.infer<typeof ChatFoldersRealtimeEventSchema>;
+export type SyncInvalidationReason = z.infer<typeof SyncInvalidationReasonSchema>;
+export type SyncInvalidatedRealtimeEvent = z.infer<typeof SyncInvalidatedRealtimeEventSchema>;
 export type DurableRealtimeEvent = z.infer<typeof DurableRealtimeEventSchema>;
 export type ClientRealtimeMessage = z.infer<typeof ClientRealtimeMessageSchema>;
 export type ServerRealtimeMessage = z.infer<typeof ServerRealtimeMessageSchema>;

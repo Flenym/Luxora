@@ -56,6 +56,9 @@ const DURABLE_EVENT_BOUNDARIES = [
   "reaction.updated",
   "chat.member.changed:member_account",
   "chat.member.changed:removed_account",
+  "chat.preferences.updated:member_account",
+  "chat.folders.updated:actor_account",
+  "sync.invalidated:account_projection",
   "relationship.request.created:sender_account",
   "relationship.request.created:recipient_account",
   "relationship.request.removed:recipient_account",
@@ -228,7 +231,7 @@ describe("complete realtime authorization matrix", () => {
     expect([...new Set([...realtimeEvents, ...identityEvents])].sort()).toEqual([
       ...new Set(DURABLE_EVENT_BOUNDARIES.map((entry) => entry.split(":")[0]))
     ].sort());
-    expect(DURABLE_EVENT_BOUNDARIES).toHaveLength(21);
+    expect(DURABLE_EVENT_BOUNDARIES).toHaveLength(24);
   });
 
   it("rejects every pre-authentication client command and invalid authenticate frame on both protocols", async () => {
@@ -492,6 +495,7 @@ describe("complete realtime authorization matrix", () => {
       new RealtimeCursorCodec(testConfig().jwtSecret)
     );
     const memberSocket = makeSocket();
+    const ownerSocket = makeSocket();
     const outsiderSocket = makeSocket();
     const connection = (
       identity: Identity,
@@ -508,8 +512,10 @@ describe("complete realtime authorization matrix", () => {
       lastTypingAtByChat: new Map()
     });
     hub.registerPending(connection(member, memberSocket.socket));
+    hub.registerPending(connection(owner, ownerSocket.socket));
     hub.registerPending(connection(outsider, outsiderSocket.socket));
     memberSocket.sent.length = 0;
+    ownerSocket.sent.length = 0;
     outsiderSocket.sent.length = 0;
 
     for (const [index, event] of events.entries()) {
@@ -535,6 +541,67 @@ describe("complete realtime authorization matrix", () => {
       expect(JSON.stringify(outsiderSocket.sent), event.type).not.toContain(CONTENT_CANARY);
       expect(JSON.stringify(outsiderSocket.sent), event.type).not.toContain(owner.id);
     }
+
+    const preferenceEvent: DurableRealtimeEvent = {
+      type: "chat.preferences.updated",
+      audience: "member_account",
+      accountId: member.id,
+      chatId,
+      preferences: { archivedAt: now, mutedUntil: null },
+      changedAt: now
+    };
+    memberSocket.sent.length = 0;
+    ownerSocket.sent.length = 0;
+    hub.publish([{
+      sequence: 30_000,
+      audienceUserId: member.id,
+      event: preferenceEvent,
+      createdAt: now
+    }]);
+    expect(memberSocket.sent.some((message) =>
+      message.type === "dispatch" && message.event.type === preferenceEvent.type
+    )).toBe(true);
+    hub.publish([{
+      sequence: 30_001,
+      audienceUserId: owner.id,
+      event: preferenceEvent,
+      createdAt: now
+    }]);
+    expect(ownerSocket.sent.some((message) => message.type === "dispatch")).toBe(false);
+
+    const folderEvent: DurableRealtimeEvent = {
+      type: "chat.folders.updated",
+      audience: "actor_account",
+      accountId: member.id,
+      stateRevision: 7,
+      changedAt: now
+    };
+    memberSocket.sent.length = 0;
+    ownerSocket.sent.length = 0;
+    outsiderSocket.sent.length = 0;
+    hub.publish([{
+      sequence: 31_000,
+      audienceUserId: member.id,
+      event: folderEvent,
+      createdAt: now
+    }]);
+    expect(memberSocket.sent.find((message) =>
+      message.type === "dispatch" && message.event.type === folderEvent.type
+    )?.event).toEqual(folderEvent);
+    hub.publish([{
+      sequence: 31_001,
+      audienceUserId: owner.id,
+      event: folderEvent,
+      createdAt: now
+    }]);
+    hub.publish([{
+      sequence: 31_002,
+      audienceUserId: outsider.id,
+      event: folderEvent,
+      createdAt: now
+    }]);
+    expect(ownerSocket.sent.some((message) => message.type === "dispatch")).toBe(false);
+    expect(outsiderSocket.sent.some((message) => message.type === "dispatch")).toBe(false);
     hub.closeAll();
   });
 
@@ -548,6 +615,35 @@ describe("complete realtime authorization matrix", () => {
     const bob = await register("rt_actor_bob", PROFILE_CANARY);
     const eve = await register("rt_actor_eve");
     const mallory = await register("rt_actor_mallory");
+    const preferencesChatId = createRoleChat("group", "Private preferences", [
+      { identity: alice, role: "owner" },
+      { identity: bob, role: "member" }
+    ]);
+    expect((await app.inject({
+      method: "PATCH",
+      url: `/v1/chats/${preferencesChatId}/preferences`,
+      headers: auth(alice),
+      payload: { archived: true }
+    })).statusCode).toBe(200);
+
+    const folderCreation = await app.inject({
+      method: "POST",
+      url: "/v1/chat-folders",
+      headers: auth(alice),
+      payload: {
+        title: "Replay-only folder",
+        rules: {
+          includeKinds: ["group"],
+          unreadOnly: false,
+          excludeMuted: false,
+          includeArchived: false
+        },
+        overrides: [],
+        clientNonce: randomUUID()
+      }
+    });
+    expect(folderCreation.statusCode).toBe(201);
+    const folderStateRevision = folderCreation.json().stateRevision as number;
 
     const upload = await app.inject({
       method: "POST",
@@ -670,17 +766,34 @@ describe("complete realtime authorization matrix", () => {
     };
     const observed = new Set([...aliceEvents, ...bobEvents, ...eveEvents].map(({ event }) => boundaryKey(event)));
     for (const expected of DURABLE_EVENT_BOUNDARIES.filter((entry) =>
-      entry === "attachment.stored" || entry.startsWith("relationship.") || entry.startsWith("safety.")
+      entry === "attachment.stored" || entry.startsWith("chat.preferences.") ||
+      entry.startsWith("chat.folders.") ||
+      entry.startsWith("relationship.") || entry.startsWith("safety.")
     )) {
       expect(observed.has(expected), expected).toBe(true);
     }
+    const folderReplay = aliceEvents
+      .map(({ event }) => event)
+      .filter((event) => event.type === "chat.folders.updated");
+    expect(folderReplay).toHaveLength(1);
+    expect(folderReplay[0]).toMatchObject({
+      type: "chat.folders.updated",
+      audience: "actor_account",
+      accountId: alice.id,
+      stateRevision: folderStateRevision
+    });
+    expect([...bobEvents, ...eveEvents, ...malloryEvents].some(({ event }) =>
+      event.type === "chat.folders.updated"
+    )).toBe(false);
     expect(malloryEvents).toEqual([]);
     expect(JSON.stringify(malloryEvents)).not.toContain(CONTENT_CANARY);
     expect(JSON.stringify(malloryEvents)).not.toContain(PROFILE_CANARY);
     expect(bobEvents.some(({ event }) =>
+      event.type === "chat.preferences.updated" || event.type === "chat.folders.updated" ||
       event.type === "relationship.block.changed" || event.type === "safety.report.submitted"
     )).toBe(false);
     expect(JSON.stringify(bobEvents.filter(({ event }) =>
+      event.type === "chat.preferences.updated" || event.type === "chat.folders.updated" ||
       event.type === "relationship.block.changed" || event.type === "safety.report.submitted"
     ))).not.toContain(CONTENT_CANARY);
   });

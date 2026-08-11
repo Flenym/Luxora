@@ -1,21 +1,24 @@
 import SwiftUI
 
 struct ConversationListView: View {
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Bindable var store: MessengerStore
 
     var body: some View {
+        let visibleConversations = store.filteredConversations
+
         VStack(spacing: 0) {
             brandHeader
             FolderPicker(selection: $store.selectedFolder)
 
             List(selection: $store.selectedConversationID) {
                 Section {
-                    ForEach(store.filteredConversations) { conversation in
+                    ForEach(visibleConversations) { conversation in
                         ConversationRow(conversation: conversation)
                             .tag(conversation.id)
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                withAnimation(.snappy(duration: store.reduceMotion ? 0 : 0.32)) {
+                                withAnimation(reducesMotion ? nil : .snappy(duration: 0.32)) {
                                     store.selectConversation(conversation.id)
                                 }
                             }
@@ -41,14 +44,19 @@ struct ConversationListView: View {
                     HStack {
                         Text(LuxoraL10n.text("legacy.recent"))
                         Spacer()
-                        Text("\(store.filteredConversations.count)")
+                        Text("\(visibleConversations.count)")
                             .monospacedDigit()
                     }
                 }
             }
             .listStyle(.sidebar)
+            .accessibilityRotor(LuxoraL10n.text("chats.title")) {
+                ForEach(visibleConversations) { conversation in
+                    AccessibilityRotorEntry(conversation.title, id: conversation.id)
+                }
+            }
             .overlay {
-                if store.filteredConversations.isEmpty {
+                if visibleConversations.isEmpty {
                     ContentUnavailableView.search(text: store.searchQuery)
                 }
             }
@@ -61,6 +69,10 @@ struct ConversationListView: View {
                 .keyboardShortcut("n", modifiers: .command)
             }
         }
+    }
+
+    private var reducesMotion: Bool {
+        store.reduceMotion || systemReduceMotion
     }
 
     private var brandHeader: some View {
@@ -92,6 +104,7 @@ struct ConversationListView: View {
 }
 
 private struct FolderPicker: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var selection: ConversationFolder
 
     var body: some View {
@@ -99,7 +112,7 @@ private struct FolderPicker: View {
             HStack(spacing: 6) {
                 ForEach(ConversationFolder.allCases) { folder in
                     Button {
-                        withAnimation(.snappy(duration: 0.28)) {
+                        withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
                             selection = folder
                         }
                     } label: {

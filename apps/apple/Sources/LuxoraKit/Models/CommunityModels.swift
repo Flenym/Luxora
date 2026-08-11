@@ -1,0 +1,132 @@
+import Foundation
+
+public enum CommunityKind: String, CaseIterable, Codable, Identifiable, Sendable {
+    case group
+    case channel
+
+    public var id: String { rawValue }
+
+    public var russianTitle: String {
+        switch self {
+        case .group: "Группа"
+        case .channel: "Канал"
+        }
+    }
+
+    var conversationKind: ConversationKind {
+        switch self {
+        case .group: .group
+        case .channel: .channel
+        }
+    }
+}
+
+public enum ChatMembershipRole: String, CaseIterable, Codable, Identifiable, Sendable {
+    case owner
+    case admin
+    case member
+
+    public var id: String { rawValue }
+
+    public var russianTitle: String {
+        switch self {
+        case .owner: "Владелец"
+        case .admin: "Администратор"
+        case .member: "Участник"
+        }
+    }
+
+    public var isPrivileged: Bool {
+        self == .owner || self == .admin
+    }
+}
+
+public struct ChatMembership: Identifiable, Equatable, Hashable, Sendable {
+    public var id: UUID { userID }
+    public let chatID: UUID
+    public let userID: UUID
+    public var role: ChatMembershipRole
+    public var revision: Int
+    public let joinedAt: Date
+    public var updatedAt: Date
+
+    public init(
+        chatID: UUID,
+        userID: UUID,
+        role: ChatMembershipRole,
+        revision: Int,
+        joinedAt: Date,
+        updatedAt: Date
+    ) {
+        self.chatID = chatID
+        self.userID = userID
+        self.role = role
+        self.revision = revision
+        self.joinedAt = joinedAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public enum CommunityMembershipSignalChange: String, Equatable, Sendable {
+    case added
+    case roleUpdated = "role_updated"
+    case removed
+}
+
+public struct CommunityMember: Identifiable, Equatable, Hashable, Sendable {
+    public var id: UUID { membership.userID }
+    public var membership: ChatMembership
+    public var participant: Participant
+
+    public init(membership: ChatMembership, participant: Participant) {
+        self.membership = membership
+        self.participant = participant
+    }
+}
+
+struct CommunityMembershipMutationReceipt: Equatable, Sendable {
+    let membership: ChatMembership
+    let replayed: Bool
+}
+
+public enum CommunityMemberMutationKind: String, CaseIterable, Hashable, Sendable {
+    case add
+    case changeRole
+    case remove
+
+    public var russianTitle: String {
+        switch self {
+        case .add: "Добавление участника"
+        case .changeRole: "Изменение роли"
+        case .remove: "Удаление участника"
+        }
+    }
+}
+
+public struct CommunityMemberMutationKey: Equatable, Hashable, Sendable {
+    public let chatID: UUID
+    public let userID: UUID
+    public let kind: CommunityMemberMutationKind
+
+    public init(chatID: UUID, userID: UUID, kind: CommunityMemberMutationKind) {
+        self.chatID = chatID
+        self.userID = userID
+        self.kind = kind
+    }
+}
+
+public struct CommunityMemberMutationFailure: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let key: CommunityMemberMutationKey
+    public let detail: String
+
+    public init(
+        id: UUID = UUID(),
+        key: CommunityMemberMutationKey,
+        detail: String
+    ) {
+        self.id = id
+        self.key = key
+        self.detail = detail
+    }
+}

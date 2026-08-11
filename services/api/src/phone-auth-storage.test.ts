@@ -14,6 +14,10 @@ const RAW_RESPONSE = JSON.stringify({
   user: { id: "response-user" },
   tokens: { accessToken: "SECRET-ACCESS", refreshToken: "SECRET-REFRESH" }
 });
+const RAW_PASSWORD_RESPONSE = JSON.stringify({
+  status: "password_required",
+  passwordToken: "luxpw_SECRET-PASSWORD-CONTINUATION"
+});
 
 describe("phone authentication durable storage", () => {
   const directories: string[] = [];
@@ -151,15 +155,82 @@ describe("phone authentication durable storage", () => {
     expect(opened.store.findUserById(userId)).toMatchObject({
       username: "storage_user",
       bio: "Encrypted phone registration",
-      passwordAuthEnabled: false
+      passwordAuthEnabled: false,
+      phonePasswordHash: null,
+      phonePasswordEnabled: false
     });
+
+    expect(opened.store.compareAndSetPhonePassword({
+      userId,
+      expectedPhonePasswordHash: null,
+      expectedEnabled: false,
+      nextPhonePasswordHash: "argon-password-hash-canary",
+      nextEnabled: true,
+      at: "2026-08-04T12:00:04.000Z"
+    })).toBe(true);
+    expect(opened.store.findUserById(userId)).toMatchObject({
+      passwordHash: "discarded-password-hash",
+      passwordAuthEnabled: false,
+      phonePasswordHash: "argon-password-hash-canary",
+      phonePasswordEnabled: true
+    });
+    const passwordChallengeId = randomUUID();
+    const passwordChallenge = opened.store.createPhoneAuthChallenge({
+      id: passwordChallengeId,
+      phoneDigest: "a".repeat(64),
+      e164: RAW_PHONE,
+      codeDigest: "3".repeat(64),
+      deliveryCode: RAW_CODE,
+      deviceName: RAW_DEVICE,
+      maxAttempts: 5,
+      beginClientNonce: randomUUID(),
+      beginFingerprint: "4".repeat(64),
+      maskedPhone: "+7 ••• ••• 45 67",
+      createdAt: "2026-08-04T12:01:00.000Z",
+      expiresAt: "2026-08-04T12:06:00.000Z",
+      retryAfterSeconds: 60
+    });
+    expect(passwordChallenge).not.toBeNull();
+    expect(opened.store.activatePhoneAuthChallenge(
+      passwordChallengeId,
+      1,
+      "2026-08-04T12:01:01.000Z"
+    )).toBe(true);
+    const passwordScope = `verify:${passwordChallengeId}:${randomUUID()}`;
+    expect(opened.store.commitPhoneAuthPasswordRequired({
+      challengeId: passwordChallengeId,
+      expectedRevision: 2,
+      userId,
+      passwordTokenHash: "2".repeat(64),
+      passwordExpiresAt: "2026-08-04T12:11:02.000Z",
+      receipt: {
+        scope: passwordScope,
+        fingerprint: "5".repeat(64),
+        challengeId: passwordChallengeId,
+        resultKind: "password_required",
+        responseJson: RAW_PASSWORD_RESPONSE,
+        createdAt: "2026-08-04T12:01:02.000Z",
+        expiresAt: "2026-08-04T12:11:02.000Z"
+      }
+    })).toBe(true);
+    expect(opened.store.findPhoneAuthPasswordReceipt(passwordScope)?.responseJson)
+      .toBe(RAW_PASSWORD_RESPONSE);
 
     opened.store.close();
     store = undefined;
-    const database = new Database(opened.path, { readonly: true });
+    const database = new Database(opened.path);
     const identityEnvelope = database.prepare(`
       SELECT phone_ciphertext FROM phone_identities WHERE user_id = ?
     `).get(userId) as { phone_ciphertext: string };
+    expect(() => database.prepare(`
+      UPDATE phone_auth_password_receipts SET fingerprint = ? WHERE scope = ?
+    `).run("6".repeat(64), passwordScope)).toThrow(/phone password receipt is immutable/u);
+    expect(() => database.prepare(`
+      DELETE FROM phone_auth_password_events WHERE command_scope = ?
+    `).run(passwordScope)).toThrow(/phone password audit cannot be deleted/u);
+    expect(() => database.prepare(`
+      UPDATE users SET phone_password_hash = NULL WHERE id = ?
+    `).run(userId)).toThrow(/enabled phone password requires a hash/u);
     database.close();
     expect(opened.cipher.decrypt(
       identityEnvelope.phone_ciphertext,
@@ -179,7 +250,9 @@ describe("phone authentication durable storage", () => {
       RAW_RESPONSE,
       "SECRET-ACCESS",
       "SECRET-REFRESH",
-      "SECRET-REGISTRATION-TOKEN"
+      "SECRET-REGISTRATION-TOKEN",
+      RAW_PASSWORD_RESPONSE,
+      "SECRET-PASSWORD-CONTINUATION"
     ]) expect(bytes.includes(Buffer.from(secret, "utf8"))).toBe(false);
   });
 

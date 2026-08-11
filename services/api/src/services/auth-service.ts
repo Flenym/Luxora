@@ -1,18 +1,37 @@
 import { randomUUID } from "node:crypto";
-import type {
-  AuthResponse,
-  AuthTokens,
-  LoginRequest,
-  RegisterRequest,
-  Session,
-  User
+import {
+  PhonePasswordStatusSchema,
+  type ConfigurePhonePassword,
+  type AuthResponse,
+  type AuthTokens,
+  type DisablePhonePassword,
+  type LoginRequest,
+  type PatchCurrentUser,
+  type PhonePasswordStatus,
+  type RegisterRequest,
+  type Session,
+  type User
 } from "@luxora/protocol";
 import type { AppConfig } from "../config.js";
 import type { Store } from "../domain/store.js";
 import type { AuthenticatedPrincipal, UserRecord } from "../domain/types.js";
 import { conflict, notFound, serviceUnavailable, unauthenticated } from "../errors.js";
 import { TokenSecurity } from "../security.js";
-import { hashPassword, verifyPassword } from "./password-auth.js";
+import {
+  createPasskeyDisabledPasswordHash,
+  hashPassword,
+  verifyPassword
+} from "./password-auth.js";
+import type { EventPublisher } from "./event-publisher.js";
+import { appendSyncInvalidations } from "./sync-invalidation.js";
+
+// Argon2id is intentionally expensive. Keep one salted timing hash per
+// process/module instance instead of starting another background hash for
+// every composed Fastify app (tests and safe-start probes create many apps).
+// Unknown-account logins still perform the same Argon2 verification path.
+const TIMING_DUMMY_PASSWORD_HASH = hashPassword(
+  "not-a-real-password-used-for-timing-only"
+);
 
 function publicUser(user: UserRecord): User {
   return {
@@ -21,6 +40,7 @@ function publicUser(user: UserRecord): User {
     displayName: user.displayName,
     bio: user.bio,
     avatarUrl: user.avatarUrl,
+    avatarPath: user.avatarPath ?? null,
     createdAt: user.createdAt,
     lastSeenAt: user.lastSeenAt
   };
@@ -50,17 +70,14 @@ function isTransientStoreContention(error: unknown): boolean {
 }
 
 export class AuthService {
-  readonly #dummyHash: Promise<string>;
-
   constructor(
     private readonly store: Store,
     private readonly tokens: TokenSecurity,
     private readonly config: AppConfig,
     private readonly sessionTerminator?: { terminateSession(sessionId: string): void },
-    private readonly clock: () => Date = () => new Date()
-  ) {
-    this.#dummyHash = hashPassword("not-a-real-password-used-for-timing-only");
-  }
+    private readonly clock: () => Date = () => new Date(),
+    private readonly publisher?: Pick<EventPublisher, "publish">
+  ) {}
 
   async register(input: RegisterRequest): Promise<AuthResponse> {
     const now = this.clock();
@@ -93,13 +110,13 @@ export class AuthService {
 
   async login(input: LoginRequest): Promise<AuthResponse> {
     const user = this.store.findUserByUsername(input.username.toLowerCase());
-    const candidateHash = user?.passwordHash ?? await this.#dummyHash;
+    const candidateHash = user?.passwordHash ?? await TIMING_DUMMY_PASSWORD_HASH;
     let valid = false;
     try {
       valid = await verifyPassword(candidateHash, input.password);
     } catch {
       // Corrupt legacy data must not create a fast username oracle.
-      await verifyPassword(await this.#dummyHash, input.password).catch(() => false);
+      await verifyPassword(await TIMING_DUMMY_PASSWORD_HASH, input.password).catch(() => false);
     }
     if (!valid || user === null || !user.passwordAuthEnabled) {
       throw unauthenticated("Invalid username or password");
@@ -236,6 +253,109 @@ export class AuthService {
     const user = this.store.findUserById(userId);
     if (user === null) throw notFound("User not found");
     return publicUser(user);
+  }
+
+  updateUser(userId: string, input: PatchCurrentUser): User {
+    const changedAt = this.clock().toISOString();
+    const outcome = this.store.immediateTransaction(() => {
+      const current = this.store.findUserById(userId);
+      if (current === null) throw notFound("User not found");
+      const changed = (input.displayName !== undefined && input.displayName !== current.displayName) ||
+        (input.bio !== undefined && input.bio !== current.bio);
+      if (!changed) return { user: current, events: [] };
+
+      const user = this.store.updateUserProfile(userId, input, changedAt);
+      if (user === null) throw notFound("User not found");
+      const events = appendSyncInvalidations(
+        this.store,
+        this.store.listProfileProjectionAudienceUserIds(userId),
+        "profile_updated",
+        changedAt,
+        this.config.syncInvalidationEnabled
+      );
+      return { user, events };
+    });
+    this.publisher?.publish(outcome.events);
+    return publicUser(outcome.user);
+  }
+
+  phonePasswordStatus(userId: string): PhonePasswordStatus {
+    const user = this.store.findUserById(userId);
+    if (user === null) throw notFound("User not found");
+    const eligible = this.store.findPhoneIdentityByUserId(userId) !== null;
+    return PhonePasswordStatusSchema.parse({
+      eligible,
+      enabled: eligible && user.phonePasswordEnabled
+    });
+  }
+
+  async configurePhonePassword(
+    userId: string,
+    input: ConfigurePhonePassword
+  ): Promise<PhonePasswordStatus> {
+    const user = this.store.findUserById(userId);
+    if (user === null) throw notFound("User not found");
+    if (this.store.findPhoneIdentityByUserId(userId) === null) {
+      throw conflict("A verified phone identity is required");
+    }
+    if (user.phonePasswordEnabled) {
+      let currentValid = false;
+      if (input.currentPassword !== undefined && user.phonePasswordHash !== null) {
+        try {
+          currentValid = await verifyPassword(user.phonePasswordHash, input.currentPassword);
+        } catch {
+          currentValid = false;
+        }
+      }
+      if (!currentValid) throw unauthenticated("Invalid current password");
+    }
+
+    const nextPhonePasswordHash = await hashPassword(input.password);
+    const changed = this.store.compareAndSetPhonePassword({
+      userId,
+      expectedPhonePasswordHash: user.phonePasswordHash,
+      expectedEnabled: user.phonePasswordEnabled,
+      nextPhonePasswordHash,
+      nextEnabled: true,
+      at: this.clock().toISOString()
+    });
+    if (!changed) throw conflict("Phone password changed concurrently; retry");
+    return PhonePasswordStatusSchema.parse({ eligible: true, enabled: true });
+  }
+
+  async disablePhonePassword(
+    userId: string,
+    input: DisablePhonePassword
+  ): Promise<PhonePasswordStatus> {
+    const user = this.store.findUserById(userId);
+    if (user === null) throw notFound("User not found");
+    if (this.store.findPhoneIdentityByUserId(userId) === null) {
+      throw conflict("A verified phone identity is required");
+    }
+    if (!user.phonePasswordEnabled) {
+      return PhonePasswordStatusSchema.parse({ eligible: true, enabled: false });
+    }
+    let currentValid = false;
+    if (user.phonePasswordHash !== null) {
+      try {
+        currentValid = await verifyPassword(user.phonePasswordHash, input.currentPassword);
+      } catch {
+        currentValid = false;
+      }
+    }
+    if (!currentValid) throw unauthenticated("Invalid current password");
+
+    const placeholderHash = await createPasskeyDisabledPasswordHash();
+    const changed = this.store.compareAndSetPhonePassword({
+      userId,
+      expectedPhonePasswordHash: user.phonePasswordHash,
+      expectedEnabled: true,
+      nextPhonePasswordHash: placeholderHash,
+      nextEnabled: false,
+      at: this.clock().toISOString()
+    });
+    if (!changed) throw conflict("Phone password changed concurrently; retry");
+    return PhonePasswordStatusSchema.parse({ eligible: true, enabled: false });
   }
 
   async #createSession(userId: string, deviceName: string, now: Date): Promise<AuthTokens> {

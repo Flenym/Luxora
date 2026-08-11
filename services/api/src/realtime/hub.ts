@@ -50,7 +50,8 @@ export class RealtimeHub implements EventPublisher {
   constructor(
     private readonly store: Store,
     private readonly metrics: Metrics,
-    private readonly cursors: RealtimeCursorCodec
+    private readonly cursors: RealtimeCursorCodec,
+    private readonly syncInvalidationEnabled = true
   ) {}
 
   registerPending(connection: RealtimeConnection): void {
@@ -78,7 +79,8 @@ export class RealtimeHub implements EventPublisher {
       connection.userId,
       after,
       watermark,
-      REALTIME_MAX_REPLAY_EVENTS + 1
+      REALTIME_MAX_REPLAY_EVENTS + 1,
+      this.syncInvalidationEnabled
     );
     const replayOverflow = replay.length > REALTIME_MAX_REPLAY_EVENTS;
 
@@ -147,6 +149,7 @@ export class RealtimeHub implements EventPublisher {
   publish(events: StoredEvent[]): void {
     if (this.#closing) return;
     for (const event of events) {
+      if (!this.syncInvalidationEnabled && event.event.type === "sync.invalidated") continue;
       const connections = this.#connectionsByUser.get(event.audienceUserId);
       if (connections === undefined) continue;
       for (const connection of connections.values()) {
@@ -215,6 +218,7 @@ export class RealtimeHub implements EventPublisher {
   }
 
   #sendDispatch(connection: RealtimeConnection, event: StoredEvent): void {
+    if (!this.syncInvalidationEnabled && event.event.type === "sync.invalidated") return;
     let authorizedEvent: DurableRealtimeEvent;
     try {
       if (!this.#isDispatchAuthorized(connection.userId, event.event)) return;
@@ -373,6 +377,13 @@ export class RealtimeHub implements EventPublisher {
         }
         return currentMembership !== null;
       }
+      case "chat.preferences.updated":
+        return event.accountId === audienceUserId &&
+          this.store.getChatMember(event.chatId, audienceUserId) !== null;
+      case "chat.folders.updated":
+        return event.accountId === audienceUserId;
+      case "sync.invalidated":
+        return event.accountId === audienceUserId;
     }
 
     const chatId = this.#eventChatId(event);
@@ -413,6 +424,9 @@ export class RealtimeHub implements EventPublisher {
       case "topic.created":
       case "topic.updated": return event.topic.chatId;
       case "chat.member.changed": return event.membership.chatId;
+      case "chat.preferences.updated": return event.chatId;
+      case "chat.folders.updated": return null;
+      case "sync.invalidated": return null;
       case "attachment.stored":
       case "relationship.request.created":
       case "relationship.request.removed":

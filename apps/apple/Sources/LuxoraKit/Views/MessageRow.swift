@@ -1,8 +1,43 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct MessageRow: View {
     let message: ChatMessage
     let onReaction: (String) -> Void
+    let forwardedFrom: MessageForwardProvenance?
+    let isPinned: Bool
+    let isMutationInFlight: Bool
+    let onReply: (() -> Void)?
+    let onForward: (() -> Void)?
+    let onEdit: (() -> Void)?
+    let onDelete: (() -> Void)?
+    let onTogglePin: (() -> Void)?
+
+    init(
+        message: ChatMessage,
+        onReaction: @escaping (String) -> Void,
+        forwardedFrom: MessageForwardProvenance? = nil,
+        isPinned: Bool = false,
+        isMutationInFlight: Bool = false,
+        onReply: (() -> Void)? = nil,
+        onForward: (() -> Void)? = nil,
+        onEdit: (() -> Void)? = nil,
+        onDelete: (() -> Void)? = nil,
+        onTogglePin: (() -> Void)? = nil
+    ) {
+        self.message = message
+        self.onReaction = onReaction
+        self.forwardedFrom = forwardedFrom
+        self.isPinned = isPinned
+        self.isMutationInFlight = isMutationInFlight
+        self.onReply = onReply
+        self.onForward = onForward
+        self.onEdit = onEdit
+        self.onDelete = onDelete
+        self.onTogglePin = onTogglePin
+    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -23,27 +58,41 @@ struct MessageRow: View {
         }
         .frame(maxWidth: .infinity)
         .contextMenu {
-            Button(LuxoraL10n.text("legacy.reply"), systemImage: "arrowshape.turn.up.left") {}
-                .disabled(true)
-            Button(LuxoraL10n.text("legacy.forward"), systemImage: "arrowshape.turn.up.right") {}
-                .disabled(true)
             Menu(LuxoraL10n.text("legacy.react"), systemImage: "face.smiling") {
                 ForEach(["💜", "✨", "👍", "😂"], id: \.self) { emoji in
                     Button(emoji) { onReaction(emoji) }
                 }
             }
-            if message.isOutgoing {
+            if let onReply {
+                Button("Ответить", systemImage: "arrowshape.turn.up.left", action: onReply)
+            }
+            copyButton
+            if let onEdit {
+                Button("Изменить", systemImage: "pencil", action: onEdit)
+            }
+            if let onTogglePin {
+                Button(isPinned ? "Открепить" : "Закрепить", systemImage: isPinned ? "pin.slash" : "pin", action: onTogglePin)
+            }
+            if let onForward {
+                Button("Переслать", systemImage: "arrowshape.turn.up.right", action: onForward)
+            }
+            if let onDelete {
                 Divider()
-                Button(LuxoraL10n.text("legacy.edit"), systemImage: "pencil") {}
-                    .disabled(true)
-                Button(LuxoraL10n.text("legacy.delete"), systemImage: "trash", role: .destructive) {}
-                    .disabled(true)
+                Button("Удалить", systemImage: "trash", role: .destructive, action: onDelete)
             }
         }
+        .allowsHitTesting(!isMutationInFlight)
+        .opacity(isMutationInFlight ? 0.72 : 1)
     }
 
     private var messageBubble: some View {
         VStack(alignment: .leading, spacing: 7) {
+            if let forwardedFrom {
+                Label("Переслано от \(forwardedFrom.senderDisplayName)", systemImage: "arrowshape.turn.up.right.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(message.isOutgoing ? .white.opacity(0.82) : LuxoraTheme.iris)
+            }
+
             if let replyPreview = message.replyPreview {
                 HStack(spacing: 7) {
                     Capsule()
@@ -97,6 +146,15 @@ struct MessageRow: View {
         .shadow(color: LuxoraTheme.deepViolet.opacity(message.isOutgoing ? 0.16 : 0.05), radius: 12, y: 5)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(message.author.displayName): \(message.text)")
+    }
+
+    @ViewBuilder
+    private var copyButton: some View {
+        #if canImport(UIKit)
+        Button("Копировать", systemImage: "doc.on.doc") {
+            UIPasteboard.general.string = message.text
+        }
+        #endif
     }
 
     private var reactionStrip: some View {

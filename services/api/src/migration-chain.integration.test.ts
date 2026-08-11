@@ -26,7 +26,13 @@ const MIGRATION_IDS = [
   "015_passkey_authenticator_revoke_intents",
   "016_passkey_authenticator_revoke_intent_delete_guard",
   "017_chat_membership_lifecycle",
-  "018_phone_authentication"
+  "018_phone_authentication",
+  "019_phone_password_challenge",
+  "020_processed_profile_avatar",
+  "021_push_registration_preferences",
+  "022_chat_folders",
+  "023_chat_folder_receipt_retention",
+  "024_chat_membership_revision_ledger"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";
@@ -327,7 +333,7 @@ function finalDeclaredTriggerNames(): string[] {
   return [...names].sort();
 }
 
-describe("SQLite migration chain 001-018", () => {
+describe("SQLite migration chain 001-024", () => {
   const temporaryDirectories: string[] = [];
   const workers: Worker[] = [];
 
@@ -355,7 +361,14 @@ describe("SQLite migration chain 001-018", () => {
         /\bDROP TRIGGER\s+\w+\s*;/gu,
         ""
       );
-      expect(withoutSchemaTriggerReplacement).not.toMatch(
+      const withoutApprovedMembershipBackfill = migration.id ===
+        "024_chat_membership_revision_ledger"
+        ? withoutSchemaTriggerReplacement.replace(
+            /\bUPDATE chat_members[\s\S]*?(?=\n\n      CREATE TRIGGER trg_chat_members_identity_immutable)/u,
+            ""
+          )
+        : withoutSchemaTriggerReplacement;
+      expect(withoutApprovedMembershipBackfill).not.toMatch(
         /\b(?:DROP|TRUNCATE)\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu
       );
     }
@@ -415,6 +428,37 @@ describe("SQLite migration chain 001-018", () => {
     expect(migrations[17]!.sql).not.toMatch(
       /phone_number\s+TEXT|verification_code\s+TEXT|raw_(?:code|token)|access_token\s+TEXT|refresh_token\s+TEXT/iu
     );
+    expect(migrations[18]!.sql).toMatch(/CREATE TABLE phone_auth_password_receipts/u);
+    expect(migrations[18]!.sql).toMatch(/CREATE TABLE phone_auth_password_events/u);
+    expect(migrations[18]!.sql).toMatch(/ADD COLUMN phone_password_hash TEXT/u);
+    expect(migrations[18]!.sql).toMatch(/ADD COLUMN phone_password_enabled INTEGER NOT NULL DEFAULT 0/u);
+    expect(migrations[18]!.sql).toMatch(/trg_users_phone_password_update_valid/u);
+    expect(migrations[18]!.sql).toMatch(/trg_phone_password_receipts_no_delete/u);
+    expect(migrations[18]!.sql).toMatch(/trg_phone_password_events_append_only_delete/u);
+    expect(migrations[18]!.sql).not.toMatch(
+      /raw_(?:password|token)|access_token\s+TEXT|refresh_token\s+TEXT/iu
+    );
+    expect(migrations[19]!.sql).toMatch(/ADD COLUMN avatar_attachment_id TEXT/u);
+    expect(migrations[19]!.sql).toMatch(/ADD COLUMN safety_status TEXT NOT NULL DEFAULT 'unscanned'/u);
+    expect(migrations[19]!.sql).toMatch(/ADD COLUMN metadata_trust TEXT NOT NULL DEFAULT 'client_declared'/u);
+    expect(migrations[19]!.sql).toMatch(/trg_user_avatar_owned_verified_update/u);
+    expect(migrations[19]!.sql).not.toMatch(/avatar_url\s*=|https?:\/\//iu);
+    expect(migrations[20]!.sql).toMatch(/CREATE TABLE push_registrations/u);
+    expect(migrations[20]!.sql).toMatch(/token_ciphertext TEXT NOT NULL/u);
+    expect(migrations[20]!.sql).toMatch(/CREATE TABLE notification_settings/u);
+    expect(migrations[20]!.sql).toMatch(/preview_mode TEXT NOT NULL DEFAULT 'hidden'/u);
+    expect(migrations[20]!.sql).toMatch(/trg_push_registration_session_binding_insert/u);
+    expect(migrations[20]!.sql).not.toMatch(/device_token\s+TEXT|token\s+TEXT/iu);
+    expect(migrations[21]!.sql).toMatch(/CREATE TABLE chat_folders/u);
+    expect(migrations[21]!.sql).toMatch(/trg_chat_folder_receipts_no_delete/u);
+    expect(migrations[22]!.sql).toMatch(/ADD COLUMN expires_at TEXT/u);
+    expect(migrations[22]!.sql).toMatch(/idx_chat_folder_receipts_expiry/u);
+    expect(migrations[22]!.sql).toMatch(/DROP TRIGGER trg_chat_folder_receipts_no_delete/u);
+    expect(migrations[23]!.sql).toMatch(/CREATE TABLE chat_membership_revision_ledger/u);
+    expect(migrations[23]!.sql).toMatch(/max\(result_revision\)/u);
+    expect(migrations[23]!.sql).toMatch(/trg_chat_membership_revision_ledger_monotonic/u);
+    expect(migrations[23]!.sql).toMatch(/DROP TRIGGER trg_chat_members_insert_invariants/u);
+    expect(migrations[23]!.sql).toMatch(/DROP TRIGGER trg_chat_members_identity_immutable/u);
   });
 
   it("creates the complete clean schema once with declared tables, indexes, triggers and foreign keys", () => {
@@ -470,6 +514,16 @@ describe("SQLite migration chain 001-018", () => {
     expect(inspection.pragma("table_info(chat_members)")).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "membership_revision", notnull: 1, dflt_value: "1" }),
       expect.objectContaining({ name: "membership_updated_at", notnull: 0, dflt_value: null })
+    ]));
+    expect(inspection.pragma("table_info(users)")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "avatar_attachment_id", notnull: 0, dflt_value: null })
+    ]));
+    expect(inspection.pragma("foreign_key_list(users)")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ table: "attachments", from: "avatar_attachment_id", to: "id", on_delete: "SET NULL" })
+    ]));
+    expect(inspection.pragma("table_info(attachments)")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "safety_status", notnull: 1, dflt_value: "'unscanned'" }),
+      expect.objectContaining({ name: "metadata_trust", notnull: 1, dflt_value: "'client_declared'" })
     ]));
     expect(inspection.pragma("foreign_key_list(chat_membership_command_receipts)")).toEqual(
       expect.arrayContaining([
@@ -550,6 +604,171 @@ describe("SQLite migration chain 001-018", () => {
     const repeatedInspection = new Database(path, { readonly: true });
     expect(migrationRows(repeatedInspection)).toEqual(firstMigrationRows);
     repeatedInspection.close();
+  });
+
+  it("upgrades an already-applied 022 database to bounded receipt retention without losing rows", () => {
+    const path = databasePath("upgrade-022-receipts");
+    const accountId = randomUUID();
+    const clientNonce = randomUUID();
+    const createdAt = "2026-08-11T09:00:00.000Z";
+    const legacy = new Database(path);
+    legacy.pragma("foreign_keys = ON");
+    createMigrationTable(legacy);
+    for (let index = 0; index < 22; index += 1) apply(legacy, migrations[index]!, index + 1);
+    legacy.prepare(`
+      INSERT INTO users (
+        id, username, username_normalized, display_name,
+        password_hash, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      accountId,
+      "folder_migration_user",
+      "folder_migration_user",
+      "Folder migration user",
+      "test-only-password-hash",
+      createdAt,
+      createdAt
+    );
+    legacy.prepare(`
+      INSERT INTO chat_folder_command_receipts (
+        user_id, client_nonce, operation, fingerprint,
+        response_ciphertext, created_at
+      ) VALUES (?, ?, 'create', ?, ?, ?)
+    `).run(accountId, clientNonce, "f".repeat(64), "luxora:v1.legacy", createdAt);
+    expect(() => legacy.prepare(`
+      DELETE FROM chat_folder_command_receipts
+      WHERE user_id = ? AND client_nonce = ?
+    `).run(accountId, clientNonce)).toThrow(/cannot be deleted/u);
+    legacy.close();
+
+    const upgraded = new SqliteStore(path);
+    expect(upgraded.ping()).toBe(true);
+    expect(upgraded.purgeExpiredChatFolderCommandReceipts(
+      "2026-08-12T09:00:00.000Z",
+      100
+    )).toBe(1);
+    upgraded.close();
+
+    const inspection = new Database(path);
+    inspection.pragma("foreign_keys = ON");
+    expect(migrationRows(inspection).map(({ id }) => id)).toEqual(MIGRATION_IDS);
+    expect((inspection.prepare(`
+      SELECT count(*) AS count FROM chat_folder_command_receipts
+      WHERE user_id = ?
+    `).get(accountId) as { count: number }).count).toBe(0);
+    const triggerNames = (inspection.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'trigger' AND name LIKE 'trg_chat_folder_receipts_%'
+      ORDER BY name
+    `).all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(triggerNames).toEqual([
+      "trg_chat_folder_receipts_immutable",
+      "trg_chat_folder_receipts_require_expiry"
+    ]);
+    expect(inspection.pragma("integrity_check")).toEqual([{ integrity_check: "ok" }]);
+    expect(inspection.pragma("foreign_key_check")).toEqual([]);
+    inspection.close();
+  });
+
+  it("upgrades a 023 remove-readd lifecycle without an ABA revision reset", () => {
+    const path = databasePath("upgrade-023-membership-ledger");
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const chatId = randomUUID();
+    const removedAt = "2026-08-11T10:00:00.000Z";
+    const rolledBackWallTime = "2026-08-11T09:00:00.000Z";
+    const legacy = new Database(path);
+    legacy.pragma("foreign_keys = ON");
+    createMigrationTable(legacy);
+    for (let index = 0; index < 23; index += 1) apply(legacy, migrations[index]!, index + 1);
+    for (const [id, username] of [
+      [ownerId, "membership_ledger_owner"],
+      [memberId, "membership_ledger_member"]
+    ] as const) {
+      legacy.prepare(`
+        INSERT INTO users (
+          id, username, username_normalized, display_name,
+          password_hash, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        username,
+        username,
+        username,
+        "test-only-password-hash",
+        rolledBackWallTime,
+        rolledBackWallTime
+      );
+    }
+    legacy.prepare(`
+      INSERT INTO chats (
+        id, kind, title, created_by, created_at, updated_at
+      ) VALUES (?, 'group', 'Membership ledger migration', ?, ?, ?)
+    `).run(chatId, ownerId, rolledBackWallTime, rolledBackWallTime);
+    legacy.prepare(`
+      INSERT INTO chat_members (
+        chat_id, user_id, role, membership_revision, joined_at, membership_updated_at
+      ) VALUES (?, ?, 'owner', 1, ?, ?)
+    `).run(chatId, ownerId, rolledBackWallTime, rolledBackWallTime);
+    legacy.prepare(`
+      INSERT INTO chat_members (
+        chat_id, user_id, role, membership_revision, joined_at, membership_updated_at
+      ) VALUES (?, ?, 'member', 1, ?, ?)
+    `).run(chatId, memberId, rolledBackWallTime, rolledBackWallTime);
+    legacy.prepare(`
+      DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?
+    `).run(chatId, memberId);
+    legacy.prepare(`
+      INSERT INTO chat_membership_command_receipts (
+        actor_user_id, client_nonce, operation, chat_id, target_user_id,
+        fingerprint, result_role, result_revision, result_joined_at,
+        result_updated_at, created_at
+      ) VALUES (?, ?, 'remove', ?, ?, ?, 'member', 2, ?, ?, ?)
+    `).run(
+      ownerId,
+      randomUUID(),
+      chatId,
+      memberId,
+      "legacy-remove-fingerprint",
+      rolledBackWallTime,
+      removedAt,
+      removedAt
+    );
+    // Before migration 024, the physical row can be re-created at revision 1
+    // even when its wall clock moved behind the removal receipt.
+    legacy.prepare(`
+      INSERT INTO chat_members (
+        chat_id, user_id, role, membership_revision, joined_at, membership_updated_at
+      ) VALUES (?, ?, 'member', 1, ?, ?)
+    `).run(chatId, memberId, rolledBackWallTime, rolledBackWallTime);
+    legacy.close();
+
+    const upgraded = new SqliteStore(path);
+    const migratedMembership = upgraded.getChatMember(chatId, memberId);
+    expect(migratedMembership?.revision).toBe(3);
+    expect(migratedMembership!.joinedAt > removedAt).toBe(true);
+    expect(migratedMembership!.updatedAt).toBe(migratedMembership!.joinedAt);
+    const removed = upgraded.removeChatMember(chatId, memberId, 3, rolledBackWallTime);
+    expect(removed?.revision).toBe(4);
+    expect(removed!.updatedAt > removedAt).toBe(true);
+    const readded = upgraded.createChatMember(chatId, memberId, "admin", rolledBackWallTime);
+    expect(readded).toMatchObject({ revision: 5, role: "admin" });
+    expect(readded!.joinedAt > removed!.updatedAt).toBe(true);
+    upgraded.close();
+
+    const inspection = new Database(path, { readonly: true });
+    expect(migrationRows(inspection).map(({ id }) => id)).toEqual(MIGRATION_IDS);
+    expect(inspection.prepare(`
+      SELECT last_revision, last_removed_at
+      FROM chat_membership_revision_ledger
+      WHERE chat_id = ? AND user_id = ?
+    `).get(chatId, memberId)).toEqual({
+      last_revision: 4,
+      last_removed_at: removed!.updatedAt
+    });
+    expect(inspection.pragma("integrity_check")).toEqual([{ integrity_check: "ok" }]);
+    expect(inspection.pragma("foreign_key_check")).toEqual([]);
+    inspection.close();
   });
 
   it.each([5, 6, 7, 8, 9, 10] as const)(

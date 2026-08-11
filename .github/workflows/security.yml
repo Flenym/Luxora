@@ -91,6 +91,18 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: false
           exit-code: "1"
+      - name: Build local OTP console image
+        run: docker build --pull --file tools/otp-console/Dockerfile --tag luxora-otp-console:${{ github.sha }} .
+      - name: Scan local OTP console image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: luxora-otp-console:${{ github.sha }}
+          scanners: vuln,secret
+          version: v0.73.0
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
       - name: Scan pinned Prometheus image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

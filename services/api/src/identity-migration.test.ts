@@ -27,7 +27,13 @@ describe("IA-1 append-only migration", () => {
       "015_passkey_authenticator_revoke_intents",
       "016_passkey_authenticator_revoke_intent_delete_guard",
       "017_chat_membership_lifecycle",
-      "018_phone_authentication"
+      "018_phone_authentication",
+      "019_phone_password_challenge",
+      "020_processed_profile_avatar",
+      "021_push_registration_preferences",
+      "022_chat_folders",
+      "023_chat_folder_receipt_retention",
+      "024_chat_membership_revision_ledger"
     ]);
 
     const directory = mkdtempSync(join(tmpdir(), "luxora-ia1-migration-"));

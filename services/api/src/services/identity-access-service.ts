@@ -46,7 +46,8 @@ function toPublicProfile(user: UserRecord): PublicProfile {
     username: user.username,
     displayName: user.displayName,
     bio: user.bio,
-    avatarUrl: user.avatarUrl
+    avatarUrl: user.avatarUrl,
+    avatarPath: user.avatarPath ?? null
   };
 }
 

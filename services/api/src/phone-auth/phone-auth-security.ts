@@ -36,6 +36,10 @@ export class PhoneAuthSecurity {
     return this.#digest("registration-token", token);
   }
 
+  passwordTokenDigest(token: string): string {
+    return this.#digest("password-token", token);
+  }
+
   fingerprint(operation: string, canonicalPayload: string): string {
     return this.#digest(`fingerprint:${operation}`, canonicalPayload);
   }
@@ -54,5 +58,10 @@ export class PhoneAuthSecurity {
   newRegistrationToken(): { raw: string; digest: string } {
     const raw = `luxpr_${randomBytes(32).toString("base64url")}`;
     return { raw, digest: this.registrationTokenDigest(raw) };
+  }
+
+  newPasswordToken(): { raw: string; digest: string } {
+    const raw = `luxpw_${randomBytes(32).toString("base64url")}`;
+    return { raw, digest: this.passwordTokenDigest(raw) };
   }
 }

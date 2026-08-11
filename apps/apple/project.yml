@@ -33,6 +33,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.luxora.mobile
+        CODE_SIGN_ENTITLEMENTS: Apps/iOS/LuxoraMobile.entitlements
         DEVELOPMENT_LANGUAGE: ru
         INFOPLIST_KEY_CFBundleDevelopmentRegion: ru
         INFOPLIST_KEY_CFBundleDisplayName: Luxora
@@ -47,6 +48,11 @@ targets:
         # Full iPad remains frozen until the complete iPhone client is stable.
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: true
+      configs:
+        Debug:
+          APS_ENVIRONMENT: development
+        Release:
+          APS_ENVIRONMENT: production
   LuxoraDesignLab:
     type: application
     platform: iOS

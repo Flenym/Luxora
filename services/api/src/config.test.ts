@@ -296,3 +296,24 @@ describe("phone authentication configuration", () => {
     })).toThrow("valid only for the development provider");
   });
 });
+
+describe("sync invalidation emergency rollback configuration", () => {
+  it("defaults on, accepts an explicit production kill switch, and rejects ambiguous values", () => {
+    expect(loadConfig(production()).syncInvalidationEnabled).toBe(true);
+    expect(loadConfig(production({
+      SYNC_INVALIDATION_ENABLED: "false"
+    })).syncInvalidationEnabled).toBe(false);
+    expect(loadConfig(production({
+      SYNC_INVALIDATION_ENABLED: "0"
+    })).syncInvalidationEnabled).toBe(false);
+    expect(loadConfig(production({
+      SYNC_INVALIDATION_ENABLED: "true"
+    })).syncInvalidationEnabled).toBe(true);
+    expect(() => loadConfig(production({
+      SYNC_INVALIDATION_ENABLED: "yes"
+    }))).toThrow();
+    expect(() => loadConfig(production({
+      SYNC_INVALIDATION_ENABLED: "FALSE"
+    }))).toThrow();
+  });
+});

@@ -38,6 +38,43 @@ services:
       - app
       - observability
 
+  otp-console:
+    profiles: ["development"]
+    build:
+      context: .
+      dockerfile: tools/otp-console/Dockerfile
+    environment:
+      NODE_ENV: development
+      LUXORA_LOCAL_OTP_CONSOLE: enabled
+      PHONE_AUTH_PROVIDER: ${PHONE_AUTH_PROVIDER:-disabled}
+      PHONE_AUTH_DEVELOPMENT_CODE: ${PHONE_AUTH_DEVELOPMENT_CODE:-}
+      LUXORA_OTP_CONSOLE_PUBLIC_PORT: ${LUXORA_OTP_CONSOLE_HOST_PORT:-8081}
+      PORT: "8081"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777,noexec,nosuid,nodev
+    ports:
+      - "127.0.0.1:${LUXORA_OTP_CONSOLE_HOST_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:8081/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 3s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "1"
+    networks:
+      - developer-tools
+
   prometheus:
     image: prom/prometheus:v3.13.2-distroless@sha256:64f71bb84e03c855948418b0fc5dea53e9543d8e3fc9931598f583805507f05e
     profiles: ["observability"]
@@ -87,3 +124,4 @@ networks:
     internal: false
   observability:
     internal: true
+  developer-tools: {}

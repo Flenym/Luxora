@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MessageComposer: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var store: MessengerStore
     var onAttachment: (() -> Void)?
     @FocusState private var isFocused: Bool
@@ -14,11 +15,17 @@ struct MessageComposer: View {
         VStack(spacing: 0) {
             Divider().opacity(0.45)
 
+            if let target = store.composerMode.target {
+                composerContext(target)
+                    .padding(.bottom, 8)
+            }
+
             if store.connectionState != .online {
                 Label(connectionHint, systemImage: "wifi.exclamationmark")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 4)
                     .padding(.bottom, 7)
                     .accessibilityIdentifier("message-composer-connection-state")
@@ -35,6 +42,9 @@ struct MessageComposer: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.bar)
+        .onChange(of: store.composerMode) { _, mode in
+            if mode != .new { isFocused = true }
+        }
     }
 
     private var composerContent: some View {
@@ -53,6 +63,7 @@ struct MessageComposer: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .frame(minWidth: 44, minHeight: 44)
                 .foregroundStyle(.secondary)
                 .background(Color.secondary.opacity(0.08), in: Circle())
                 .accessibilityLabel(LuxoraL10n.text("conversation.attachment"))
@@ -60,15 +71,16 @@ struct MessageComposer: View {
                 .accessibilityIdentifier("message-attachment")
             }
 
-            TextField(LuxoraL10n.text("conversation.message"), text: $store.draft, axis: .vertical)
+            TextField(composerPlaceholder, text: $store.draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .lineLimit(1...6)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 1...4 : 1...6)
                 .submitLabel(.send)
                 .focused($isFocused)
                 .onSubmit(store.sendDraft)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 9)
                 .modifier(ComposerFieldSurface())
+                .accessibilityLabel(LuxoraL10n.text("conversation.message"))
                 .accessibilityIdentifier("message-composer")
 
             Button {
@@ -76,11 +88,24 @@ struct MessageComposer: View {
                     store.sendDraft()
                 }
             } label: {
-                Image(systemName: MessageComposerTruth.sendSymbol)
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: 40, height: 40)
+                if isEditingMessage {
+                    if isEditLoading {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: 40, height: 40)
+                    } else {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 16, weight: .bold))
+                            .frame(width: 40, height: 40)
+                    }
+                } else {
+                    Image(systemName: MessageComposerTruth.sendSymbol)
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 40, height: 40)
+                }
             }
             .buttonStyle(.plain)
+            .frame(minWidth: 44, minHeight: 44)
             .foregroundStyle(store.canSend ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
             .background {
                 Circle().fill(
@@ -95,7 +120,8 @@ struct MessageComposer: View {
                 y: 5
             )
             .disabled(!store.canSend)
-            .accessibilityLabel(LuxoraL10n.text("conversation.send"))
+            .accessibilityLabel(sendAccessibilityLabel)
+            .accessibilityValue(isEditLoading ? "Выполняется" : "")
             .accessibilityHint(
                 store.canSend
                     ? "Отправляет текст через подключённый сервер Luxora"
@@ -106,6 +132,73 @@ struct MessageComposer: View {
         }
         .frame(maxWidth: 920)
         .frame(maxWidth: .infinity)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Скрыть клавиатуру") {
+                    isFocused = false
+                }
+                .accessibilityIdentifier("message-composer-keyboard-dismiss")
+            }
+        }
+    }
+
+    private func composerContext(_ target: MessageComposerTarget) -> some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(LuxoraTheme.iris)
+                .frame(width: 3, height: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isEditingMessage ? "Редактирование" : "Ответ для \(target.authorName)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(LuxoraTheme.iris)
+                Text(target.preview)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button {
+                store.cancelComposerMode()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .frame(minWidth: 44, minHeight: 44)
+            .foregroundStyle(.secondary)
+            .disabled(isEditLoading)
+            .accessibilityLabel("Отменить")
+            .accessibilityIdentifier("message-composer-cancel-mode")
+        }
+        .frame(maxWidth: 920)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("message-composer-mode")
+    }
+
+    private var isEditingMessage: Bool {
+        if case .edit = store.composerMode { return true }
+        return false
+    }
+
+    private var isEditLoading: Bool {
+        guard case let .edit(target) = store.composerMode else { return false }
+        return store.messageMutationState(messageID: target.id, kind: .edit) == .loading
+    }
+
+    private var sendAccessibilityLabel: String {
+        if isEditLoading { return "Сохраняем изменения" }
+        if isEditingMessage { return "Сохранить изменения" }
+        return LuxoraL10n.text("conversation.send")
+    }
+
+    private var composerPlaceholder: String {
+        dynamicTypeSize.isAccessibilitySize
+            ? "Текст"
+            : LuxoraL10n.text("conversation.message")
     }
 
     private var connectionHint: String {

@@ -1,21 +1,24 @@
 import SwiftUI
 
 struct ConversationView: View {
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Bindable var store: MessengerStore
     let conversation: Conversation
 
     var body: some View {
+        let messages = store.selectedMessages
+
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
                     DateDivider(label: LuxoraL10n.text("conversation.today"))
                         .padding(.bottom, 8)
 
-                    ForEach(store.selectedMessages) { message in
+                    ForEach(messages) { message in
                         MessageRow(
                             message: message,
                             onReaction: { emoji in
-                                withAnimation(.snappy(duration: store.reduceMotion ? 0 : 0.24)) {
+                                withAnimation(reducesMotion ? nil : .snappy(duration: 0.24)) {
                                     store.toggleReaction(emoji, messageID: message.id)
                                 }
                             }
@@ -34,9 +37,9 @@ struct ConversationView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 MessageComposer(store: store)
             }
-            .onChange(of: store.selectedMessages.count) { _, _ in
-                guard let lastID = store.selectedMessages.last?.id else { return }
-                withAnimation(.snappy(duration: store.reduceMotion ? 0 : 0.28)) {
+            .onChange(of: messages.count) { _, _ in
+                guard let lastID = messages.last?.id else { return }
+                withAnimation(reducesMotion ? nil : .snappy(duration: 0.28)) {
                     proxy.scrollTo(lastID, anchor: .bottom)
                 }
             }
@@ -63,6 +66,10 @@ struct ConversationView: View {
             ConversationInspector(conversation: conversation)
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
         }
+    }
+
+    private var reducesMotion: Bool {
+        store.reduceMotion || systemReduceMotion
     }
 }
 

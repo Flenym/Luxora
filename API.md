@@ -73,15 +73,22 @@ an injected provider fails startup instead of advertising a broken flow.
 2. `POST /v1/auth/phone/challenges/:challengeId/verify` (10/minute/IP) accepts
    `{code,deviceName,clientNonce}`. The six-digit code has bounded attempts and
    expiry. Account existence is read only after a correct code. An existing
-   phone identity returns
-   `{status:"authenticated",user,tokens}`; a new number returns
+   phone identity without an enabled secret password returns
+   `{status:"authenticated",user,tokens}`. An account with that setting enabled
+   returns `{status:"password_required",passwordToken,maskedPhone,expiresAt}`;
+   a new number returns
    `{status:"profile_required",registrationToken,maskedPhone,expiresAt}`.
-3. During the short registration window,
+3. `POST /v1/auth/phone/password` (5/minute/IP) accepts the short-lived
+   `{passwordToken,password,deviceName,clientNonce}` continuation. A correct
+   password atomically creates the device session; distinct failures are
+   durably bounded and lock the continuation grant. Exact retries recover the
+   same encrypted response, while changed nonce reuse conflicts.
+4. During the short registration window,
    `POST /v1/auth/phone/usernames/check` accepts
    `{registrationToken,username}` and returns
    `{username,available,suggestions}`. This read is 30/minute/IP and does not
    reserve the name.
-4. `POST /v1/auth/phone/registrations` (5/minute/IP) accepts
+5. `POST /v1/auth/phone/registrations` (5/minute/IP) accepts
    `{registrationToken,displayName,username,bio,deviceName,clientNonce}` and
    atomically creates the password-disabled account, verified phone binding,
    privacy defaults, device session and hash-only refresh record. `bio` may be
@@ -89,8 +96,15 @@ an injected provider fails startup instead of advertising a broken flow.
    response; username and phone races cannot create a second account.
 
 The local development provider uses a configured six-digit code but never
-logs or echoes it. A real SMS provider, optional post-OTP secret password,
-legacy-account phone binding and avatar/profile upload are not complete yet.
+logs or echoes it. Authenticated phone accounts can enable, change or disable
+the optional post-OTP secret password through the self-scoped endpoints below;
+changing or disabling an existing password requires the current value. A real
+phone password uses a separate Argon2id hash/flag and never enables the legacy
+username/password endpoint, so it cannot bypass the OTP step. A real
+SMS provider, legacy-account phone binding and independent password recovery
+are not complete yet. Profile avatars use the authenticated upload pipeline
+followed by the owned server-processing command below; arbitrary external
+avatar URLs remain outside the mutation contract.
 
 ### `POST /v1/auth/register`
 
@@ -141,8 +155,35 @@ Returns `{tokens}`. The previous refresh token becomes used. Reusing it revokes 
 | `DELETE /v1/auth/sessions/current` | `204`; current session revoked |
 | `DELETE /v1/auth/sessions/:id` | `204`; target must belong to current user |
 | `GET /v1/me` | `{user}` for current principal |
+| `PATCH /v1/me` | Update one or both of `displayName` and `bio`; authenticated account only |
+| `PUT /v1/me/avatar` | Bind `{attachmentId}` only after the owned image is decoded, metadata-stripped, centre-cropped and re-encoded as a server-verified 512×512 PNG derivative |
+| `DELETE /v1/me/avatar` | Clear the current derivative and release it for orphan retention cleanup |
+| `GET /v1/me/phone-password` | `{eligible,enabled}` for the current phone-bound account |
+| `PUT /v1/me/phone-password` | Enable with `{password}` or change with `{password,currentPassword}` |
+| `DELETE /v1/me/phone-password` | Disable with `{currentPassword}` and replace the stored hash with a new discarded-secret Argon2id placeholder |
 
 Revocation closes an active matching realtime connection with close code `4001`.
+It also revokes every active push registration bound to that session in the same
+database transaction.
+
+### Push registration foundation and notification preferences
+
+`features.push` remains `false`: these endpoints persist safe client state, but
+there is no configured APNs sender or delivery claim yet.
+
+| Method/path | Result |
+| --- | --- |
+| `GET /v1/push/registrations/current` | `{registration}` for the current session, or `null`; the projection never includes the device token |
+| `PUT /v1/push/registrations/current` | Upsert strict `{platform:"apns",environment:"development"|"production",token}`; the topic is server-fixed to `app.luxora.mobile` |
+| `DELETE /v1/push/registrations/current` | Idempotent `204`; revokes only the current session registration |
+| `GET /v1/notifications/settings` | Account defaults/current message, request, mention, sound, badge and preview policy |
+| `PATCH /v1/notifications/settings` | Strict non-empty partial settings update; preview is `hidden`, `sender`, or explicit `full` |
+
+The hexadecimal token transport is bounded but does not assume one permanent
+Apple token byte length. Tokens are encrypted at rest and are never returned,
+logged, placed in URLs or included in notification payloads. Account/session
+transfer of the same token is atomic so logout/login on one device cannot leave
+delivery attached to the previous account.
 
 ### Internal passkey seams — not public product routes
 
@@ -351,6 +392,89 @@ Returns authorized chats with role, member count, last message/activity and unre
 
 Returns `{chat}` for an authorized member. Non-members receive `FORBIDDEN`; the API does not rely on UUID secrecy.
 
+### Per-account chat archive and mute preferences
+
+`GET /v1/chats/:id/preferences` returns only the current member's
+`{preferences:{archivedAt,mutedUntil}}`. `PATCH /v1/chats/:id/preferences`
+accepts a strict non-empty subset:
+
+```json
+{ "archived": true, "mutedUntil": "2026-08-12T09:00:00.000Z" }
+```
+
+`archived:false` unarchives and `mutedUntil:null` unmutes. Archive time is
+server-owned and repeating the same desired archive state preserves its first
+timestamp. Independent partial updates use one column-selective SQLite write,
+so changing mute does not reset archive and vice versa. The state belongs to
+one membership/account; it never changes another member's view. Current
+cross-device convergence uses the exact-account realtime preference event;
+synchronized custom folders use the separate account-global contract below.
+
+### Synchronized custom chat folders
+
+All five routes are authenticated, account-scoped and `private, no-store`.
+Mutation routes have the 60/minute IP bucket plus independent 40/minute account
+and 30/minute device-session buckets, and accept strict JSON only:
+
+| Method/path | Strict request | Success |
+| --- | --- | --- |
+| `GET /v1/chat-folders` | No body | `200 {items:[ChatFolder],stateRevision}` |
+| `POST /v1/chat-folders` | `{title,rules,overrides,clientNonce}` | `201 {folder,stateRevision,replayed}` |
+| `PUT /v1/chat-folders/order` | `{folderIds,expectedStateRevision,clientNonce}` | `200 {items,stateRevision,replayed}` |
+| `PATCH /v1/chat-folders/:id` | `{expectedRevision,clientNonce}` plus at least one of `title`, `rules`, `overrides` | `200 {folder,stateRevision,replayed}` |
+| `DELETE /v1/chat-folders/:id` | `{expectedRevision,clientNonce}` | `200 {folderId,stateRevision,replayed}` |
+
+`ChatFolder` is
+`{id,title,position,revision,rules,overrides,createdAt,updatedAt}`. A title is
+1–48 Unicode code points. An account may have at most 10 custom folders.
+`rules` is exactly
+`{includeKinds,unreadOnly,excludeMuted,includeArchived}`;
+`includeKinds` contains at most the three unique values `direct`, `group` and
+`channel`. `overrides` contains at most 100 unique current-member chat IDs.
+Each override is exactly `{chatId,mode,pinnedPosition}` where `mode` is
+`include|exclude`; `pinnedPosition` is always present, nullable, unique when
+non-null and limited to `0...99`. Only an `include` override may be pinned.
+The server owns `position`: create appends a folder, PATCH does not accept
+position, and reorder requires one non-empty, unique list containing the exact
+current folder-ID set (maximum 10) plus the exact `expectedStateRevision` from
+the client's last atomic folder snapshot.
+
+`revision` is the positive optimistic revision of one folder;
+`stateRevision` is the nonnegative account-wide folder-state revision. A stale
+PATCH/DELETE revision, stale reorder state revision, reorder list that is no
+longer the exact current folder set, folder-count overflow or changed reuse of
+a nonce returns `409 CONFLICT`.
+An unavailable/foreign override chat returns `400 BAD_REQUEST`; strict-shape
+violations return `400 VALIDATION_FAILED`.
+PATCH/DELETE of a missing or another account's folder uses the same generic
+`404`. Missing/invalid authentication is `401` before validation or lookup.
+Exceeding a mutation route's request bucket returns `429 RATE_LIMITED`.
+The GET response reads folder rows, overrides and `stateRevision` from one
+SQLite snapshot, so a concurrent writer cannot produce a hybrid projection.
+
+Every mutation `clientNonce` is scoped to the actor account across create,
+update, delete and reorder. Its operation and canonical normalized fingerprint
+bind an update-immutable encrypted response receipt. An exact response-loss retry returns the
+original response with `replayed:true`, without another mutation, state revision
+or event; reuse for another operation/body conflicts. This guarantee lasts
+exactly 86,400 seconds from the command clock. Capabilities advertise that TTL
+and the maximum 64 active receipts per account. At capacity, a new nonce gets
+`429` with `Retry-After` and structured retry details; exact active retries still
+work. Expired rows are ignored immediately, deleted on nonce reuse, swept in
+bounded batches on startup, every ten minutes and during folder commands. A
+PATCH whose normalized
+title/rules/overrides already equal current state and a reorder that repeats the
+current order still store their replay receipt but preserve folder revisions and
+`stateRevision`, and emit no event. Real create/PATCH/delete/reorder changes
+advance `stateRevision` exactly once; changing a folder or its position advances
+that folder's revision exactly once. Delete compacts the remaining positions;
+only a surviving folder whose position changes advances its revision.
+
+Removing an account from a chat atomically removes that chat's overrides from
+all folders owned by the removed account. Every affected folder advances once,
+the account folder state advances once for the whole membership command, and an
+account-only folder update event is committed alongside the removal event.
+
 ### `POST /v1/chats`
 
 Direct:
@@ -458,8 +582,9 @@ items merely because the requester can access a message-derived download.
 
 ## 8. Core response shapes
 
-`User`: `id`, `username`, `displayName`, `bio`, nullable `avatarUrl`, `createdAt`, optional presence/lastSeen.  
-`Chat`: `id`, `kind`, `title`, nullable `avatarUrl`, `role`, `memberCount`, nullable `lastMessage`, `lastActivityAt`, `createdAt`, `unreadCount`.  
+`User`: `id`, `username`, `displayName`, `bio`, legacy nullable `avatarUrl`, authenticated nullable `avatarPath`, `createdAt`, optional presence/lastSeen.
+
+`Chat`: `id`, `kind`, `title`, nullable `avatarUrl`, `role`, `memberCount`, nullable `lastMessage`, `lastActivityAt`, `createdAt`, `unreadCount`, nullable account-scoped `archivedAt` and `mutedUntil`.
 `Message`: `id`, `chatId`, sender object, `kind:"text"`, nullable `body`, nullable `replyToMessageId`, `clientNonce`, nonnegative `revision`, create/update/edit/delete timestamps.
 
 Clients tolerate and ignore additive response fields but send only fields accepted by the current strict mutation schema. Versioned golden fixtures exercise preferred realtime v2, supported one-version-back realtime v1, capability schema v1 and required-upgrade behavior.
@@ -535,11 +660,21 @@ Malformed, foreign-session, expired, future or overflowed v2 cursors never downg
 
 Durable v1 event types: `chat.created`, `message.created|updated|deleted`, `attachment.stored`, `message.pinned|unpinned`, `topic.created|updated`, `receipt.delivered|read`, `reaction.updated`.
 
-V2 additionally receives `chat.member.changed`. Current members receive the
+V2 additionally receives `chat.member.changed`, `chat.preferences.updated` and
+`chat.folders.updated`. Current members receive the membership
 `member_account` projection for add/role/remove. The removed account receives a
 single `removed_account` removal projection after the membership row is gone;
 older chat-scoped queued/replayed events fail current-membership authorization.
-V1 skips this additive event and must reconcile.
+A preference event is written only when the confirmed archive/mute value changes,
+is bound to the exact account in both its encrypted durable payload and outbox
+audience, and is re-authorized against current membership before live/replay
+delivery. Another member of the same chat cannot receive it. V1 skips these
+additive events and must reconcile. Folder state changes use the strict
+account-global event
+`{type:"chat.folders.updated",audience:"actor_account",accountId,stateRevision,changedAt}`.
+Its durable row/outbox audience is the same account, and the hub checks exact
+`accountId` equality for both live and replay delivery; another account cannot
+receive it. Semantic no-ops emit no folder event.
 
 ### Ephemeral frames
 
@@ -563,7 +698,15 @@ are retained. These are availability controls, not a distributed risk engine.
 
 ## 10. Compatibility and missing capabilities
 
-`/v1/realtime` remains the strict messaging stream and skips additive identity/membership durable events. `/v2/realtime` is additive and accepts messaging plus `chat.member.changed`, `relationship.request.created|removed|accepted|expired`, `relationship.block.changed`, and `safety.report.submitted`; explicit audience fields are enforced by server routing and re-authorized against current state before live/replay dispatch. Request removal is recipient-account-only and carries no dismissal reason. Sender-visible dismissal, block-target and report-subject events intentionally do not exist.
+`/v1/realtime` remains the strict messaging stream and skips additive identity/membership/preference/folder durable events. `/v2/realtime` is additive and accepts messaging plus `chat.member.changed`, `chat.preferences.updated`, `chat.folders.updated`, `relationship.request.created|removed|accepted|expired`, `relationship.block.changed`, and `safety.report.submitted`; explicit audience fields are enforced by server routing and re-authorized against current state before live/replay dispatch. Request removal is recipient-account-only and carries no dismissal reason. Sender-visible dismissal, block-target and report-subject events intentionally do not exist.
+
+Current Docker Node 22 evidence: shared protocol 10 files / 84 tests; folder
+API, storage and independent-writer race suites 3 files / 22 tests; full merged
+API 67 files / 592 tests; and HTTP/realtime authorization matrices 2 files / 14
+tests. The final expiry-purge query-plan check additionally passes 7/7 after the
+full run and proves both paths use their declared indexes without a temporary
+B-tree. The matrices inventory 71 protected HTTP routes, 84 explicit source
+routes and 23 durable realtime audience branches.
 
 `GET /v1/capabilities` is the canonical public discovery contract. It needs no
 bearer token, ignores an invalid bearer, and returns `Cache-Control: no-store`

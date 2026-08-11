@@ -10,11 +10,19 @@ public struct DebugLaunchAutomation: Equatable, Sendable {
     public let conversationID: UUID?
 
     public init?(environment: [String: String]) {
+        let splitPassword: String?
+        if let prefix = environment["LUXORA_DEBUG_PASSWORD_PREFIX"],
+           let suffix = environment["LUXORA_DEBUG_PASSWORD_SUFFIX"] {
+            splitPassword = prefix + suffix
+        } else {
+            splitPassword = nil
+        }
+
         guard environment["LUXORA_DEBUG_AUTOMATION"] == "1",
               let username = environment["LUXORA_DEBUG_USERNAME"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
               username.count >= 3,
-              let password = environment["LUXORA_DEBUG_PASSWORD"],
+              let password = environment["LUXORA_DEBUG_PASSWORD"] ?? splitPassword,
               password.count >= 12
         else { return nil }
 
@@ -33,7 +41,10 @@ enum DebugMobileScenario {
         uuidString: "8f0f19fe-d881-4ddd-8467-37065adf37d8"
     )!
 
-    static func make() -> (store: MessengerStore, capabilities: ServerCapabilities) {
+    static func make(
+        accessibilityMessageIndex: Int? = nil,
+        accessibilityConversationLimit: Int? = nil
+    ) -> (store: MessengerStore, capabilities: ServerCapabilities) {
         let me = Participant(
             id: UUID(uuidString: "770ec1e2-2fdc-445c-a145-c83bf86c3b20")!,
             displayName: "Егор Flenym",
@@ -543,13 +554,30 @@ enum DebugMobileScenario {
             ),
         ]
 
-        let messagesByConversation = [primaryConversationID: messages]
+        let projectedMessages: [ChatMessage]
+        if let accessibilityMessageIndex,
+           messages.indices.contains(accessibilityMessageIndex) {
+            projectedMessages = [messages[accessibilityMessageIndex]]
+        } else {
+            projectedMessages = messages
+        }
+
+        let projectedConversations: [Conversation]
+        if let accessibilityConversationLimit {
+            projectedConversations = Array(
+                conversations.prefix(max(1, accessibilityConversationLimit))
+            )
+        } else {
+            projectedConversations = conversations
+        }
+
+        let messagesByConversation = [primaryConversationID: projectedMessages]
         let store = MessengerStore(
-            conversations: conversations,
+            conversations: projectedConversations,
             messagesByConversation: messagesByConversation,
             currentUser: me,
             selectedConversationID: primaryConversationID,
-            loadedConversationIDs: Set(conversations.map(\.id))
+            loadedConversationIDs: Set(projectedConversations.map(\.id))
         )
         store.configureRemote(
             sender: { conversationID, clientID, text in
@@ -586,6 +614,7 @@ enum DebugMobileScenario {
                 safetyReports: true,
                 realtime: true,
                 reconciliation: true,
+                chatFolders: true,
                 mediaUploads: true,
                 serverSearchConfigured: false,
                 calls: false,

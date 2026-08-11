@@ -5,6 +5,9 @@ import { buildApp } from "./app.js";
 import type { AppConfig } from "./config.js";
 import { contentCipherFromConfig } from "./infrastructure/content-cipher.js";
 import { SqliteStore } from "./infrastructure/sqlite-store.js";
+import { DevelopmentPhoneVerificationDeliveryProvider } from "./phone-auth/phone-delivery-provider.js";
+import { TokenSecurity } from "./security.js";
+import { PhoneAuthService } from "./services/phone-auth-service.js";
 import { testConfig } from "./test-helpers.js";
 
 const DATA_KEY = Buffer.alloc(32, 41).toString("base64url");
@@ -113,8 +116,16 @@ describe("phone-first authentication", () => {
       url: `/v1/auth/phone/challenges/${challengeBody.challengeId as string}/verify`,
       payload: { code: "000000", deviceName: begin.deviceName, clientNonce: wrongNonce }
     };
-    expect((await app.inject(wrong)).statusCode).toBe(401);
-    expect((await app.inject(wrong)).statusCode).toBe(401);
+    const firstWrong = await app.inject(wrong);
+    const replayedWrong = await app.inject(wrong);
+    expect(firstWrong.statusCode).toBe(401);
+    expect(firstWrong.json()).toMatchObject({
+      error: { code: "PHONE_AUTH_CODE_INVALID", details: { reason: "invalid_code" } }
+    });
+    expect(replayedWrong.statusCode).toBe(401);
+    expect(replayedWrong.json()).toMatchObject({
+      error: { code: "PHONE_AUTH_CODE_INVALID", details: { reason: "invalid_code" } }
+    });
     expect(app.luxora.store.findPhoneAuthChallengeById(challengeBody.challengeId)?.attemptsUsed)
       .toBe(1);
 
@@ -275,7 +286,10 @@ describe("phone-first authentication", () => {
     });
     expect(samePhoneNewCommand.statusCode).toBe(429);
     expect(samePhoneNewCommand.json()).toMatchObject({
-      error: { code: "RATE_LIMITED" }
+      error: {
+        code: "PHONE_AUTH_RESEND_COOLDOWN",
+        details: { retryAfterSeconds: phoneConfig().phoneAuthRetryAfterSeconds }
+      }
     });
 
     const exactReplay = await app.inject({
@@ -319,6 +333,9 @@ describe("phone-first authentication", () => {
       payload
     });
     expect(failed.statusCode).toBe(503);
+    expect(failed.json()).toMatchObject({
+      error: { code: "PHONE_AUTH_DELIVERY_UNAVAILABLE" }
+    });
 
     const replay = await app.inject({
       method: "POST",
@@ -422,6 +439,13 @@ describe("phone-first authentication", () => {
         }
       });
       expect(rejected.statusCode).toBe(401);
+      expect(rejected.json()).toMatchObject({
+        error: {
+          code: attempt + 1 === config.phoneAuthMaxAttempts
+            ? "PHONE_AUTH_ATTEMPTS_EXHAUSTED"
+            : "PHONE_AUTH_CODE_INVALID"
+        }
+      });
     }
     expect(identityLookups).toBe(0);
     expect(store.findPhoneAuthChallengeById(challengeId)).toMatchObject({
@@ -438,6 +462,52 @@ describe("phone-first authentication", () => {
       }
     });
     expect(correctAfterLock.statusCode).toBe(401);
+    expect(correctAfterLock.json()).toMatchObject({
+      error: { code: "PHONE_AUTH_ATTEMPTS_EXHAUSTED" }
+    });
     expect(identityLookups).toBe(0);
+  });
+
+  it("persists an expired challenge discriminator and replays it without consuming an attempt", async () => {
+    const config = phoneConfig({ phoneAuthChallengeTtlSeconds: 120 });
+    const store = new SqliteStore(
+      ":memory:",
+      contentCipherFromConfig(config.dataEncryptionKeys, config.activeDataEncryptionKeyId)
+    );
+    let now = new Date("2026-08-04T12:00:00.000Z");
+    const service = new PhoneAuthService(
+      store,
+      new TokenSecurity(config),
+      config,
+      new DevelopmentPhoneVerificationDeliveryProvider(),
+      () => now
+    );
+    try {
+      const challenge = await service.requestChallenge(beginPayload());
+      now = new Date(now.getTime() + 121_000);
+      const verification = {
+        code: DEVELOPMENT_CODE,
+        deviceName: "Expired iPhone",
+        clientNonce: randomUUID()
+      };
+
+      await expect(service.verifyChallenge(challenge.challengeId, verification))
+        .rejects.toMatchObject({
+          statusCode: 401,
+          code: "PHONE_AUTH_CHALLENGE_EXPIRED"
+        });
+      expect(store.findPhoneAuthChallengeById(challenge.challengeId)).toMatchObject({
+        state: "expired",
+        attemptsUsed: 0
+      });
+      await expect(service.verifyChallenge(challenge.challengeId, verification))
+        .rejects.toMatchObject({
+          statusCode: 401,
+          code: "PHONE_AUTH_CHALLENGE_EXPIRED"
+        });
+      expect(store.findPhoneAuthChallengeById(challenge.challengeId)?.attemptsUsed).toBe(0);
+    } finally {
+      store.close();
+    }
   });
 });

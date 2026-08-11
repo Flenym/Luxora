@@ -2,9 +2,13 @@
 
 **Релиз:** Beta-0.1  
 **Владелец и разработчик:** Flenym  
-**Обновлено:** 4 августа 2026
+**Обновлено:** 11 августа 2026
 
 `[x]` means a repository foundation exists, not that a production gate passed. Execution order is server-complete → full iPhone → all other clients/public site.
+
+Полное iPhone-завершение и непрерывная очередь проверяются по
+[`docs/specs/IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md`](docs/specs/IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md);
+один экран, fixture или backend endpoint не закрывает строку без live/Xcode/evidence gates.
 
 ## Immediate truth/build blockers
 
@@ -13,11 +17,12 @@
 - [x] Root editor/ignore/Make/Compose conventions exist.
 - [x] Node, Apple, Android and security/container CI definitions exist.
 - [x] API ships from a digest-pinned Debian 13 distroless Node 22 runtime as
-  UID/GID `65532`, without shell/npm/Corepack. The exact local image passes
-  Trivy 0.73 with 0 High/Critical vulnerabilities and 0 secrets, hardened phone
-  registration/exact replay/authorized-me smoke, API log/DB canary and the live
-  disposable S3-provider gate; cloud deployment scanning/signing/provenance is
-  still a separate production gate.
+  UID/GID `65532`, without shell/npm/Corepack. Current primary
+  `sha256:47e66d5d490d770d79a62708be5061519e5d04b63888e78dfd7934e63f4a046a`
+  and schema-compatible fallback
+  `sha256:f907528e5f0d39656989e5c77cbae8cf4bcabdb97216d14de8bf3bc27063c3d0`
+  pass Trivy 0.73 with 0 High/Critical vulnerabilities and 0 secrets; cloud
+  deployment scanning/signing/provenance remains a separate production gate.
 - [ ] First clean-checkout runs are PASS and retained as release evidence.
 - [ ] Branch protection and mandatory sensitive-path review are configured.
 
@@ -39,6 +44,12 @@
 - [x] Single-node SQLite realtime outbox atomically commits audience events with domain mutations, publishes at least once through owner-bound leases, recovers restart/expired claims, applies capped retry/backoff and retains poison rows as durable failed records.
 - [ ] Physical/distributed event retention, attachment-deletion tombstones, rolling-deploy compatibility and production reconnect/load evidence.
 - [x] Capability negotiation and one-version-back fixtures.
+- [x] Default-on account-projection invalidation is durable on V2 live/replay,
+  absent from V1, and truthfully capability-negotiated. The strict
+  `SYNC_INVALIDATION_ENABLED=false` emergency seam suppresses only
+  `sync.invalidated` creation/replay/live/outbox delivery, acknowledges skipped
+  outbox rows and preserves ordinary events. Old capability fixtures parse the
+  absent field conservatively as `false`.
 - [x] Deterministic single-process frame/typing-rate, slow-consumer, session/pending/auth reconnect hostile mix with cleanup and metrics; production distributed/load evidence remains a separate gate.
 - [ ] Log/content/token canary proof.
 - [x] API-process request logging uses route templates (no query/object IDs), server-generated request IDs, and passes query/path/password/token/content canaries while retaining method/status/duration.
@@ -51,9 +62,13 @@
 - [ ] Telegram-style phone authentication end-to-end release gate.
   - [x] Server foundation: strict E.164 country-calling-code/number contract, six-digit OTP challenge, correct-code-only account lookup, existing phone-account login vs short-lived profile-registration token, name/bio/username completion, availability suggestions, password-disabled phone accounts and exact encrypted token-response replay.
   - [x] SQLite migration `018_phone_authentication`: keyed phone/code/token digests; encrypted full and masked phone, delivery code, device snapshot and bearer responses; atomic identity/user/session/refresh commits; append-only receipts/audit; bounded attempts/expiry; durable per-phone resend window and same-provider-command retry after ambiguous delivery failure. Clean Node 22 Linux evidence: focused API/config/storage/authorization 30/30, migration + identity 2 files/14 tests, full API 59 files/552 tests; shared protocol typecheck plus 6 files/59 tests also pass. A fresh production image and disposable hardened development-provider container complete challenge → profile-required → username check → registration → exact replay → authenticated `/v1/me`; raw DB/WAL inspection finds no full number, OTP or masked number.
+  - [x] Add a separate loopback-only Docker OTP console for Xcode/local client work. The explicit `development` profile uses a pinned distroless non-root/read-only container, never logs the fixed code, rejects production/non-development/malformed configuration and non-local Host headers, and passes health/code-shape/DNS-rebinding/production-fail-closed smoke. It is not an API route or a production SMS substitute.
   - [ ] Wire and qualify a real production SMS provider (the external provider remains an injected interface and startup fails closed without one), distributed IP/phone/risk abuse controls, delivery observability, retention/cleanup and production-database fault injection.
-  - [ ] Add the requested optional post-OTP secret-password/second-factor state, secure recovery, and a verified phone-binding path for pre-phone legacy accounts; current phone-created accounts intentionally have password auth disabled.
-  - [ ] Add pre-auth avatar upload/crop/profile binding or a safe post-registration profile-update flow, then prove expiry/retry/rate-limit/existing/profile-required branches through the real iPhone client. Default initial/color avatars remain a client presentation concern until this exists.
+  - [x] Add the requested optional post-OTP secret-password state for phone-bound accounts: correct OTP returns `password_required`, the continuation is short-lived/bounded/replay-safe, the separate Argon2id hash never enables legacy username/password login, and authenticated settings support enable/change/disable.
+  - [ ] Add independent phone-password recovery and a verified phone-binding path for pre-phone legacy accounts; current phone-created accounts intentionally keep legacy password auth disabled.
+  - [x] Add a strict authenticated post-registration profile-update boundary for display name and bio: `PATCH /v1/me` accepts only those owner fields, trims and bounds them, persists atomically in SQLite and rejects empty/unknown/unauthenticated mutations. Protocol typecheck/build plus 2 protocol and 2 API integration tests pass in clean Node 22 Linux. iPhone wiring/UI evidence remains a separate client checkpoint.
+  - [x] Server half of safe profile avatars: strict `{attachmentId}` mutation accepts only an owned verified image, reads it through authorized storage, bounds source bytes/pixels, auto-orients, centre-crops and metadata-strips into a 512×512 PNG derivative, rechecks quota under the writer lock, binds it with SQLite ownership/trust triggers, honors discovery/block visibility, and supports clear/orphan retention. Arbitrary `avatarUrl` mutation remains rejected. The merged protocol suite is green at 9 files/68 tests and the API at 64 files/567 tests. The verified distroless image passed fresh-volume and real-data-clone migration 021 flows; the live migration preserved 30 users/39 sessions exactly, then a post-deploy smoke intentionally added one test account. Current live integrity/foreign keys and API/OTP hardening are clean. Sealed pre-push backup `Beta-0.1/pre-push-20260811T082301Z` and stopped rollback container are retained outside the active runtime.
+  - [x] Wire resumable upload → processed avatar binding into onboarding/profile on the real iPhone client. Focused Swift tests and signed build pass; fixture-free crop/upload/save, terminate/relaunch server restore and clear pass 1/1 with canary-clean retained evidence. Expiry/rate-limit/storage-pressure and real-device gates remain open.
 - [ ] Passkeys/WebAuthn, multiple authenticators, recovery and step-up.
 - [x] Authenticated WebAuthn ceremony orchestration contract with exact RP/origin, 32-byte ref/digest challenge boundary and CAS/idempotency/race tests.
 - [x] Independent passkey-domain adversarial audit: actor-oracle-safe errors, response-bound idempotency, exact command/store/verifier normalization, active-policy rehydration, verifier-crossing-expiry handling, immutable-BE enforcement, global credential-ID and credential-row-CAS contracts/tests.
@@ -84,7 +99,17 @@
 - [x] Group/channel membership list/add/role/remove with one immutable owner, 200-member limit, actor-scoped exact receipts, optimistic revisions, V2 current/removed audiences, reconciliation template and independent-writer removal-vs-send proof.
 - [ ] Ownership transfer ceremony, invitation approval/privacy, join requests/links and production-database membership fault injection.
 - [x] Replies, privacy-minimized forwards, pins, edit history and topic foundations.
-- [ ] Quotes, scoped deletion, scheduled send, threads/comments/archive/folders/drafts/notification state.
+- [x] Account-scoped archive/mute foundation on existing membership columns: strict GET/PATCH, additive chat projections, idempotent server archive time, explicit unarchive/unmute and column-selective writes pass protocol/API/authorization tests. V2 emits an exact account-bound `chat.preferences.updated` only after a real confirmed state change; live/replay rechecks account identity and current membership, while V1 skips the additive event. This foundation is included in the current migration-024 primary live runtime. Full iPhone v2 cursor/reconciliation/UI wiring remains a separate client checkpoint.
+- [x] Account-scoped synchronized custom chat folders: five strict authenticated routes, 10-folder/48-code-point-title/100-override limits, atomic snapshot reads, folder/account CAS revisions, normalized encrypted exact-response receipts with a public 24-hour/64-active quota, actionable `Retry-After`, migration `023`, indexed bounded cleanup, semantic no-op handling, exact-account V2 realtime and atomic override cleanup on membership removal. Current exact-tree evidence passes protocol 10 files/85 tests, API 68 files/606 tests, both typechecks, migration chain 15/15 and authorization matrices. The exact primary `47e66d5d…` is now live on migration `024`; postdeploy phone/folder/V2 live+replay/V1-absence and SQLite integrity/FK gates PASS.
+- [x] Migration `024_chat_membership_revision_ledger` prevents remove/re-add ABA
+  resets. Candidate-migrated fallback rehearsal proved revisions `1 → 2 → 3`.
+  Controlled promotion preserved every pre-smoke row count, completed in
+  `12.005 s`, and retained verified sealed backup
+  `Beta-0.1/pre-live-m024-promotion-20260811T143400Z` with `SHA256SUMS` digest
+  `f0867986a23f8b03b919e3117616ee6e18d5ab7dd09b89873bb1f538778cbabc`.
+  Stopped image `c514db0e…` must never be restarted on migration `024`; only
+  fallback `f907528e…` with explicit invalidation flag `false` is supported.
+- [ ] Quotes, scoped deletion, scheduled send, threads/comments, synchronized drafts and per-chat notification overrides.
 - [ ] Moderation, audit, slow mode, lockdown, reports/appeals and onboarding.
 - [ ] Permission property tests and moderation abuse simulations.
 
@@ -110,6 +135,7 @@
 - [ ] Complete people/chat/public-space search, ranking, pagination abuse and inaccessible-snippet corpus.
 - [ ] Local-only Private search contract and encrypted local-index semantics.
 - [ ] APNs/FCM/Web Push token lifecycle and opaque/minimized payloads.
+- [x] APNs registration foundation: current-session upsert/rotate/transfer/revoke, encrypted token at rest, token-free projection, strict app topic/environment boundary, session-revoke cascade and synchronized global notification preferences with hidden previews by default. The full merged protocol/API regressions pass at 9 files/68 tests and 64 files/567 tests respectively. Fresh-volume, stopped real-data clone and live HTTP/hardening checks pass on migration 021 with rollback and sealed backup retained. Real APNs provider credentials/delivery/410 feedback and real-device delivery evidence remain open.
 - [ ] Synced notification, mute, presence and multi-device state.
 - [ ] Durable jobs/retry/dead-letter/idempotency and replay retention.
 - [ ] Rolling deploy/reconnect storm/no-snippet-leak evidence.
@@ -164,16 +190,21 @@
 - [x] Independent full-reference QA inspects all 62 immutable user screenshots at original detail, verifies every source SHA-256, records per-file hierarchy/controls/scroll/runtime/backend/test truth in `screens_app_iphone/full_reference_qa/`, and makes only those 62 screenshots authoritative; generated boards remain visual-only, while the old username/password primary auth is explicitly superseded by the required Russian country/phone → OTP → name/profile flow.
 - [x] The primary iOS auth surface implements Russian `Старт → страна/номер → OTP → имя/профиль → username → разрешения → Чаты`, exact live API adapter calls, disabled invalid CTAs, masked phone, resend timer and a truthful DEBUG-only traversal. The complete searchable country picker, combined E.164 bound, reviewed SVG contour route and iOS 26 presentation behavior are covered by Xcode UI tests. Merged package verification executes 39 XCTest cases with 38 passes plus one expected opt-in live skip, and three additional Swift Testing cases pass; a separate opt-in fixture-free iPhone 17 Pro run completed the real challenge/OTP/profile-required/username/registration/sync path and persisted the restored session. Seven full-device, checksum-verified frames are retained in `screens_app_iphone/production/v6-live-phone-onboarding-ru/`; their README explicitly leaves Telegram 1:1 acceptance open.
 - [x] Connected iPhone chat/navigation checkpoint: remote refresh/load/error/retry, optimistic text retry with the same nonce, mark-read, reaction add/remove, known-contact search and direct-chat creation are implemented and live-tested against the local API. Profile copy/share/QR, loaded-message contact search, persisted contact sort, folder filter/count/reset and real iOS permission-state routes are implemented with unsupported server actions locked. Merged Swift tests, Xcode build, 2/2 chat UI smokes and 3/3 navigation smokes pass; eight selected full-device captures and honest gap lists are retained in `screens_app_iphone/production/v7-live-chat-functions-ru/` and `v7-telegram-navigation-settings-ru/`. This closes a functional checkpoint, not the 62-screen pixel gate.
+- [x] Synchronized iPhone chat-folders v13 checkpoint: system All/Archive, horizontally scrollable custom folders, strict rules/explicit overrides/custom pin order, server-confirmed settings/editor mutations, Russian selected states and process-safe DEBUG route automation are wired into the production SwiftUI shell. Current-source package verification executes 259 XCTest cases with 4 expected live-only skips and 0 failures plus Swift Testing 8/8. The visual journey passes 1/1 in `Test-LuxoraMobile-2026.08.11_17-49-50-+0300.xcresult`; the final folder/navigation/accessibility group passes 4/4 with 0 failures/skips in `Test-LuxoraMobile-2026.08.11_17-53-16-+0300.xcresult` and exactly one documented non-failing composer/keyboard layout warning. Seven final 1206×2622 frames, a truthful separate-launch/real-swipe archive record and verified manifest/SHA are retained in `screens_app_iphone/production/v13-chat-folders-ru/` and were inspected by root plus an independent reviewer; v13 has no P0/P2 finding. This is deterministic UI evidence, not a live-backend screenshot claim, offline/process-death proof or 62/62 pixel closure.
+- [x] Message Requests iPhone functional checkpoint: incoming/outgoing lists, exact-username recipient lookup, nonce-stable creation, atomic accept into a direct chat with the server-confirmed first message, recipient-private dismiss and server-confirmed privacy GET/PATCH are wired through `ApplicationSession`/`MessengerStore`. Loading/empty/error/retry/destructive-confirmation states are real, inconsistent projections are rejected, 17 non-live selected package tests pass, the separate fixture-free Docker journey passes 1/1, and one signed iPhone 17 Pro Max unified run passes 4/4. Eleven visually inspected 1320×2868 captures plus README/SHA are retained in `screens_app_iphone/production/v10-message-requests-ru/`. Cursor pagination, offline/process-death recovery, realtime reconciliation and the complete pixel/accessibility/release gates remain open.
+- [x] iPhone APNs registration/global notification-settings foundation: AppDelegate token bridge, strict token-free API/store, token-before-session/session-before-token ordering, rotation/signout/replacement/late-401 fences, permission-denied unregister and Debug/Release environment mapping are implemented. Focused tests pass 17/17, merged Swift package executes 150 with 2 expected skips and 0 failures plus Swift Testing 3/3, and signed compile is green. Real Apple credentials/device delivery, foreground/background payload handling and 410 feedback remain open.
+- [x] Postpromotion live iPhone integration checkpoint: Community, Message Requests, registration/chat/mutations and scoped V2 preferences/recovery journeys all pass. The first combined live run hit global HTTP 429, after which its two affected paths passed isolated retries; do not describe this as one uninterrupted monolithic live run.
 - [ ] Current Telegram-reference iPhone pass: native iOS 26 shell is implemented as Контакты/Звонки/Чаты/Настройки plus a separate Поиск control; overflow folder/status rails, dense chats and expanded Russian Settings are implemented. All 62 primary references are reviewed/mapped and seven same-size overlays expose remaining deviations. Live new-account phone onboarding is now closed, while P0 routes and the full 62-screen 1:1 Russian acceptance set remain in progress.
 - [ ] P0 pixel closure 01/02/04: Chats remains `0.1301 / 0.3281` with header/actions/rows open; Contacts improved to `0.0660 / 0.4132` but exact row/avatar/alphabet detail remains open; Search improved to `0.0992 / 0.3535` but global result taxonomy and live server search remain gated.
 - [ ] P0 truth/geometry closure 03/24/27: Calls intentionally shows an empty signaling gate (`0.0951 / 0.2397`); Contact profile has aligned main Y-bands (`0.1451 / 0.3643`) but locked media/actions; Direct chat (`0.2184 / 0.1662`) still differs in message heights/content and lacks durable media.
-- [ ] P0 phone-auth QA: successful `profile_required` live handshake, complete country picker, combined E.164 validation, exact native contour route and restored new-account session are proven. Still prove expiry, wrong-code attempt exhaustion, resend/rate-limit and existing-account branches through the real iPhone client, then retain the complete UI suite as one release artifact.
-- [x] P0 registration onboarding client path: name, optional circular avatar crop, optional 500-character bio, server username availability/errors/suggestions, permission rationale, explicit account synchronization and Chats are implemented. A live no-avatar new-account run proves profile, username, registration and deterministic colored-initial fallback. Remote avatar persistence remains correctly unclaimed until the server exposes an upload/profile-update endpoint.
-- [ ] P0 existing-account/2FA onboarding: route authenticated users through explicit sync/recovery; add `password_required` only after the backend discriminator and verification contract exist. Current decoder supports only `authenticated` and `profile_required`, so a password mock cannot close 2FA.
+- [ ] P0 phone-auth QA: successful `profile_required` and existing-account `password_required` live handshakes, complete country picker, combined E.164 validation, exact native contour route and restored sessions are proven. Still prove expiry, wrong-code attempt exhaustion, resend/rate-limit and recovery branches through the real iPhone client, then retain the complete UI suite as one release artifact.
+- [x] P0 registration/profile client path: name, optional circular avatar crop, optional 500-character bio, server username availability/errors/suggestions, permission rationale, explicit account synchronization and Chats are implemented. Onboarding and profile editing use the real resumable upload → processed avatar binding; fixture-free runs prove crop/upload/save, terminate/relaunch server restore and clear. Expiry/rate-limit/storage-pressure, poor-network and real-device evidence remain open.
+- [x] P0 existing-account/2FA functional checkpoint: real phone → OTP → `password_required`, invalid-password rejection, correct login, server password change and disable pass fixture-free 1/1 after fixing the SwiftUI focus/root-replacement race. Expiry/exhaustion/recovery and complete release UI coverage remain open.
 - [ ] P0 contextual permissions: the production first-install rationale and user-triggered notification/contact requests are implemented; camera, microphone and photo usage descriptions are packaged and those permissions remain deferred until first relevant use. Still cover allow/deny/limited/restricted, Settings recovery and OS-state recheck with retained UI tests on supported OS versions.
 - [ ] P0 remaining 20–23 and 25–31: ownership-aware context menus, channel/group/contact profiles, direct/saved/channel/group conversations and mutation/failure states still lack 1:1 runtime captures/tests.
-- [ ] P1 05–19 and 32–35: Settings root remains `0.1941 / 0.2209`; complete all long-scroll/profile/device/folder/notification/data/storage/appearance/power/language/support/QR/privacy screens in Russian, using all five family-17 layouts without Telegram commerce or unsupported promises.
-- [ ] Durable outbox/cursor/reconcile harness with poor-network tests.
+- [ ] P1 05–19 and 32–35: Settings root remains `0.1941 / 0.2209`; v13 retains accepted folder settings/editor evidence, while the remaining long-scroll/profile/device/notification/data/storage/appearance/power/language/support/QR/privacy screens still need complete Russian family-17 coverage without Telegram commerce or unsupported promises.
+- [ ] P1 composer/keyboard geometry warning: a broader folder-to-chat journey reports one non-failing `Invalid frame dimension (negative or non-finite)`. Removing the outer single-effect `GlassEffectContainer` did not change the warning and was reverted; isolate the actual layout source and retain a warning-free rerun without regressing v13.
+- [ ] Complete durable local database/outbox/cache and persisted V2 cursor/reconcile recovery with poor-network, reconnect storm, conflict and process-death tests. The current strict 12-collection snapshot, account/session fences and isolated postpromotion recovery journey already pass; they do not prove durability.
 - [ ] Add media/push/call/E2EE interop fixtures only when corresponding server phase is testable.
 - [ ] Keep it synthetic/minimal; no broad product polish or fake completion.
 
@@ -204,7 +235,7 @@ Only build/security/truth/accessibility maintenance is allowed in these foundati
 - [x] Add a standalone design preview plus Reduced Motion/Transparency, high-contrast, lifecycle and timing rules.
 - [x] Port the reviewed SVG route into platform-native SwiftUI contour data using the reviewed 1254-unit source coordinates and uniform transform.
 - [x] Wire the invisible-route, two-runner contour reveal into the iPhone first-launch screen with Reduced Motion handling.
-- [ ] Replace the generic session-restoration progress view with the proven contour treatment and validate cancellation/failure recovery.
+- [x] Replace the generic session-restoration progress view with the proven contour treatment and validate cancellation/failure recovery. The production root now restores a real Keychain session through the invisible two-runner route, exposes cancel/error/retry/sign-in-again states, passes Reduced Motion/Transparency and VoiceOver simulator gates, and retains a fixture-free bad-API → retry → live Chats journey. Real-device energy remains separate below.
 - [ ] Validate the loader on real iPhone hardware for VoiceOver, motion settings, energy, launch time and failure recovery.
 - [ ] Wire the loader into the public/download website only after that phase is unfrozen and prove no LCP/INP regression.
 - [ ] Port the proven loader to remaining clients in the approved client order.

@@ -3,18 +3,27 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   AddChatMemberRequestSchema,
   CheckPhoneUsernameSchema,
+  CompletePhonePasswordChallengeSchema,
+  ConfigurePhonePasswordSchema,
   createCapabilitiesResponseV1,
+  CreateChatFolderRequestSchema,
   CreateChatRequestSchema,
   CreateMessageRequestSchema,
   CreateSafetyReportSchema,
   CreateTopicRequestSchema,
   CreateUploadRequestSchema,
   CursorQuerySchema,
+  DeleteChatFolderRequestSchema,
+  DisablePhonePasswordSchema,
   EditMessageRequestSchema,
   ForwardMessageRequestSchema,
   IdSchema,
   LoginRequestSchema,
   MarkReadRequestSchema,
+  PatchChatPreferencesSchema,
+  PatchChatFolderRequestSchema,
+  PatchNotificationSettingsSchema,
+  PatchCurrentUserSchema,
   PatchPrivacySettingsSchema,
   CompletePhoneRegistrationSchema,
   ReactionRequestSchema,
@@ -22,12 +31,15 @@ import {
   RefreshRequestSchema,
   RequestPhoneChallengeSchema,
   RemoveChatMemberRequestSchema,
+  ReorderChatFoldersRequestSchema,
+  SetProfileAvatarSchema,
   RegisterRequestSchema,
   SearchQuerySchema,
   SendMessageRequestSchema,
   UsernameSchema,
   UpdateChatMemberRoleRequestSchema,
   UpdateTopicRequestSchema,
+  UpsertPushRegistrationSchema,
   VerifyPhoneChallengeSchema
 } from "@luxora/protocol";
 import { z } from "zod";
@@ -39,8 +51,11 @@ import type { Metrics } from "../metrics.js";
 import type { AttachmentService } from "../services/attachment-service.js";
 import type { AuthService } from "../services/auth-service.js";
 import type { ChatService } from "../services/chat-service.js";
+import type { ChatFolderService } from "../services/chat-folder-service.js";
 import type { IdentityAccessService } from "../services/identity-access-service.js";
+import type { NotificationService } from "../services/notification-service.js";
 import type { PhoneAuthService } from "../services/phone-auth-service.js";
+import type { ProfileAvatarService } from "../services/profile-avatar-service.js";
 import type { SearchService } from "../services/search-service.js";
 import type { UploadService } from "../services/upload-service.js";
 import { createIdentityRateLimitGuards } from "./identity-rate-limit.js";
@@ -65,8 +80,11 @@ interface RouteDependencies {
   store: Store;
   auth: AuthService;
   chats: ChatService;
+  chatFolders: ChatFolderService;
   identity: IdentityAccessService;
+  notifications: NotificationService;
   phoneAuth: PhoneAuthService;
+  profileAvatars: ProfileAvatarService;
   uploads: UploadService;
   attachments: AttachmentService;
   search: SearchService;
@@ -167,7 +185,7 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     uploadSessionTtlSeconds: dependencies.config.uploadSessionTtlMinutes * 60,
     serverSearchConfigured: dependencies.serverSearchConfigured,
     phoneAuthenticationAvailable: dependencies.phoneAuth.available
-  }));
+  }, dependencies.config.syncInvalidationEnabled));
 
   app.post("/v1/auth/phone/challenges", {
     config: { rateLimit: { max: 5, timeWindow: "1 minute" } }
@@ -182,6 +200,13 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { id } = IdParamSchema.parse(request.params);
     const input = VerifyPhoneChallengeSchema.parse(request.body);
     return reply.send(await dependencies.phoneAuth.verifyChallenge(id, input));
+  });
+
+  app.post("/v1/auth/phone/password", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const input = CompletePhonePasswordChallengeSchema.parse(request.body);
+    return reply.send(await dependencies.phoneAuth.completePassword(input));
   });
 
   app.post("/v1/auth/phone/registrations", {
@@ -237,6 +262,80 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   app.get("/v1/me", { preHandler: dependencies.authGuard }, async (request) => ({
     user: dependencies.auth.getUser(request.auth.userId)
   }));
+
+  app.patch("/v1/me", { preHandler: dependencies.authGuard }, async (request) => {
+    const input = PatchCurrentUserSchema.parse(request.body);
+    return { user: dependencies.auth.updateUser(request.auth.userId, input) };
+  });
+
+  app.put("/v1/me/avatar", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const input = SetProfileAvatarSchema.parse(request.body);
+    return { user: await dependencies.profileAvatars.set(request.auth.userId, input.attachmentId) };
+  });
+
+  app.delete("/v1/me/avatar", { preHandler: dependencies.authGuard }, async (request) => ({
+    user: dependencies.profileAvatars.clear(request.auth.userId)
+  }));
+
+  app.get("/v1/me/phone-password", { preHandler: dependencies.authGuard }, async (request) =>
+    dependencies.auth.phonePasswordStatus(request.auth.userId)
+  );
+
+  app.put("/v1/me/phone-password", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const input = ConfigurePhonePasswordSchema.parse(request.body);
+    return dependencies.auth.configurePhonePassword(request.auth.userId, input);
+  });
+
+  app.delete("/v1/me/phone-password", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const input = DisablePhonePasswordSchema.parse(request.body);
+    return dependencies.auth.disablePhonePassword(request.auth.userId, input);
+  });
+
+  app.get("/v1/push/registrations/current", {
+    preHandler: dependencies.authGuard
+  }, async (request) => ({
+    registration: dependencies.notifications.currentRegistration(request.auth)
+  }));
+
+  app.put("/v1/push/registrations/current", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const input = UpsertPushRegistrationSchema.parse(request.body);
+    return { registration: dependencies.notifications.register(request.auth, input) };
+  });
+
+  app.delete("/v1/push/registrations/current", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    dependencies.notifications.unregister(request.auth);
+    return reply.code(204).send();
+  });
+
+  app.get("/v1/notifications/settings", {
+    preHandler: dependencies.authGuard
+  }, async (request) => ({
+    settings: dependencies.notifications.settings(request.auth.userId)
+  }));
+
+  app.patch("/v1/notifications/settings", {
+    preHandler: dependencies.authGuard
+  }, async (request) => {
+    const input = PatchNotificationSettingsSchema.parse(request.body);
+    return {
+      settings: dependencies.notifications.updateSettings(request.auth.userId, input)
+    };
+  });
 
   app.get("/v1/users/search", {
     preHandler: [dependencies.authGuard, identityRateLimits.discovery],
@@ -336,6 +435,44 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     });
   });
 
+  app.get("/v1/chat-folders", { preHandler: dependencies.authGuard }, async (request) => {
+    return dependencies.chatFolders.list(request.auth.userId);
+  });
+
+  app.post("/v1/chat-folders", {
+    preHandler: [dependencies.authGuard, identityRateLimits.chatFolderMutation],
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const input = CreateChatFolderRequestSchema.parse(request.body);
+    return reply.code(201).send(dependencies.chatFolders.create(request.auth.userId, input));
+  });
+
+  app.put("/v1/chat-folders/order", {
+    preHandler: [dependencies.authGuard, identityRateLimits.chatFolderMutation],
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const input = ReorderChatFoldersRequestSchema.parse(request.body);
+    return dependencies.chatFolders.reorder(request.auth.userId, input);
+  });
+
+  app.patch("/v1/chat-folders/:id", {
+    preHandler: [dependencies.authGuard, identityRateLimits.chatFolderMutation],
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = PatchChatFolderRequestSchema.parse(request.body);
+    return dependencies.chatFolders.patch(request.auth.userId, id, input);
+  });
+
+  app.delete("/v1/chat-folders/:id", {
+    preHandler: [dependencies.authGuard, identityRateLimits.chatFolderMutation],
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = DeleteChatFolderRequestSchema.parse(request.body);
+    return dependencies.chatFolders.delete(request.auth.userId, id, input);
+  });
+
   app.get("/v1/chats", { preHandler: dependencies.authGuard }, async (request) => {
     const query = CursorQuerySchema.parse(request.query);
     return dependencies.chats.listChats(request.auth.userId, query.limit, query.cursor);
@@ -349,6 +486,17 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   app.get("/v1/chats/:id", { preHandler: dependencies.authGuard }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
     return { chat: dependencies.chats.getChat(request.auth.userId, id) };
+  });
+
+  app.get("/v1/chats/:id/preferences", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    return { preferences: dependencies.chats.getPreferences(request.auth.userId, id) };
+  });
+
+  app.patch("/v1/chats/:id/preferences", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = PatchChatPreferencesSchema.parse(request.body);
+    return { preferences: dependencies.chats.updatePreferences(request.auth.userId, id, input) };
   });
 
   app.get("/v1/chats/:id/members", { preHandler: dependencies.authGuard }, async (request) => {

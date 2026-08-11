@@ -44,6 +44,10 @@ describe("explicit password-auth state", () => {
     await expect(verifyPassword(second, "any-client-password")).resolves.toBe(false);
   });
 
+  // This is deliberately a production-cost timing-oracle boundary: multiple
+  // hashes and sequential Argon2id verifications, including the corrupt-hash
+  // dummy path. A constrained CI runner needs a larger outer
+  // budget; none of the cryptographic work is replaced with test parameters.
   it("does full Argon2 verification yet generically rejects disabled and corrupt accounts", async () => {
     const directory = mkdtempSync(join(tmpdir(), "luxora-password-disabled-"));
     const path = join(directory, "auth.sqlite");
@@ -123,5 +127,5 @@ describe("explicit password-auth state", () => {
     expect(enabled.user.id).toBe(ENABLED_ID);
     expect(store.findUserById(ENABLED_ID)?.passwordAuthEnabled).toBe(true);
     expect(store.findUserById(DISABLED_ID)?.passwordAuthEnabled).toBe(false);
-  });
+  }, 30_000);
 });

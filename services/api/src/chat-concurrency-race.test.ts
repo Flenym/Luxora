@@ -1056,6 +1056,73 @@ describe("chat convergence across independent SQLite writers", () => {
     }
   });
 
+  it("prevents membership ABA after remove and re-add, including a rolled-back clock", () => {
+    const fixture = setup();
+    try {
+      acceptRelationship(fixture.store, fixture.owner, fixture.member);
+      const removeNonce = randomUUID();
+      const removed = withFixedClock(CLOCK_AHEAD, () => fixture.service.removeMember(
+        fixture.owner.id,
+        fixture.chatId,
+        fixture.member.id,
+        { expectedRevision: 1, clientNonce: removeNonce }
+      ));
+      expect(removed.membership.revision).toBe(2);
+
+      const addInput: AddChatMemberRequest = {
+        userId: fixture.member.id,
+        role: "member",
+        clientNonce: randomUUID()
+      };
+      const readded = withFixedClock(CLOCK_BEHIND, () => fixture.service.addMember(
+        fixture.owner.id,
+        fixture.chatId,
+        addInput
+      ));
+      expect(readded).toMatchObject({ replayed: false, membership: { revision: 3 } });
+      expect(readded.membership.joinedAt > removed.membership.updatedAt).toBe(true);
+      expect(withFixedClock(CLOCK_AHEAD, () => capture(() => fixture.service.updateMemberRole(
+        fixture.owner.id,
+        fixture.chatId,
+        fixture.member.id,
+        { role: "admin", expectedRevision: 1, clientNonce: randomUUID() }
+      )))).toMatchObject({ ok: false, statusCode: 409, message: "Chat membership revision is stale" });
+      expect(withFixedClock(CLOCK_AHEAD, () => capture(() => fixture.service.removeMember(
+        fixture.owner.id,
+        fixture.chatId,
+        fixture.member.id,
+        { expectedRevision: 1, clientNonce: randomUUID() }
+      )))).toMatchObject({ ok: false, statusCode: 409, message: "Chat membership revision is stale" });
+
+      const promoted = withFixedClock(CLOCK_BEHIND, () => fixture.service.updateMemberRole(
+        fixture.owner.id,
+        fixture.chatId,
+        fixture.member.id,
+        { role: "admin", expectedRevision: 3, clientNonce: randomUUID() }
+      ));
+      expect(promoted.membership).toMatchObject({ revision: 4, role: "admin" });
+      expect(promoted.membership.updatedAt > readded.membership.updatedAt).toBe(true);
+
+      // Exact replay remains the original response even after a later role
+      // mutation advances the active row.
+      const replay = withFixedClock(CLOCK_AHEAD, () => fixture.service.addMember(
+        fixture.owner.id,
+        fixture.chatId,
+        addInput
+      ));
+      expect(replay).toEqual({ ...readded, replayed: true });
+      expect(fixture.store.getChatMember(fixture.chatId, fixture.member.id)).toMatchObject({
+        revision: 4,
+        role: "admin"
+      });
+      const events = claimPendingEvents(fixture);
+      expect(events.filter(({ event }) => event.type === "chat.member.changed")).toHaveLength(6);
+      expect(events.filter(({ event }) => event.type === "chat.created")).toHaveLength(1);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
   it("lets only one expected membership revision win across independent writers", async () => {
     const fixture = setup();
     try {

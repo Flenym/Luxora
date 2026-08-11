@@ -7,9 +7,9 @@ import {
   ChatMemberSchema,
   ChatMembershipMutationResponseSchema,
   CheckPhoneUsernameSchema,
+  CompletePhonePasswordChallengeSchema,
   CompletePhoneRegistrationSchema,
-  CheckPhoneUsernameSchema,
-  CompletePhoneRegistrationSchema,
+  ConfigurePhonePasswordSchema,
   CreateMessageRequestSchema,
   CreateSafetyReportSchema,
   CreateUploadRequestSchema,
@@ -21,7 +21,7 @@ import {
   MessageRequestSenderProjectionSchema,
   PatchPrivacySettingsSchema,
   PhoneChallengeResponseSchema,
-  PhoneUsernameAvailabilityResponseSchema,
+  PhonePasswordStatusSchema,
   PhoneRegistrationTokenSchema,
   PhoneUsernameAvailabilityResponseSchema,
   RequestPhoneChallengeSchema,
@@ -35,6 +35,7 @@ import {
   RegisterRequestSchema,
   SafetyReportSummarySchema,
   SendMessageRequestSchema,
+  SyncInvalidatedRealtimeEventSchema,
   VerifyPhoneChallengeResponseSchema,
   VerifyPhoneChallengeSchema,
   UserLookupResponseSchema
@@ -135,6 +136,29 @@ describe("protocol validation", () => {
       maskedPhone: "+7 ••• •••-45-67",
       expiresAt: "2026-08-04T12:10:00.000Z",
       user: {}
+    }).success).toBe(false);
+    const passwordToken = `luxpw_${"b".repeat(43)}`;
+    expect(VerifyPhoneChallengeResponseSchema.parse({
+      status: "password_required",
+      passwordToken,
+      maskedPhone: "+7 ••• •••-45-67",
+      expiresAt: "2026-08-04T12:10:00.000Z"
+    })).toMatchObject({ status: "password_required", passwordToken });
+    expect(CompletePhonePasswordChallengeSchema.parse({
+      passwordToken,
+      password: "секретная фраза",
+      clientNonce: nonce
+    })).toMatchObject({
+      passwordToken,
+      deviceName: "Unknown device",
+      clientNonce: nonce
+    });
+    expect(ConfigurePhonePasswordSchema.safeParse({
+      password: "short"
+    }).success).toBe(false);
+    expect(PhonePasswordStatusSchema.safeParse({
+      eligible: false,
+      enabled: true
     }).success).toBe(false);
     expect(CheckPhoneUsernameSchema.safeParse({
       registrationToken,
@@ -318,6 +342,32 @@ describe("protocol validation", () => {
     expect(DurableRealtimeEventSchema.safeParse({
       ...removed,
       changedAt: "2026-08-03T12:02:00.000Z"
+    }).success).toBe(false);
+  });
+
+  it("keeps projection invalidations strict and v2-only", () => {
+    const event = {
+      type: "sync.invalidated",
+      audience: "account_projection",
+      accountId: "9ec9347c-9306-4108-aab4-e7762b73b201",
+      reason: "profile_updated",
+      changedAt: "2026-08-03T12:00:00.000Z"
+    } as const;
+
+    expect(SyncInvalidatedRealtimeEventSchema.parse(event)).toEqual(event);
+    expect(DurableRealtimeEventSchema.safeParse(event).success).toBe(true);
+    expect(RealtimeEventSchema.safeParse(event).success).toBe(false);
+    expect(SyncInvalidatedRealtimeEventSchema.safeParse({
+      ...event,
+      reason: "unknown"
+    }).success).toBe(false);
+    expect(SyncInvalidatedRealtimeEventSchema.safeParse({
+      ...event,
+      subjectUserId: "a0df9334-2ec0-422d-b5de-11c775a42344"
+    }).success).toBe(false);
+    expect(SyncInvalidatedRealtimeEventSchema.safeParse({
+      ...event,
+      accountId: "not-a-uuid"
     }).success).toBe(false);
   });
 });
@@ -564,7 +614,8 @@ describe("IA-1 identity and safety contract", () => {
           "reactions",
           "receipts",
           "attachments",
-          "safety_reports"
+          "safety_reports",
+          "chat_folders"
         ]
       },
       resources: {
@@ -574,6 +625,7 @@ describe("IA-1 identity and safety contract", () => {
         chats: "/v2/sync/chats",
         attachments: "/v1/attachments",
         safetyReports: "/v1/safety/reports",
+        chatFolders: "/v1/chat-folders",
         membersTemplate: "/v1/chats/{chatId}/members",
         messagesTemplate: "/v1/chats/{chatId}/messages",
         pinsTemplate: "/v1/chats/{chatId}/pins",
@@ -603,7 +655,7 @@ describe("IA-1 identity and safety contract", () => {
       ...snapshot,
       reset: {
         required: true,
-        collections: Array.from({ length: 11 }, () => "chats")
+        collections: Array.from({ length: 12 }, () => "chats")
       }
     }).success).toBe(false);
   });

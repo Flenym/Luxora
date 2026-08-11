@@ -24,5 +24,8 @@ export const notFound = (message = "Resource not found", details?: Record<string
   new AppError(404, "NOT_FOUND", message, details);
 export const conflict = (message: string, details?: Record<string, unknown>) =>
   new AppError(409, "CONFLICT", message, details);
-export const rateLimited = () => new AppError(429, "RATE_LIMITED", "Too many requests");
+export const rateLimited = (
+  message = "Too many requests",
+  details?: Record<string, unknown>
+) => new AppError(429, "RATE_LIMITED", message, details);
 export const serviceUnavailable = (message: string) => new AppError(503, "SERVICE_UNAVAILABLE", message);

@@ -41,7 +41,8 @@ Start only the API:
 
 ```bash
 cp .env.example .env
-# Replace JWT_SECRET with a locally generated value; the example is invalid.
+# Replace JWT_SECRET and configure a local DATA_ENCRYPTION_KEYS keyring plus
+# ACTIVE_DATA_ENCRYPTION_KEY_ID; the example intentionally cannot start unchanged.
 make compose-up
 ```
 

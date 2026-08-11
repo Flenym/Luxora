@@ -57,6 +57,16 @@ function appendTestEvent(store: SqliteStore, audienceUserId: string): StoredEven
   }, AT);
 }
 
+function appendInvalidation(store: SqliteStore, audienceUserId: string): StoredEvent {
+  return store.appendEvent(audienceUserId, {
+    type: "sync.invalidated",
+    audience: "account_projection",
+    accountId: audienceUserId,
+    reason: "profile_updated",
+    changedAt: AT
+  }, AT);
+}
+
 function temporaryDatabase(): { path: string; remove(): void } {
   const directory = mkdtempSync(join(tmpdir(), "luxora-realtime-outbox-"));
   return {
@@ -66,6 +76,126 @@ function temporaryDatabase(): { path: string; remove(): void } {
 }
 
 describe("transactional realtime outbox", () => {
+  it("suppresses invalidation emission at the store boundary without affecting domain events", () => {
+    const database = temporaryDatabase();
+    const store = new SqliteStore(database.path, undefined, Date.now, false);
+    try {
+      const userId = createUser(store);
+      const ordinary = appendTestEvent(store, userId);
+      expect(store.getLatestSequence()).toBe(ordinary.sequence);
+      expect(() => appendInvalidation(store, userId)).toThrow(
+        "sync.invalidated emission is disabled"
+      );
+      expect(store.getLatestSequence()).toBe(ordinary.sequence);
+
+      const visibleAttachmentId = randomUUID();
+      store.createAttachment({
+        id: visibleAttachmentId,
+        ownerUserId: userId,
+        kind: "file",
+        fileName: "direct-delete.bin",
+        declaredMimeType: "application/octet-stream",
+        detectedMimeType: "application/octet-stream",
+        sizeBytes: 1,
+        sha256: "c".repeat(64),
+        metadata: {},
+        storageProvider: "local",
+        storageKey: `attachments/${visibleAttachmentId}`,
+        safetyStatus: "unscanned",
+        metadataTrust: "client_declared",
+        createdAt: AT
+      });
+      expect(store.deleteAttachmentRecord(
+        visibleAttachmentId,
+        "2026-08-03T12:01:00.000Z"
+      )).toEqual([]);
+      expect(store.findAttachmentRecord(visibleAttachmentId)).toBeNull();
+      expect(store.getLatestSequence()).toBe(ordinary.sequence);
+
+      const orphanId = randomUUID();
+      store.createAttachment({
+        id: orphanId,
+        ownerUserId: userId,
+        kind: "file",
+        fileName: "orphan.bin",
+        declaredMimeType: "application/octet-stream",
+        detectedMimeType: "application/octet-stream",
+        sizeBytes: 1,
+        sha256: "d".repeat(64),
+        metadata: {},
+        storageProvider: "local",
+        storageKey: `attachments/${orphanId}`,
+        safetyStatus: "unscanned",
+        metadataTrust: "client_declared",
+        createdAt: "2026-08-03T10:00:00.000Z"
+      });
+      const claimed = store.claimOrphanAttachments(
+        "local",
+        "2026-08-03T11:00:00.000Z",
+        "2026-08-03T11:00:00.000Z",
+        "2026-08-03T12:02:00.000Z",
+        100
+      );
+      expect(claimed.attachments.map(({ id }) => id)).toEqual([orphanId]);
+      expect(claimed.invalidations).toEqual([]);
+      expect(store.getLatestSequence()).toBe(ordinary.sequence);
+    } finally {
+      store.close();
+      database.remove();
+    }
+  });
+
+  it("acknowledges suppressed historical invalidations while publishing and replaying ordinary events", () => {
+    const database = temporaryDatabase();
+    const store = new SqliteStore(database.path);
+    try {
+      const userId = createUser(store);
+      const invalidation = appendInvalidation(store, userId);
+      const ordinary = appendTestEvent(store, userId);
+      const delegate = new RecordingPublisher();
+      const publisher = new RealtimeOutboxPublisher(store, delegate, {
+        workerId: "sync-invalidation-disabled-worker",
+        clock: () => new Date(AT),
+        shouldPublish: (event) => event.event.type !== "sync.invalidated"
+      });
+
+      expect(publisher.drainDue()).toEqual({
+        claimed: 2,
+        published: 2,
+        retried: 0,
+        failed: 0
+      });
+      expect(delegate.events.map(({ sequence }) => sequence)).toEqual([ordinary.sequence]);
+      expect(store.claimRealtimeOutbox(
+        "second-worker",
+        AT,
+        "2026-08-03T12:00:30.000Z",
+        10
+      )).toEqual([]);
+      expect(store.replayEvents(
+        userId,
+        0,
+        ordinary.sequence,
+        10,
+        false
+      )).toEqual([ordinary]);
+      expect(store.replayEvents(
+        userId,
+        0,
+        ordinary.sequence,
+        10,
+        true
+      ).map(({ sequence }) => sequence)).toEqual([
+        invalidation.sequence,
+        ordinary.sequence
+      ]);
+      publisher.close();
+    } finally {
+      store.close();
+      database.remove();
+    }
+  });
+
   it("commits and rolls back domain state, event log, and outbox as one SQLite transaction", () => {
     const database = temporaryDatabase();
     const store = new SqliteStore(database.path);
@@ -133,6 +263,169 @@ describe("transactional realtime outbox", () => {
         "2026-08-03T12:00:30.000Z",
         10
       )).toEqual(committed.map((event) => ({ ok: true, event, attemptCount: 1 })));
+    } finally {
+      store.close();
+      database.remove();
+    }
+  });
+
+  it("keeps the committed sequence high-water monotonic when the newest event row is deleted", () => {
+    const database = temporaryDatabase();
+    const store = new SqliteStore(database.path);
+    try {
+      const userId = createUser(store);
+      const first = appendTestEvent(store, userId);
+      const newest = appendTestEvent(store, userId);
+      expect(store.getLatestSequence()).toBe(newest.sequence);
+
+      const inspection = new Database(database.path);
+      inspection.pragma("foreign_keys = ON");
+      inspection.prepare("DELETE FROM realtime_events WHERE sequence = ?").run(newest.sequence);
+      inspection.close();
+
+      expect(store.getLatestSequence()).toBe(newest.sequence);
+      expect(store.replayEvents(userId, first.sequence, newest.sequence, 100)).toEqual([]);
+      const next = appendTestEvent(store, userId);
+      expect(next.sequence).toBeGreaterThan(newest.sequence);
+      expect(store.getLatestSequence()).toBe(next.sequence);
+    } finally {
+      store.close();
+      database.remove();
+    }
+  });
+
+  it("atomically invalidates a directly removed visible attachment without moving the head backward", () => {
+    const database = temporaryDatabase();
+    const store = new SqliteStore(database.path);
+    try {
+      const userId = createUser(store);
+      const attachmentId = randomUUID();
+      store.createAttachment({
+        id: attachmentId,
+        ownerUserId: userId,
+        kind: "image",
+        fileName: "orphan.png",
+        declaredMimeType: "image/png",
+        detectedMimeType: "image/png",
+        sizeBytes: 68,
+        sha256: "a".repeat(64),
+        metadata: { width: 1, height: 1 },
+        storageProvider: "local",
+        storageKey: `attachments/${attachmentId}`,
+        safetyStatus: "unscanned",
+        metadataTrust: "client_declared",
+        createdAt: AT
+      });
+      const attachment = store.getAttachment(attachmentId);
+      if (attachment === null) throw new Error("Expected visible attachment");
+      const stored = store.appendEvent(userId, {
+        type: "attachment.stored",
+        attachment
+      }, AT);
+
+      expect(() => store.transaction(() => {
+        expect(store.deleteAttachmentRecord(
+          attachmentId,
+          "2026-08-03T12:01:00.000Z"
+        )).toHaveLength(1);
+        throw new Error("abort attachment removal");
+      })).toThrow("abort attachment removal");
+      expect(store.findAttachmentRecord(attachmentId)).not.toBeNull();
+      expect(store.getLatestSequence()).toBe(stored.sequence);
+
+      const invalidations = store.deleteAttachmentRecord(
+        attachmentId,
+        "2026-08-03T12:02:00.000Z"
+      );
+      expect(invalidations).toHaveLength(1);
+      expect(invalidations[0]).toMatchObject({
+        audienceUserId: userId,
+        event: {
+          type: "sync.invalidated",
+          audience: "account_projection",
+          accountId: userId,
+          reason: "attachment_removed"
+        }
+      });
+      expect(invalidations[0]!.sequence).toBeGreaterThan(stored.sequence);
+      expect(store.getLatestSequence()).toBe(invalidations[0]!.sequence);
+      expect(store.findAttachmentRecord(attachmentId)).toBeNull();
+      expect(store.deleteAttachmentRecord(
+        attachmentId,
+        "2026-08-03T12:03:00.000Z"
+      )).toEqual([]);
+      expect(store.getLatestSequence()).toBe(invalidations[0]!.sequence);
+    } finally {
+      store.close();
+      database.remove();
+    }
+  });
+
+  it("invalidates both first and stale orphan claims for restart-safe reconciliation", () => {
+    const database = temporaryDatabase();
+    const store = new SqliteStore(database.path);
+    try {
+      const userId = createUser(store);
+      const attachmentId = randomUUID();
+      store.createAttachment({
+        id: attachmentId,
+        ownerUserId: userId,
+        kind: "file",
+        fileName: "stale-orphan.bin",
+        declaredMimeType: "application/octet-stream",
+        detectedMimeType: "application/octet-stream",
+        sizeBytes: 1,
+        sha256: "b".repeat(64),
+        metadata: {},
+        storageProvider: "local",
+        storageKey: `attachments/${attachmentId}`,
+        safetyStatus: "unscanned",
+        metadataTrust: "client_declared",
+        createdAt: "2026-08-03T10:00:00.000Z"
+      });
+
+      const first = store.claimOrphanAttachments(
+        "local",
+        "2026-08-03T11:00:00.000Z",
+        "2026-08-03T11:00:00.000Z",
+        "2026-08-03T12:00:00.000Z",
+        100
+      );
+      expect(first.attachments.map(({ id }) => id)).toEqual([attachmentId]);
+      expect(first.invalidations.map(({ event }) => event)).toEqual([
+        expect.objectContaining({
+          type: "sync.invalidated",
+          accountId: userId,
+          reason: "attachment_removed"
+        })
+      ]);
+      const firstHead = store.getLatestSequence();
+      expect(store.claimOrphanAttachments(
+        "local",
+        "2026-08-03T13:00:00.000Z",
+        "2026-08-03T11:30:00.000Z",
+        "2026-08-03T12:01:00.000Z",
+        100
+      )).toEqual({ attachments: [], invalidations: [] });
+      expect(store.getLatestSequence()).toBe(firstHead);
+
+      const stale = store.claimOrphanAttachments(
+        "local",
+        "2026-08-03T13:00:00.000Z",
+        "2026-08-03T12:00:00.000Z",
+        "2026-08-03T13:01:00.000Z",
+        100
+      );
+      expect(stale.attachments.map(({ id }) => id)).toEqual([attachmentId]);
+      expect(stale.invalidations.map(({ event }) => event)).toEqual([
+        expect.objectContaining({
+          type: "sync.invalidated",
+          accountId: userId,
+          reason: "attachment_removed"
+        })
+      ]);
+      expect(store.getLatestSequence()).toBeGreaterThan(firstHead);
+      expect(store.findAttachmentRecord(attachmentId)).toBeNull();
     } finally {
       store.close();
       database.remove();

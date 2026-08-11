@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   AuthResponseSchema,
+  PhonePasswordRequiredResponseSchema,
   PhoneUsernameAvailabilityResponseSchema,
   PhoneChallengeResponseSchema,
   PhoneAuthenticatedResponseSchema,
@@ -8,6 +9,7 @@ import {
   VerifyPhoneChallengeResponseSchema,
   type AuthTokens,
   type CompletePhoneRegistration,
+  type CompletePhonePasswordChallenge,
   type CheckPhoneUsername,
   type PhoneChallengeResponse,
   type PhoneUsernameAvailabilityResponse,
@@ -21,27 +23,126 @@ import type { AppConfig } from "../config.js";
 import type {
   NewRefreshToken,
   NewSession,
+  PhoneAuthPasswordReceiptInput,
   PhoneAuthReceiptInput
 } from "../domain/store.js";
 import type { Store } from "../domain/store.js";
 import type {
   PhoneAuthChallengeRecord,
   PhoneAuthCommandReceiptRecord,
+  PhoneAuthPasswordReceiptRecord,
   UserRecord
 } from "../domain/types.js";
 import {
+  AppError,
   badRequest,
   conflict,
-  rateLimited,
-  serviceUnavailable,
-  unauthenticated
+  serviceUnavailable
 } from "../errors.js";
 import type { PhoneVerificationDeliveryProvider } from "../phone-auth/phone-delivery-provider.js";
 import { PhoneAuthSecurity } from "../phone-auth/phone-auth-security.js";
 import { TokenSecurity } from "../security.js";
-import { createPasskeyDisabledPasswordHash } from "./password-auth.js";
+import { createPasskeyDisabledPasswordHash, verifyPassword } from "./password-auth.js";
 
 const COMMIT_RETRY_LIMIT = 8;
+
+type PhoneVerificationFailure = "invalid_code" | "expired" | "attempts_exhausted";
+const PHONE_VERIFICATION_FAILURES: readonly PhoneVerificationFailure[] = [
+  "invalid_code",
+  "expired",
+  "attempts_exhausted"
+];
+
+function failureReceiptScope(scope: string, reason: PhoneVerificationFailure): string {
+  // Migration 18 intentionally keeps rejected receipts payload-free. Encoding
+  // the bounded outcome in the command scope preserves an exact durable replay
+  // without weakening the database rule that invalid OTP receipts contain no
+  // encrypted or plaintext response body.
+  return `${scope}:failure:${reason}`;
+}
+
+function verificationFailure(reason: PhoneVerificationFailure): AppError {
+  switch (reason) {
+    case "invalid_code":
+      return new AppError(
+        401,
+        "PHONE_AUTH_CODE_INVALID",
+        "The verification code is invalid",
+        { reason }
+      );
+    case "expired":
+      return new AppError(
+        401,
+        "PHONE_AUTH_CHALLENGE_EXPIRED",
+        "The verification challenge has expired",
+        { reason }
+      );
+    case "attempts_exhausted":
+      return new AppError(
+        401,
+        "PHONE_AUTH_ATTEMPTS_EXHAUSTED",
+        "Verification attempts are exhausted",
+        { reason }
+      );
+  }
+}
+
+function challengeInvalid(): AppError {
+  return new AppError(
+    401,
+    "PHONE_AUTH_CHALLENGE_INVALID",
+    "The verification challenge is invalid"
+  );
+}
+
+function resendCooldown(seconds: number): AppError {
+  return new AppError(
+    429,
+    "PHONE_AUTH_RESEND_COOLDOWN",
+    `Retry after ${seconds} seconds`,
+    { retryAfterSeconds: seconds }
+  );
+}
+
+function deliveryUnavailable(message = "Verification delivery is temporarily unavailable"): AppError {
+  return new AppError(503, "PHONE_AUTH_DELIVERY_UNAVAILABLE", message);
+}
+
+function phoneAuthTemporarilyUnavailable(message: string): AppError {
+  return new AppError(503, "PHONE_AUTH_TEMPORARILY_UNAVAILABLE", message);
+}
+
+function registrationExpired(): AppError {
+  return new AppError(
+    401,
+    "PHONE_AUTH_REGISTRATION_EXPIRED",
+    "The phone registration grant is invalid or expired"
+  );
+}
+
+function passwordTokenInvalid(): AppError {
+  return new AppError(
+    401,
+    "PHONE_AUTH_PASSWORD_TOKEN_INVALID",
+    "The phone password challenge is invalid or expired"
+  );
+}
+
+function passwordRejected(reason: "password_invalid" | "attempts_exhausted"): AppError {
+  return reason === "attempts_exhausted"
+    ? new AppError(
+        401,
+        "PHONE_AUTH_PASSWORD_ATTEMPTS_EXHAUSTED",
+        "Password attempts are exhausted",
+        { reason }
+      )
+    : new AppError(
+        401,
+        "PHONE_AUTH_PASSWORD_INVALID",
+        "The password is invalid",
+        { reason }
+      );
+}
 
 function publicUser(user: UserRecord): User {
   return {
@@ -50,6 +151,7 @@ function publicUser(user: UserRecord): User {
     displayName: user.displayName,
     bio: user.bio,
     avatarUrl: user.avatarUrl,
+    avatarPath: user.avatarPath ?? null,
     createdAt: user.createdAt,
     lastSeenAt: user.lastSeenAt
   };
@@ -193,7 +295,7 @@ export class PhoneAuthService {
             }
             challenge = raced;
           } else {
-            throw rateLimited();
+            throw resendCooldown(this.config.phoneAuthRetryAfterSeconds);
           }
         }
       } catch (error) {
@@ -208,7 +310,7 @@ export class PhoneAuthService {
     // A delivery failure is terminal and has no successful begin response to
     // replay. Verification lockout, by contrast, has consumed every attempt.
     if (challenge.state === "locked" && challenge.attemptsUsed === 0) {
-      throw serviceUnavailable("Verification delivery is temporarily unavailable");
+      throw deliveryUnavailable();
     }
 
     if (challenge.state === "pending_delivery") {
@@ -218,10 +320,14 @@ export class PhoneAuthService {
           challenge.revision,
           this.clock().toISOString()
         );
-        throw serviceUnavailable("Verification challenge expired before delivery");
+        throw new AppError(
+          401,
+          "PHONE_AUTH_CHALLENGE_EXPIRED",
+          "Verification challenge expired before delivery"
+        );
       }
       if (challenge.deliveryCode === null) {
-        throw serviceUnavailable("Verification delivery is temporarily unavailable");
+        throw deliveryUnavailable();
       }
       try {
         await delivery.sendVerificationCode({
@@ -234,7 +340,7 @@ export class PhoneAuthService {
         // Keep the same encrypted code/challenge pending for an exact retry.
         // Providers are required to deduplicate by challengeId, so an
         // ambiguous transport failure cannot create a second SMS command.
-        throw serviceUnavailable("Verification delivery is temporarily unavailable");
+        throw deliveryUnavailable();
       }
       const activated = this.store.activatePhoneAuthChallenge(
         challenge.id,
@@ -244,7 +350,7 @@ export class PhoneAuthService {
       if (!activated) {
         const current = this.store.findPhoneAuthChallengeById(challenge.id);
         if (current === null || current.state !== "pending") {
-          throw serviceUnavailable("Verification delivery is temporarily unavailable");
+          throw deliveryUnavailable();
         }
         challenge = current;
       }
@@ -273,9 +379,14 @@ export class PhoneAuthService {
 
     for (let attempt = 0; attempt < COMMIT_RETRY_LIMIT; attempt += 1) {
       const challenge = this.store.findPhoneAuthChallengeById(challengeId);
-      if (challenge === null || challenge.state !== "pending") {
-        throw unauthenticated("Invalid or expired verification code");
+      if (challenge === null) throw challengeInvalid();
+      if (challenge.state === "expired") throw verificationFailure("expired");
+      if (challenge.state === "locked") {
+        throw challenge.attemptsUsed >= challenge.maxAttempts
+          ? verificationFailure("attempts_exhausted")
+          : challengeInvalid();
       }
+      if (challenge.state !== "pending") throw challengeInvalid();
       const now = this.clock();
       const expired = challenge.expiresAt <= now.toISOString();
       if (expired || !security.codeMatches(challenge.id, input.code, challenge.codeDigest)) {
@@ -284,8 +395,13 @@ export class PhoneAuthService {
           : challenge.attemptsUsed + 1 >= challenge.maxAttempts
             ? "locked" as const
             : "pending" as const;
+        const failure: PhoneVerificationFailure = expired
+          ? "expired"
+          : nextState === "locked"
+            ? "attempts_exhausted"
+            : "invalid_code";
         const receipt = this.#receipt({
-          scope,
+          scope: failureReceiptScope(scope, failure),
           operation: "verify",
           fingerprint,
           challengeId,
@@ -300,7 +416,7 @@ export class PhoneAuthService {
           nextState,
           receipt
         })) {
-          throw unauthenticated("Invalid or expired verification code");
+          throw verificationFailure(failure);
         }
         const raced = this.#replay(scope, fingerprint);
         if (raced !== null) return raced;
@@ -341,36 +457,161 @@ export class PhoneAuthService {
       } else {
         const user = this.store.findUserById(identity.userId);
         if (user === null) throw serviceUnavailable("Phone authentication data is inconsistent");
-        const prepared = await this.#prepareSession(user.id, input.deviceName, now);
-        const response = PhoneAuthenticatedResponseSchema.parse({
-          status: "authenticated",
-          user: publicUser(user),
-          tokens: prepared.tokens
-        });
-        const receipt = this.#receipt({
-          scope,
-          operation: "verify",
-          fingerprint,
-          challengeId,
-          resultKind: "authenticated",
-          responseJson: JSON.stringify(response),
-          now,
-          expiresAt: prepared.session.expiresAt
-        });
-        if (this.store.commitPhoneAuthAuthenticated({
-          challengeId,
-          expectedRevision: challenge.revision,
-          userId: user.id,
-          session: prepared.session,
-          refreshToken: prepared.refreshToken,
-          receipt
-        })) return response;
+        if (user.phonePasswordEnabled) {
+          const passwordToken = security.newPasswordToken();
+          const passwordExpiresAt = addSeconds(
+            now,
+            this.config.phoneAuthRegistrationTtlSeconds
+          );
+          const response = PhonePasswordRequiredResponseSchema.parse({
+            status: "password_required",
+            passwordToken: passwordToken.raw,
+            maskedPhone: challenge.maskedPhone,
+            expiresAt: passwordExpiresAt
+          });
+          const receipt = this.#passwordReceipt({
+            scope,
+            fingerprint,
+            challengeId,
+            resultKind: "password_required",
+            responseJson: JSON.stringify(response),
+            now,
+            expiresAt: passwordExpiresAt
+          });
+          if (this.store.commitPhoneAuthPasswordRequired({
+            challengeId,
+            expectedRevision: challenge.revision,
+            userId: user.id,
+            passwordTokenHash: passwordToken.digest,
+            passwordExpiresAt,
+            receipt
+          })) return response;
+        } else {
+          const prepared = await this.#prepareSession(user.id, input.deviceName, now);
+          const response = PhoneAuthenticatedResponseSchema.parse({
+            status: "authenticated",
+            user: publicUser(user),
+            tokens: prepared.tokens
+          });
+          const receipt = this.#receipt({
+            scope,
+            operation: "verify",
+            fingerprint,
+            challengeId,
+            resultKind: "authenticated",
+            responseJson: JSON.stringify(response),
+            now,
+            expiresAt: prepared.session.expiresAt
+          });
+          if (this.store.commitPhoneAuthAuthenticated({
+            challengeId,
+            expectedRevision: challenge.revision,
+            userId: user.id,
+            session: prepared.session,
+            refreshToken: prepared.refreshToken,
+            receipt
+          })) return response;
+        }
       }
 
       const raced = this.#replay(scope, fingerprint);
       if (raced !== null) return raced;
     }
-    throw serviceUnavailable("Phone verification is temporarily unavailable");
+    throw phoneAuthTemporarilyUnavailable("Phone verification is temporarily unavailable");
+  }
+
+  async completePassword(
+    input: CompletePhonePasswordChallenge
+  ): Promise<VerifyPhoneChallengeResponse> {
+    const { security } = this.#requireAvailable();
+    const passwordTokenHash = security.passwordTokenDigest(input.passwordToken);
+    const scope = `password:${passwordTokenHash}:${input.clientNonce}`;
+    const fingerprint = security.fingerprint(
+      "password",
+      stablePayload([
+        passwordTokenHash,
+        input.password,
+        input.deviceName
+      ])
+    );
+    const replay = this.#replayPassword(scope, fingerprint);
+    if (replay !== null) return replay;
+
+    for (let attempt = 0; attempt < COMMIT_RETRY_LIMIT; attempt += 1) {
+      const challenge = this.store.findPhoneAuthChallengeByRegistrationTokenHash(
+        passwordTokenHash
+      );
+      const now = this.clock();
+      if (
+        challenge === null
+        || challenge.state !== "verified"
+        || challenge.registrationExpiresAt === null
+        || challenge.registrationExpiresAt <= now.toISOString()
+      ) throw passwordTokenInvalid();
+      const identity = this.store.findPhoneIdentityByDigest(challenge.phoneDigest);
+      if (identity === null) throw passwordTokenInvalid();
+      const user = this.store.findUserById(identity.userId);
+      if (
+        user === null
+        || !user.phonePasswordEnabled
+        || user.phonePasswordHash === null
+      ) throw passwordTokenInvalid();
+
+      let valid = false;
+      try {
+        valid = await verifyPassword(user.phonePasswordHash, input.password);
+      } catch {
+        valid = false;
+      }
+      if (!valid) {
+        const outcome = this.store.commitPhoneAuthPasswordRejected({
+          challengeId: challenge.id,
+          expectedRevision: challenge.revision,
+          userId: user.id,
+          passwordTokenHash,
+          maxAttempts: this.config.phoneAuthMaxAttempts,
+          receipt: {
+            scope,
+            fingerprint,
+            challengeId: challenge.id,
+            createdAt: now.toISOString(),
+            expiresAt: challenge.registrationExpiresAt
+          }
+        });
+        if (outcome !== null) throw passwordRejected(outcome);
+        const raced = this.#replayPassword(scope, fingerprint);
+        if (raced !== null) return raced;
+        continue;
+      }
+
+      const prepared = await this.#prepareSession(user.id, input.deviceName, now);
+      const response = PhoneAuthenticatedResponseSchema.parse({
+        status: "authenticated",
+        user: publicUser(user),
+        tokens: prepared.tokens
+      });
+      const receipt = this.#passwordReceipt({
+        scope,
+        fingerprint,
+        challengeId: challenge.id,
+        resultKind: "authenticated",
+        responseJson: JSON.stringify(response),
+        now,
+        expiresAt: prepared.session.expiresAt
+      });
+      if (this.store.commitPhoneAuthPasswordAuthenticated({
+        challengeId: challenge.id,
+        expectedRevision: challenge.revision,
+        userId: user.id,
+        passwordTokenHash,
+        session: prepared.session,
+        refreshToken: prepared.refreshToken,
+        receipt
+      })) return response;
+      const raced = this.#replayPassword(scope, fingerprint);
+      if (raced !== null) return raced;
+    }
+    throw phoneAuthTemporarilyUnavailable("Phone password verification is temporarily unavailable");
   }
 
   async completeRegistration(input: CompletePhoneRegistration): Promise<{
@@ -403,7 +644,7 @@ export class PhoneAuthService {
         || challenge.state !== "verified"
         || challenge.registrationExpiresAt === null
         || challenge.registrationExpiresAt <= now.toISOString()
-      ) throw unauthenticated("Invalid or expired registration token");
+      ) throw registrationExpired();
 
       const userId = randomUUID();
       const username = input.username;
@@ -422,6 +663,8 @@ export class PhoneAuthService {
         avatarUrl: null,
         passwordHash,
         passwordAuthEnabled: false,
+        phonePasswordHash: null,
+        phonePasswordEnabled: false,
         createdAt: now.toISOString(),
         lastSeenAt: null
       };
@@ -463,7 +706,7 @@ export class PhoneAuthService {
       const raced = this.#replayRegistration(scope, fingerprint);
       if (raced !== null) return raced;
     }
-    throw serviceUnavailable("Phone registration is temporarily unavailable");
+    throw phoneAuthTemporarilyUnavailable("Phone registration is temporarily unavailable");
   }
 
   checkUsername(input: CheckPhoneUsername): PhoneUsernameAvailabilityResponse {
@@ -476,7 +719,7 @@ export class PhoneAuthService {
       || challenge.state !== "verified"
       || challenge.registrationExpiresAt === null
       || challenge.registrationExpiresAt <= now
-    ) throw unauthenticated("Invalid or expired registration token");
+    ) throw registrationExpired();
 
     const available = this.store.findUserByUsername(input.username.toLowerCase()) === null;
     const suggestions: string[] = [];
@@ -517,16 +760,92 @@ export class PhoneAuthService {
     };
   }
 
+  #passwordReceipt<ResultKind extends PhoneAuthPasswordReceiptInput["resultKind"]>(input: {
+    scope: string;
+    fingerprint: string;
+    challengeId: string;
+    resultKind: ResultKind;
+    responseJson: string | null;
+    now: Date;
+    expiresAt: string;
+  }): PhoneAuthPasswordReceiptInput & { resultKind: ResultKind } {
+    return {
+      scope: input.scope,
+      fingerprint: input.fingerprint,
+      challengeId: input.challengeId,
+      resultKind: input.resultKind,
+      responseJson: input.responseJson,
+      createdAt: input.now.toISOString(),
+      expiresAt: input.expiresAt
+    };
+  }
+
   #replay(scope: string, fingerprint: string): VerifyPhoneChallengeResponse | null {
+    for (const reason of PHONE_VERIFICATION_FAILURES) {
+      const failureReceipt = this.#matchingReceipt(
+        failureReceiptScope(scope, reason),
+        fingerprint
+      );
+      if (failureReceipt === null) continue;
+      if (
+        failureReceipt.operation !== "verify"
+        || failureReceipt.resultKind !== "invalid_code"
+        || failureReceipt.responseJson !== null
+      ) {
+        throw phoneAuthTemporarilyUnavailable("Phone verification receipt is inconsistent");
+      }
+      throw verificationFailure(reason);
+    }
     const receipt = this.#matchingReceipt(scope, fingerprint);
-    if (receipt === null) return null;
+    if (receipt === null) {
+      const passwordReceipt = this.#matchingPasswordReceipt(scope, fingerprint);
+      if (passwordReceipt === null) return null;
+      if (
+        passwordReceipt.resultKind !== "password_required"
+        || passwordReceipt.responseJson === null
+      ) {
+        throw phoneAuthTemporarilyUnavailable("Phone password receipt is inconsistent");
+      }
+      return VerifyPhoneChallengeResponseSchema.parse(
+        JSON.parse(passwordReceipt.responseJson)
+      );
+    }
     if (receipt.resultKind === "invalid_code") {
-      throw unauthenticated("Invalid or expired verification code");
+      // Legacy receipts created before the outcome suffix represented only an
+      // ordinary wrong code and remain exactly replayable after this upgrade.
+      if (receipt.responseJson !== null) {
+        throw phoneAuthTemporarilyUnavailable("Phone verification receipt is inconsistent");
+      }
+      throw verificationFailure("invalid_code");
     }
     if (receipt.operation !== "verify" || receipt.responseJson === null) {
-      throw serviceUnavailable("Phone verification receipt is inconsistent");
+      throw phoneAuthTemporarilyUnavailable("Phone verification receipt is inconsistent");
     }
     return VerifyPhoneChallengeResponseSchema.parse(JSON.parse(receipt.responseJson));
+  }
+
+  #replayPassword(
+    scope: string,
+    fingerprint: string
+  ): VerifyPhoneChallengeResponse | null {
+    const receipt = this.#matchingPasswordReceipt(scope, fingerprint);
+    if (receipt === null) return null;
+    if (receipt.resultKind === "password_invalid") {
+      if (receipt.responseJson !== null) {
+        throw phoneAuthTemporarilyUnavailable("Phone password receipt is inconsistent");
+      }
+      throw passwordRejected("password_invalid");
+    }
+    if (receipt.resultKind === "attempts_exhausted") {
+      if (receipt.responseJson !== null) {
+        throw phoneAuthTemporarilyUnavailable("Phone password receipt is inconsistent");
+      }
+      throw passwordRejected("attempts_exhausted");
+    }
+    if (receipt.resultKind !== "authenticated" || receipt.responseJson === null) {
+      throw phoneAuthTemporarilyUnavailable("Phone password receipt is inconsistent");
+    }
+    return PhoneAuthenticatedResponseSchema.parse(JSON.parse(receipt.responseJson));
   }
 
   #replayRegistration(
@@ -536,7 +855,7 @@ export class PhoneAuthService {
     const receipt = this.#matchingReceipt(scope, fingerprint);
     if (receipt === null) return null;
     if (receipt.operation !== "register" || receipt.responseJson === null) {
-      throw serviceUnavailable("Phone registration receipt is inconsistent");
+      throw phoneAuthTemporarilyUnavailable("Phone registration receipt is inconsistent");
     }
     return AuthResponseSchema.parse(JSON.parse(receipt.responseJson));
   }
@@ -546,6 +865,17 @@ export class PhoneAuthService {
     fingerprint: string
   ): PhoneAuthCommandReceiptRecord | null {
     const receipt = this.store.findPhoneAuthCommandReceipt(scope);
+    if (receipt !== null && receipt.fingerprint !== fingerprint) {
+      throw conflict("Idempotency key was already used with different input");
+    }
+    return receipt;
+  }
+
+  #matchingPasswordReceipt(
+    scope: string,
+    fingerprint: string
+  ): PhoneAuthPasswordReceiptRecord | null {
+    const receipt = this.store.findPhoneAuthPasswordReceipt(scope);
     if (receipt !== null && receipt.fingerprint !== fingerprint) {
       throw conflict("Idempotency key was already used with different input");
     }

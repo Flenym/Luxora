@@ -9,12 +9,15 @@ reached from Chats. It can branch login versus registration from the live phone
 OTP response, collect a new profile and username, restore a Keychain session,
 load the implemented chat/message slice, send text and consume the implemented
 realtime frames. The connected chat slice includes refresh/load/error/retry,
-stable-nonce optimistic send retry, mark-read, reactions and known-contact
-direct-chat creation. Telegram-like Russian profile/QR, folder filters, Settings
-and real iOS permission-state routes are present, with unsupported operations
-visibly gated. The first-launch screen uses the native invisible-route contour
-animation. Media, call signaling, push delivery, E2EE, durable offline outbox
-and a contour-based session-restoration screen remain gated by their
+stable-nonce optimistic send retry, reply/edit/delete/forward/pin, mark-read,
+reactions, message requests, synchronized archive/mute and custom folders,
+known-contact direct-chat creation, and group/channel membership management.
+Telegram-like Russian profile/QR, processed-avatar upload, device and optional
+phone-password settings, notification preferences, Settings and real iOS
+permission-state routes are present, with unsupported operations visibly
+gated. The first-launch and saved-session restoration surfaces use the native
+invisible-route contour animation. Durable media messaging, call signaling,
+real push delivery, E2EE and a durable offline outbox remain gated by their
 server/client phases.
 
 ## Open in Xcode 26.6
@@ -148,7 +151,8 @@ The opt-in live server probe remains:
 LUXORA_LIVE_TEST=1 \
 LUXORA_API_URL=http://127.0.0.1:8080 \
 LUXORA_REALTIME_URL=ws://127.0.0.1:8080/v1/realtime \
-swift test --package-path apps/apple --filter LiveBackendIntegrationTests
+swift test --package-path apps/apple \
+  --filter 'LiveBackendIntegrationTests|CommunityLiveBackendIntegrationTests'
 ```
 
 The full opt-in live phone UI path additionally requires a disposable number
@@ -168,7 +172,10 @@ xcodebuild \
   -only-testing:LuxoraMobileUITests/LuxoraMobileUITests/testOptInLivePhoneRegistrationSynchronizesIntoChats
 ```
 
-The current server does not expose `password_required`/second-factor or avatar
-upload/profile-update contracts. The iPhone app therefore does not pretend that
-either remote operation succeeded: optional avatar crop data remains local
-pending a real upload boundary, and 2FA remains an explicit backend/client TODO.
+The current server and iPhone client do expose the optional post-OTP
+`password_required` continuation, authenticated password enable/change/disable,
+profile name/bio updates and resumable image upload into a processed 512x512
+avatar. Fixture-free tests cover those successful paths. Independent password
+recovery, phone re-binding, storage-pressure/expiry failure matrices and
+real-device release evidence remain open; the client must continue to label
+those gaps rather than imply completion.

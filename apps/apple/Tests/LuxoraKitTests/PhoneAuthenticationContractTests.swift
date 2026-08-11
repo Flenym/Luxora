@@ -122,6 +122,180 @@ final class PhoneAuthenticationContractTests: XCTestCase {
         XCTAssertEqual(registration.maskedPhone, "+7 ••• •••-42-18")
     }
 
+    func testVerifyPasswordRequiredDecodesOnlyShortLivedContinuationGrant() throws {
+        let token = "luxpw_\(String(repeating: "a", count: 43))"
+        let result = try decoder.decode(
+            APIPhoneCodeVerificationResult.self,
+            from: Data(
+                """
+                {"status":"password_required","passwordToken":"\(token)","maskedPhone":"+7 ••• •••-42-18","expiresAt":"2026-08-04T15:00:00Z"}
+                """.utf8
+            )
+        )
+
+        guard case let .passwordRequired(challenge) = result else {
+            return XCTFail("Expected password_required result")
+        }
+        XCTAssertEqual(challenge.passwordToken, token)
+        XCTAssertEqual(challenge.maskedPhone, "+7 ••• •••-42-18")
+    }
+
+    func testPasswordContinuationPayloadHasExactFieldsAndUUIDv4Nonce() {
+        let nonce = UUID.clientNonceV4()
+        let token = "luxpw_\(String(repeating: "a", count: 43))"
+        let body = APIPhoneAuthenticationBody.password(
+            passwordToken: token,
+            password: "correct horse battery staple",
+            deviceName: "iPhone",
+            clientNonce: nonce
+        )
+
+        XCTAssertEqual(
+            Set(body.keys),
+            ["passwordToken", "password", "deviceName", "clientNonce"]
+        )
+        XCTAssertEqual(body["passwordToken"], token)
+        XCTAssertEqual(body["password"], "correct horse battery staple")
+        XCTAssertNil(body["code"])
+        assertUUIDv4(nonce)
+    }
+
+    func testNetworkResponseLossRetriesTheSameIdempotencyCommand() {
+        var command = PhoneAuthenticationCommandNonce<String>()
+        let original = command.acquire(for: "challenge-01:123456")
+
+        command.fail(retainingCommand: true)
+
+        XCTAssertEqual(command.acquire(for: "challenge-01:123456"), original)
+        assertUUIDv4(original)
+    }
+
+    func testKeychainSaveFailureRetainsCommittedResponseNonceUntilClientAcceptance() {
+        var command = PhoneAuthenticationCommandNonce<String>()
+        let committedResponseNonce = command.acquire(for: "registration-01")
+
+        // A token response reached the client, but durable Keychain/bootstrap
+        // acceptance failed. Retrying must ask the server to replay it exactly.
+        command.settleAfterClientAcceptance(false)
+        XCTAssertEqual(command.acquire(for: "registration-01"), committedResponseNonce)
+
+        command.settleAfterClientAcceptance(true)
+        XCTAssertNotEqual(command.acquire(for: "registration-01"), committedResponseNonce)
+    }
+
+    func testTerminalRejectionAndChangedInputRotateNonce() {
+        var command = PhoneAuthenticationCommandNonce<String>()
+        let rejected = command.acquire(for: "challenge-01:000000")
+        command.fail(retainingCommand: false)
+        XCTAssertNotEqual(command.acquire(for: "challenge-01:000000"), rejected)
+
+        let priorInput = command.acquire(for: "challenge-01:111111")
+        XCTAssertNotEqual(command.acquire(for: "challenge-01:222222"), priorInput)
+    }
+
+    func testInvalidPasswordExactRetryRetainsNonceButChangedPasswordRotatesIt() {
+        var command = PhoneAuthenticationCommandNonce<String>()
+        let original = command.acquire(for: "token:wrong-one")
+
+        command.fail(retainingCommand: PhoneAuthenticationFailure.invalidPassword.retainsIdempotencyCommand)
+        XCTAssertEqual(command.acquire(for: "token:wrong-one"), original)
+        XCTAssertNotEqual(command.acquire(for: "token:wrong-two"), original)
+    }
+
+    func testCorrectPasswordAfterInvalidAttemptIsANewCommandAndCanSettle() {
+        var command = PhoneAuthenticationCommandNonce<String>()
+        let rejectedNonce = command.acquire(for: "token:wrong-password")
+        command.fail(retainingCommand: PhoneAuthenticationFailure.invalidPassword.retainsIdempotencyCommand)
+
+        let correctedNonce = command.acquire(for: "token:correct-password")
+        XCTAssertNotEqual(correctedNonce, rejectedNonce)
+
+        command.settleAfterClientAcceptance(true)
+        XCTAssertNotEqual(command.acquire(for: "token:correct-password"), correctedNonce)
+    }
+
+    func testServerPhoneFailureDiscriminatorsMapToTruthfulRussianStates() {
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(status: 401, code: "PHONE_AUTH_CODE_INVALID", message: "invalid")
+            ),
+            .invalidCode
+        )
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(
+                    status: 401,
+                    code: "PHONE_AUTH_ATTEMPTS_EXHAUSTED",
+                    message: "locked"
+                )
+            ),
+            .attemptsExhausted
+        )
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(
+                    status: 401,
+                    code: "PHONE_AUTH_CHALLENGE_EXPIRED",
+                    message: "expired"
+                )
+            ),
+            .challengeExpired
+        )
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(
+                    status: 429,
+                    code: "PHONE_AUTH_RESEND_COOLDOWN",
+                    message: "Retry after 47 seconds"
+                )
+            ),
+            .resendCooldown(seconds: 47)
+        )
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(LuxoraAPIError.transport("connection lost")),
+            .networkUnavailable
+        )
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(
+                    status: 401,
+                    code: "PHONE_AUTH_PASSWORD_INVALID",
+                    message: "invalid"
+                )
+            ),
+            .invalidPassword
+        )
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(
+                    status: 401,
+                    code: "PHONE_AUTH_PASSWORD_ATTEMPTS_EXHAUSTED",
+                    message: "locked"
+                )
+            ),
+            .passwordAttemptsExhausted
+        )
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(
+                    status: 401,
+                    code: "PHONE_AUTH_PASSWORD_TOKEN_INVALID",
+                    message: "expired"
+                )
+            ),
+            .passwordTokenExpired
+        )
+    }
+
+    func testClientDoesNotInventPasswordRequiredWithoutServerContract() {
+        let failure = PhoneAuthenticationFailure.classify(
+            LuxoraAPIError.server(status: 401, code: "PASSWORD_REQUIRED", message: "unknown")
+        )
+        guard case .unexpected = failure else {
+            return XCTFail("An unsupported password discriminator must not create a fake auth step")
+        }
+    }
+
     private var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

@@ -95,6 +95,44 @@ final class MessengerStoreTests: XCTestCase {
         XCTAssertFalse(store.canSend)
     }
 
+    func testChannelComposerFailsClosedForMemberAndOpensAfterConfirmedAdminRole() throws {
+        let fixture = LuxoraDesignFixtures.makeStore()
+        var channel = try XCTUnwrap(fixture.conversations.first(where: { $0.kind == .channel }))
+        channel.serverRole = ChatMembershipRole.member.rawValue
+        let currentUser = fixture.currentUser
+        let store = MessengerStore(
+            conversations: [channel],
+            messagesByConversation: [channel.id: []],
+            currentUser: currentUser,
+            selectedConversationID: channel.id,
+            loadedConversationIDs: [channel.id]
+        )
+        store.configureRemote(
+            sender: { conversationID, clientID, body in
+                ChatMessage(
+                    id: UUID(),
+                    clientID: clientID,
+                    conversationID: conversationID,
+                    author: currentUser,
+                    text: body,
+                    sentAt: .now,
+                    delivery: .sent,
+                    isOutgoing: true
+                )
+            },
+            loader: { _ in [] }
+        )
+        store.connectionState = .online
+        store.draft = "Публикация"
+
+        XCTAssertFalse(store.canSend)
+
+        channel.serverRole = ChatMembershipRole.admin.rawValue
+        store.applyRealtimeConversation(channel)
+
+        XCTAssertTrue(store.canSend)
+    }
+
     func testFolderAndQueryComposePredictably() {
         let store = LuxoraDesignFixtures.makeStore()
         store.selectedFolder = .work
@@ -251,6 +289,101 @@ final class MessengerStoreTests: XCTestCase {
         XCTAssertEqual(nonces[0], nonces[1], "Retry must preserve the server idempotency nonce")
     }
 
+    func testProfileResponseLossKeepsOldProjectionAndExactRetryUpdatesEveryOwnedSnapshot() async throws {
+        let store = LuxoraDesignFixtures.makeStore()
+        let original = store.currentUser
+        let initialMessages = store.messagesByConversation
+        let probe = ProfileUpdateProbe()
+        store.configureRemote(
+            sender: { conversationID, clientID, body in
+                ChatMessage(
+                    id: UUID(), clientID: clientID, conversationID: conversationID,
+                    author: original, text: body, sentAt: .now,
+                    delivery: .sent, isOutgoing: true
+                )
+            },
+            loader: { conversationID in initialMessages[conversationID, default: []] },
+            profileUpdater: { displayName, bio in
+                try await probe.update(
+                    displayName: displayName,
+                    bio: bio,
+                    original: original
+                )
+            }
+        )
+
+        let first = await store.updateCurrentUserProfile(
+            displayName: "  Егор Flenym  ",
+            bio: "  Создаёт Luxora Beta-0.1  "
+        )
+        XCTAssertFalse(first)
+        XCTAssertEqual(store.currentUser, original, "Ambiguous response loss must not invent local success")
+        guard case .failed = store.profileUpdateState else {
+            return XCTFail("Response loss must remain visibly retryable")
+        }
+
+        let second = await store.updateCurrentUserProfile(
+            displayName: "  Егор Flenym  ",
+            bio: "  Создаёт Luxora Beta-0.1  "
+        )
+        XCTAssertTrue(second)
+        XCTAssertEqual(store.profileUpdateState, .loaded)
+        XCTAssertEqual(store.currentUser.displayName, "Егор Flenym")
+        XCTAssertEqual(store.currentUserBio, "Создаёт Luxora Beta-0.1")
+
+        let calls = await probe.calls
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[0], calls[1], "PATCH retry must preserve the exact normalized body")
+        XCTAssertEqual(calls[0].displayName, "Егор Flenym")
+        XCTAssertEqual(calls[0].bio, "Создаёт Luxora Beta-0.1")
+
+        let ownedAvatar = try XCTUnwrap(store.conversations.first { $0.kind == .saved }?.avatar)
+        XCTAssertEqual(ownedAvatar.displayName, "Егор Flenym")
+        let ownedMessage = try XCTUnwrap(
+            store.messagesByConversation.values.flatMap { $0 }.first { $0.author.id == original.id }
+        )
+        XCTAssertEqual(ownedMessage.author.displayName, "Егор Flenym")
+    }
+
+    func testSessionTeardownRejectsLateProfileSuccessAndRestoresIdleState() async {
+        let store = LuxoraDesignFixtures.makeStore()
+        let original = store.currentUser
+        let probe = SuspendedProfileUpdateProbe(original: original)
+        let initialMessages = store.messagesByConversation
+        store.configureRemote(
+            sender: { conversationID, clientID, body in
+                ChatMessage(
+                    id: UUID(), clientID: clientID, conversationID: conversationID,
+                    author: original, text: body, sentAt: .now,
+                    delivery: .sent, isOutgoing: true
+                )
+            },
+            loader: { conversationID in initialMessages[conversationID, default: []] },
+            profileUpdater: { displayName, bio in
+                await probe.update(displayName: displayName, bio: bio)
+            }
+        )
+
+        let update = Task {
+            await store.updateCurrentUserProfile(
+                displayName: "Поздний профиль",
+                bio: "Не должен примениться после выхода"
+            )
+        }
+        await probe.waitUntilStarted()
+        XCTAssertEqual(store.profileUpdateState, .loading)
+
+        store.cancelRemoteOperations()
+        XCTAssertEqual(store.profileUpdateState, .idle)
+        await probe.release()
+
+        let accepted = await update.value
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(store.currentUser, original)
+        XCTAssertNotEqual(store.currentUser.displayName, "Поздний профиль")
+        XCTAssertEqual(store.profileUpdateState, .idle)
+    }
+
     private func waitUntil(
         timeout: Duration = .seconds(2),
         condition: @escaping @MainActor () -> Bool
@@ -290,6 +423,66 @@ private actor RetrySendProbe {
             delivery: .sent,
             isOutgoing: true
         )
+    }
+}
+
+private actor ProfileUpdateProbe {
+    struct Call: Equatable, Sendable {
+        let displayName: String
+        let bio: String
+    }
+
+    private(set) var calls: [Call] = []
+
+    func update(
+        displayName: String,
+        bio: String,
+        original: Participant
+    ) throws -> CurrentUserProfileSnapshot {
+        calls.append(Call(displayName: displayName, bio: bio))
+        if calls.count == 1 { throw MessengerStoreTestError.unavailable }
+        var participant = original
+        participant.displayName = displayName
+        participant.initials = "ЕФ"
+        participant.status = bio.isEmpty ? "@\(participant.username)" : bio
+        return CurrentUserProfileSnapshot(participant: participant, bio: bio)
+    }
+}
+
+private actor SuspendedProfileUpdateProbe {
+    private let original: Participant
+    private var started = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(original: Participant) {
+        self.original = original
+    }
+
+    func update(displayName: String, bio: String) async -> CurrentUserProfileSnapshot {
+        started = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+
+        // Intentionally ignore cancellation to model a transport that reports
+        // a successful response after the owning session has already detached.
+        var participant = original
+        participant.displayName = displayName
+        participant.status = bio
+        return CurrentUserProfileSnapshot(participant: participant, bio: bio)
+    }
+
+    func waitUntilStarted() async {
+        guard !started else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
 

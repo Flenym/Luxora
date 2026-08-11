@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ChatFolderListResponseSchema,
   REALTIME_CURSOR_TTL_SECONDS,
   REALTIME_MAX_REPLAY_EVENTS,
   RealtimeSnapshotResponseSchema
@@ -99,8 +100,11 @@ describe("v2 realtime reconciliation", () => {
     };
   }
 
-  async function open(address: string): Promise<RealtimeClient> {
-    const socket = new WebSocket(`${address.replace("http", "ws")}/v2/realtime`);
+  async function open(
+    address: string,
+    path: "/v1/realtime" | "/v2/realtime" = "/v2/realtime"
+  ): Promise<RealtimeClient> {
+    const socket = new WebSocket(`${address.replace("http", "ws")}${path}`);
     sockets.push(socket);
     const client = new RealtimeClient(socket);
     await new Promise<void>((resolve, reject) => {
@@ -108,7 +112,7 @@ describe("v2 realtime reconciliation", () => {
       socket.once("error", reject);
     });
     const hello = await client.waitFor((message) => message.type === "hello");
-    expect(hello.protocolVersion).toBe(2);
+    expect(hello.protocolVersion).toBe(path === "/v1/realtime" ? 1 : 2);
     return client;
   }
 
@@ -149,6 +153,7 @@ describe("v2 realtime reconciliation", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("private, no-store");
+    expect(response.headers.pragma).toBe("no-cache");
     return RealtimeSnapshotResponseSchema.parse(response.json());
   }
 
@@ -166,6 +171,10 @@ describe("v2 realtime reconciliation", () => {
     expect(second.boundary.sequence).toBe(first.boundary.sequence);
     expect(second.reset).toEqual(first.reset);
     expect(second.resources).toEqual(first.resources);
+    expect(second.reset.collections).toHaveLength(12);
+    expect(new Set(second.reset.collections).size).toBe(12);
+    expect(second.reset.collections).toContain("chat_folders");
+    expect(second.resources.chatFolders).toBe("/v1/chat-folders");
     expect(second.resume.sequenceAdjacencyRequired).toBe(false);
     expect(JSON.stringify(second)).not.toContain("messageSnippet");
 
@@ -187,6 +196,211 @@ describe("v2 realtime reconciliation", () => {
     const repeated = await connect(address, alice, { resumeCursor: checkpoint.cursor as string });
     await repeated.client.waitFor((message) => message.type === "sync.checkpoint");
     await repeated.client.expectNoMatch((message) => message.type === "dispatch");
+  });
+
+  it("replays profile projection invalidation only to exact v2 accounts and skips v1", async () => {
+    app = await buildApp({ config: testConfig(), logger: false });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const subject = await register("sync_profile_subject");
+    const observer = await register("sync_profile_observer");
+    const outsider = await register("sync_profile_outsider");
+
+    const chatId = randomUUID();
+    const createdAt = new Date().toISOString();
+    app.luxora.store.createChat({
+      id: chatId,
+      kind: "group",
+      title: "Historical author projection",
+      directKey: null,
+      createdBy: observer.id,
+      createdAt
+    });
+    app.luxora.store.addChatMember(chatId, observer.id, "owner", createdAt);
+    app.luxora.store.addChatMember(chatId, subject.id, "member", createdAt);
+    const authored = await app.inject({
+      method: "POST",
+      url: `/v1/chats/${chatId}/messages`,
+      headers: auth(subject),
+      payload: { body: "historical profile projection", clientNonce: randomUUID() }
+    });
+    expect(authored.statusCode, authored.body).toBe(201);
+    const subjectMembership = app.luxora.store.getChatMember(chatId, subject.id);
+    expect(subjectMembership).not.toBeNull();
+    expect(app.luxora.store.removeChatMember(
+      chatId,
+      subject.id,
+      subjectMembership!.revision,
+      new Date(Date.now() + 1_000).toISOString()
+    )).not.toBeNull();
+    expect(app.luxora.store.getChatMember(chatId, subject.id)).toBeNull();
+
+    const observerBoundary = await snapshot(observer);
+    const boundarySequence = observerBoundary.boundary.sequence as number;
+    const subjectLive = await connect(address, subject);
+    await subjectLive.client.waitFor((message) => message.type === "sync.checkpoint");
+    const legacyObserver = await open(address, "/v1/realtime");
+    legacyObserver.send({ type: "authenticate", accessToken: observer.accessToken });
+    await legacyObserver.waitFor((message) => message.type === "ready");
+
+    const update = await app.inject({
+      method: "PATCH",
+      url: "/v1/me",
+      headers: auth(subject),
+      payload: { displayName: "Renamed Historical Author" }
+    });
+    expect(update.statusCode, update.body).toBe(200);
+    const liveInvalidation = await subjectLive.client.waitFor((message) =>
+      message.type === "dispatch" && message.event.type === "sync.invalidated"
+    );
+    expect(liveInvalidation.event).toMatchObject({
+      type: "sync.invalidated",
+      audience: "account_projection",
+      accountId: subject.id,
+      reason: "profile_updated"
+    });
+    await legacyObserver.expectNoMatch((message) =>
+      message.type === "dispatch" && message.event?.type === "sync.invalidated"
+    );
+
+    const serviceHead = app.luxora.store.getLatestSequence();
+    const observerEvents = app.luxora.store.replayEvents(
+      observer.id,
+      boundarySequence,
+      serviceHead,
+      100
+    );
+    expect(observerEvents.map(({ event }) => event)).toEqual([
+      expect.objectContaining({
+        type: "sync.invalidated",
+        audience: "account_projection",
+        accountId: observer.id,
+        reason: "profile_updated"
+      })
+    ]);
+    expect(app.luxora.store.replayEvents(
+      outsider.id,
+      boundarySequence,
+      serviceHead,
+      100
+    )).toEqual([]);
+
+    const offlineReplay = await connect(address, observer, {
+      resumeCursor: observerBoundary.boundary.cursor as string
+    });
+    const replayedInvalidation = await offlineReplay.client.waitFor((message) =>
+      message.type === "dispatch" && message.event.type === "sync.invalidated"
+    );
+    expect(replayedInvalidation).toMatchObject({
+      event: { accountId: observer.id, reason: "profile_updated" }
+    });
+    await offlineReplay.client.waitFor((message) => message.type === "sync.checkpoint");
+
+    const messages = await app.inject({
+      method: "GET",
+      url: `/v1/chats/${chatId}/messages`,
+      headers: auth(observer)
+    });
+    expect(messages.statusCode, messages.body).toBe(200);
+    expect(messages.json().items[0].sender.displayName).toBe("Renamed Historical Author");
+
+    const beforeNoop = app.luxora.store.getLatestSequence();
+    const noop = await app.inject({
+      method: "PATCH",
+      url: "/v1/me",
+      headers: auth(subject),
+      payload: { displayName: "Renamed Historical Author" }
+    });
+    expect(noop.statusCode).toBe(200);
+    expect(app.luxora.store.getLatestSequence()).toBe(beforeNoop);
+
+    const mismatchAt = new Date().toISOString();
+    const mismatched = app.luxora.store.appendEvent(subject.id, {
+      type: "sync.invalidated",
+      audience: "account_projection",
+      accountId: observer.id,
+      reason: "profile_updated",
+      changedAt: mismatchAt
+    }, mismatchAt);
+    app.luxora.hub.publish([mismatched]);
+    await subjectLive.client.expectNoMatch((message) =>
+      message.type === "dispatch" && message.sequence === mismatched.sequence
+    );
+  });
+
+  it("rebuilds chat folders only for the authenticated account and active session", async () => {
+    app = await buildApp({
+      config: testConfig({
+        dataEncryptionKeys: {
+          reconciliation_folders: Buffer.alloc(32, 17).toString("base64url")
+        },
+        activeDataEncryptionKeyId: "reconciliation_folders"
+      }),
+      logger: false
+    });
+    const alice = await register("sync_folders_alice");
+    const bob = await register("sync_folders_bob");
+    const aliceCanary = "ALICE_PRIVATE_SYNC_FOLDER";
+    const bobCanary = "BOB_PRIVATE_SYNC_FOLDER";
+    const rules = {
+      includeKinds: ["direct", "group", "channel"],
+      unreadOnly: false,
+      excludeMuted: true,
+      includeArchived: false
+    };
+
+    const aliceCreated = await app.inject({
+      method: "POST",
+      url: "/v1/chat-folders",
+      headers: auth(alice),
+      payload: { title: aliceCanary, rules, overrides: [], clientNonce: randomUUID() }
+    });
+    const bobCreated = await app.inject({
+      method: "POST",
+      url: "/v1/chat-folders",
+      headers: auth(bob),
+      payload: { title: bobCanary, rules, overrides: [], clientNonce: randomUUID() }
+    });
+    expect(aliceCreated.statusCode, aliceCreated.body).toBe(201);
+    expect(bobCreated.statusCode, bobCreated.body).toBe(201);
+
+    const unauthenticated = await app.inject({ method: "GET", url: "/v1/chat-folders" });
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(unauthenticated.headers["cache-control"]).toBe("private, no-store");
+    expect(unauthenticated.headers.pragma).toBe("no-cache");
+    expect(unauthenticated.body).not.toContain(aliceCanary);
+    expect(unauthenticated.body).not.toContain(bobCanary);
+
+    const aliceFolders = await app.inject({
+      method: "GET",
+      url: "/v1/chat-folders",
+      headers: auth(alice)
+    });
+    expect(aliceFolders.statusCode, aliceFolders.body).toBe(200);
+    expect(aliceFolders.headers["cache-control"]).toBe("private, no-store");
+    expect(aliceFolders.headers.pragma).toBe("no-cache");
+    expect(ChatFolderListResponseSchema.parse(aliceFolders.json()).items).toEqual([
+      expect.objectContaining({ title: aliceCanary })
+    ]);
+    expect(aliceFolders.body).not.toContain(bobCanary);
+    expect(aliceFolders.body).not.toContain(bobCreated.json().folder.id as string);
+
+    const boundary = await snapshot(alice);
+    expect(boundary.reset.collections).toHaveLength(12);
+    expect(new Set(boundary.reset.collections).size).toBe(12);
+    expect(boundary.reset.collections).toContain("chat_folders");
+    expect(boundary.resources.chatFolders).toBe("/v1/chat-folders");
+
+    app.luxora.store.revokeSession(alice.sessionId, new Date().toISOString());
+    const revoked = await app.inject({
+      method: "GET",
+      url: boundary.resources.chatFolders,
+      headers: auth(alice)
+    });
+    expect(revoked.statusCode).toBe(401);
+    expect(revoked.headers["cache-control"]).toBe("private, no-store");
+    expect(revoked.headers.pragma).toBe("no-cache");
+    expect(revoked.body).not.toContain(aliceCanary);
+    expect(revoked.body).not.toContain(bobCanary);
   });
 
   it("uses deterministic failures for invalid, expired, future, and foreign-session cursors", async () => {

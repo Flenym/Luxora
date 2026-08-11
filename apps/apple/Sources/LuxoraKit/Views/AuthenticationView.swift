@@ -65,6 +65,7 @@ struct AuthenticationView: View {
             isWorking: session.isWorking,
             isSynchronizing: session.isAuthenticationSyncing,
             serverError: session.errorMessage,
+            authenticationFailure: session.phoneAuthenticationFailure,
             initialStep: preview.initialStep,
             allowsPreviewProgression: preview.isEnabled,
             requestCode: { countryCode, nationalNumber in
@@ -75,6 +76,12 @@ struct AuthenticationView: View {
             },
             verifyCode: { challengeID, code in
                 await session.verifyPhoneCode(challengeID: challengeID, code: code)
+            },
+            completePassword: { passwordToken, password in
+                await session.completePhonePassword(
+                    passwordToken: passwordToken,
+                    password: password
+                )
             },
             checkUsername: { registrationToken, username in
                 await session.checkPhoneUsername(
@@ -89,6 +96,9 @@ struct AuthenticationView: View {
                     username: username,
                     bio: bio
                 )
+            },
+            clearFailure: {
+                session.clearPhoneAuthenticationFailure()
             }
         )
     }

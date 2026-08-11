@@ -27,14 +27,34 @@ public struct LuxoraApplicationView: View {
                     SessionRestorationErrorView(
                         message: message,
                         retry: { Task { await session.retryRestoration() } },
-                        signInAgain: { session.discardRestoredSession() }
+                        signInAgain: { Task { await session.discardRestoredSession() } }
                     )
                 } else {
                     authenticatedContent(banner: .error(message))
                 }
             }
         }
-        .task { await session.restore() }
+        .environment(\.authenticatedAvatarImageCache, session.avatarImageCache)
+        .task { await restoreSession() }
+    }
+
+    private func restoreSession() async {
+        #if DEBUG
+        if let rawDelay = ProcessInfo.processInfo.environment["LUXORA_UI_TEST_RESTORE_HOLD_MS"],
+           let requestedDelay = Int(rawDelay),
+           requestedDelay > 0
+        {
+            do {
+                try await Task.sleep(for: .milliseconds(min(requestedDelay, 8_000)))
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+        }
+        #endif
+
+        await session.restore()
     }
 
     @ViewBuilder
@@ -59,7 +79,7 @@ public struct LuxoraApplicationView: View {
             SessionRestorationErrorView(
                 message: "В авторизованном сеансе отсутствует состояние мессенджера.",
                 retry: { Task { await session.retryRestoration() } },
-                signInAgain: { session.discardRestoredSession() }
+                signInAgain: { Task { await session.discardRestoredSession() } }
             )
         }
         #else
@@ -77,7 +97,7 @@ public struct LuxoraApplicationView: View {
             SessionRestorationErrorView(
                 message: "В авторизованном сеансе отсутствует состояние мессенджера.",
                 retry: { Task { await session.retryRestoration() } },
-                signInAgain: { session.discardRestoredSession() }
+                signInAgain: { Task { await session.discardRestoredSession() } }
             )
         }
         #endif
@@ -99,6 +119,18 @@ public struct LuxoraApplicationView: View {
             store: store,
             featureMatrix: session.featureMatrix,
             initialDestination: initialPhoneDestination,
+            deviceSessionsStore: session.deviceSessionsStore,
+            phonePasswordSettingsStore: session.phonePasswordSettingsStore,
+            notificationSettingsStore: session.notificationSettingsStore,
+            pushRegistrationStore: session.pushRegistrationStore,
+            chatFoldersStore: session.chatFoldersStore,
+            communityStore: session.communityStore,
+            updateChatPreferences: { chatID, patch in
+                await session.updateChatPreferences(chatID: chatID, patch: patch)
+            },
+            synchronizePushAuthorization: { isAuthorized in
+                Task { await session.synchronizePushAuthorization(isAuthorized: isAuthorized) }
+            },
             signOut: { Task { await session.signOut() } }
         )
         #else
@@ -114,7 +146,7 @@ public struct LuxoraApplicationView: View {
         case "spaces": .spaces
         case "calls": .calls
         case "search": .search
-        case "you", "settings", "you-folders", "you-profile", "you-profile-qr", "you-identity", "you-devices", "you-notifications",
+        case "you", "settings", "you-folders", "you-profile", "you-profile-qr", "you-identity", "you-devices", "you-phone-password", "you-notifications",
              "you-privacy", "you-data", "you-appearance", "you-power", "you-language", "you-plus",
              "you-help", "you-faq", "you-features", "you-about": .you
         default: .inbox
@@ -133,30 +165,42 @@ private enum SessionBanner {
 }
 
 private struct SessionRestoringView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         ZStack {
-            LuxoraTheme.ink.ignoresSafeArea()
-            LuxoraTheme.ambientGradient.ignoresSafeArea()
+            surface.ignoresSafeArea()
 
             VStack(spacing: 14) {
-                ProgressView()
-                    .controlSize(.large)
-                    .tint(LuxoraTheme.iris)
+                LuxoraContourLoaderView(
+                    size: 96,
+                    accessibilityLabel: "Восстановление сеанса Luxora"
+                )
                 Text(LuxoraL10n.text("auth.restore"))
                     .font(.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(foreground)
                 Text(LuxoraL10n.text("auth.restore_detail"))
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(foreground.opacity(0.62))
                     .multilineTextAlignment(.center)
                 Text("Beta-0.1 · Flenym")
                     .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.44))
+                    .foregroundStyle(foreground.opacity(0.44))
             }
             .padding(32)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Восстановление сеанса Luxora")
+        .accessibilityValue(LuxoraL10n.text("auth.restore_detail"))
+        .accessibilityIdentifier("session-restoring-screen")
+    }
+
+    private var surface: Color {
+        colorScheme == .dark ? .black : .white
+    }
+
+    private var foreground: Color {
+        colorScheme == .dark ? .white : .black
     }
 }
 
@@ -174,7 +218,7 @@ private struct SessionRestorationErrorView: View {
                 Label(LuxoraL10n.text("auth.restore_failed"), systemImage: "exclamationmark.arrow.triangle.2.circlepath")
                     .foregroundStyle(.white)
             } description: {
-                Text(message)
+                Text(detailMessage)
                     .foregroundStyle(.white.opacity(0.68))
             } actions: {
                 ViewThatFits(in: .horizontal) {
@@ -196,6 +240,13 @@ private struct SessionRestorationErrorView: View {
             .buttonStyle(.borderedProminent)
         Button(LuxoraL10n.text("auth.sign_in_again"), action: signInAgain)
             .buttonStyle(.bordered)
+            .tint(.white)
+    }
+
+    private var detailMessage: String {
+        let duplicatedHeading = LuxoraL10n.text("auth.restore_failed") + ": "
+        guard message.hasPrefix(duplicatedHeading) else { return message }
+        return String(message.dropFirst(duplicatedHeading.count))
     }
 }
 

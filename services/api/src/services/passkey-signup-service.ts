@@ -938,6 +938,7 @@ function publicUser(user: UserRecord): User {
     displayName: user.displayName,
     bio: user.bio,
     avatarUrl: user.avatarUrl,
+    avatarPath: user.avatarPath ?? null,
     createdAt: user.createdAt,
     lastSeenAt: user.lastSeenAt
   });

@@ -17,17 +17,55 @@ public struct LuxoraClientConfiguration: Sendable {
             ?? URL(string: "ws://127.0.0.1:8080/v1/realtime")!
         return LuxoraClientConfiguration(apiBaseURL: apiURL, realtimeURL: realtimeURL)
     }
+
+    func realtimeURL(for version: LuxoraRealtimeProtocolVersion) throws -> URL {
+        guard var components = URLComponents(url: realtimeURL, resolvingAgainstBaseURL: false),
+              components.scheme == "ws" || components.scheme == "wss",
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil
+        else { throw LuxoraAPIError.invalidResponse }
+
+        var pathComponents = components.path.split(separator: "/").map(String.init)
+        if pathComponents.count >= 2,
+           pathComponents[pathComponents.count - 1] == "realtime",
+           ["v1", "v2"].contains(pathComponents[pathComponents.count - 2]) {
+            pathComponents[pathComponents.count - 2] = version == .scopedV2 ? "v2" : "v1"
+            components.path = "/" + pathComponents.joined(separator: "/")
+        } else {
+            components.path = version == .scopedV2 ? "/v2/realtime" : "/v1/realtime"
+        }
+        guard let url = components.url else { throw LuxoraAPIError.invalidResponse }
+        return url
+    }
 }
 
 public struct SessionCredentials: Codable, Sendable {
     public let accessToken: String
     public let refreshToken: String
     public let sessionID: UUID
+    public let realtimeV2Cursor: String?
 
-    public init(accessToken: String, refreshToken: String, sessionID: UUID) {
+    public init(
+        accessToken: String,
+        refreshToken: String,
+        sessionID: UUID,
+        realtimeV2Cursor: String? = nil
+    ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.sessionID = sessionID
+        self.realtimeV2Cursor = realtimeV2Cursor
+    }
+
+    func replacingRealtimeV2Cursor(_ cursor: String?) -> SessionCredentials {
+        SessionCredentials(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            sessionID: sessionID,
+            realtimeV2Cursor: cursor
+        )
     }
 }
 
@@ -37,6 +75,7 @@ struct APIUser: Decodable, Sendable {
     let displayName: String
     let bio: String
     let avatarUrl: URL?
+    let avatarPath: String?
     let createdAt: Date
     let presence: String?
     let lastSeenAt: Date?
@@ -49,9 +88,82 @@ struct APIUser: Decodable, Sendable {
             initials: displayName.initials,
             accentHex: id.deterministicAccent,
             isOnline: presence == "online",
-            status: bio.isEmpty ? "@\(username)" : bio
+            status: bio.isEmpty ? "@\(username)" : bio,
+            avatarPath: avatarPath
         )
     }
+}
+
+struct APIPublicProfile: Decodable, Sendable {
+    let id: UUID
+    let username: String
+    let displayName: String
+    let bio: String
+    let avatarUrl: URL?
+    let avatarPath: String?
+
+    var participant: Participant {
+        Participant(
+            id: id,
+            displayName: displayName,
+            username: username,
+            initials: displayName.initials,
+            accentHex: id.deterministicAccent,
+            isOnline: false,
+            status: bio.isEmpty ? "@\(username)" : bio,
+            avatarPath: avatarPath
+        )
+    }
+}
+
+struct APIPrivacySettings: Decodable, Sendable {
+    let usernameDiscoverable: Bool
+    let messageRequests: MessageRequestPolicy
+
+    var snapshot: PrivacySettingsSnapshot {
+        PrivacySettingsSnapshot(
+            usernameDiscoverable: usernameDiscoverable,
+            messageRequests: messageRequests
+        )
+    }
+}
+
+struct APIMessageRequest: Decodable, Sendable {
+    let id: UUID
+    let direction: MessageRequestDirection
+    let state: MessageRequestState
+    let body: String
+    let sender: APIPublicProfile?
+    let recipient: APIPublicProfile?
+    let createdAt: Date
+    let expiresAt: Date
+    let acceptedAt: Date?
+
+    func item() throws -> MessageRequestItem {
+        let profile: APIPublicProfile
+        switch direction {
+        case .incoming:
+            guard let sender else { throw LuxoraAPIError.invalidResponse }
+            profile = sender
+        case .outgoing:
+            guard let recipient else { throw LuxoraAPIError.invalidResponse }
+            profile = recipient
+        }
+        return MessageRequestItem(
+            id: id,
+            direction: direction,
+            state: state,
+            body: body,
+            participant: profile.participant,
+            createdAt: createdAt,
+            expiresAt: expiresAt
+        )
+    }
+}
+
+struct APIAcceptMessageRequestResponse: Decodable, Sendable {
+    let request: APIMessageRequest
+    let chat: APIChat
 }
 
 struct APITokens: Decodable, Sendable {
@@ -69,6 +181,59 @@ struct APITokens: Decodable, Sendable {
 struct APIAuthResponse: Decodable, Sendable {
     let user: APIUser
     let tokens: APITokens
+}
+
+struct APIDeviceSession: Decodable, Sendable {
+    let id: UUID
+    let deviceName: String
+    let createdAt: Date
+    let lastSeenAt: Date
+    let expiresAt: Date
+    let current: Bool
+
+    var deviceSession: DeviceSession {
+        DeviceSession(
+            id: id,
+            deviceName: deviceName,
+            createdAt: createdAt,
+            lastSeenAt: lastSeenAt,
+            expiresAt: expiresAt,
+            isCurrent: current
+        )
+    }
+}
+
+struct APIUploadAttachment: Decodable, Sendable {
+    let id: UUID
+}
+
+struct APIUploadSession: Decodable, Sendable {
+    enum Status: String, Decodable, Sendable {
+        case active
+        case completing
+        case completed
+        case failed
+        case expired
+    }
+
+    let id: UUID
+    let status: Status
+    let fileName: String
+    let sizeBytes: Int
+    let chunkSizeBytes: Int
+    let receivedBytes: Int
+    let receivedChunkIndexes: [Int]
+    let expiresAt: Date
+    let attachment: APIUploadAttachment?
+    let failureCode: String?
+}
+
+struct APIUploadResponse: Decodable, Sendable {
+    let upload: APIUploadSession
+}
+
+struct APIUserResponse: Decodable, Sendable {
+    let user: APIUser
 }
 
 public struct PhoneCodeChallenge: Equatable, Sendable {
@@ -127,9 +292,150 @@ public struct PhoneRegistrationChallenge: Equatable, Sendable {
     #endif
 }
 
+public struct PhonePasswordChallenge: Equatable, Sendable {
+    public let passwordToken: String
+    public let maskedPhone: String
+    public let expiresAt: Date
+
+    init(response: APIPhonePasswordChallenge) {
+        passwordToken = response.passwordToken
+        maskedPhone = response.maskedPhone
+        expiresAt = response.expiresAt
+    }
+
+    #if DEBUG
+    static let uiTestPreview = PhonePasswordChallenge(
+        passwordToken: "luxpw_\(String(repeating: "p", count: 43))",
+        maskedPhone: "+7 ••• •••-42-18",
+        expiresAt: .distantFuture
+    )
+
+    private init(passwordToken: String, maskedPhone: String, expiresAt: Date) {
+        self.passwordToken = passwordToken
+        self.maskedPhone = maskedPhone
+        self.expiresAt = expiresAt
+    }
+    #endif
+}
+
 public enum PhoneCodeVerificationResult: Equatable, Sendable {
     case authenticated
     case profileRequired(PhoneRegistrationChallenge)
+    case passwordRequired(PhonePasswordChallenge)
+}
+
+public struct PhonePasswordStatus: Equatable, Sendable {
+    public let eligible: Bool
+    public let enabled: Bool
+
+    init(response: APIPhonePasswordStatus) {
+        eligible = response.eligible
+        enabled = response.enabled
+    }
+}
+
+public enum APNSPushEnvironment: String, Codable, Equatable, Sendable {
+    case development
+    case production
+
+    /// Keeps the compile-time APNs endpoint choice identical in the app and in
+    /// lifecycle tests. The signed entitlement is independently configured by
+    /// `APS_ENVIRONMENT` in the Xcode project.
+    public static var currentApplicationBuild: Self {
+        #if DEBUG
+        environment(forDebugBuild: true)
+        #else
+        environment(forDebugBuild: false)
+        #endif
+    }
+
+    static func environment(forDebugBuild isDebugBuild: Bool) -> Self {
+        isDebugBuild ? .development : .production
+    }
+}
+
+public struct PushRegistration: Equatable, Sendable {
+    public let id: UUID
+    public let environment: APNSPushEnvironment
+    public let topic: String
+    public let createdAt: Date
+    public let updatedAt: Date
+
+    init(response: APIPushRegistration) {
+        id = response.id
+        environment = response.environment
+        topic = response.topic
+        createdAt = response.createdAt
+        updatedAt = response.updatedAt
+    }
+}
+
+public enum NotificationPreviewMode: String, Codable, CaseIterable, Equatable, Sendable {
+    case hidden
+    case sender
+    case full
+
+    public var title: String {
+        switch self {
+        case .hidden: "Скрыт"
+        case .sender: "Только отправитель"
+        case .full: "Полный текст"
+        }
+    }
+}
+
+public struct NotificationSettings: Equatable, Sendable {
+    public let messageAlerts: Bool
+    public let messageRequestAlerts: Bool
+    public let mentionAlerts: Bool
+    public let sound: Bool
+    public let badge: Bool
+    public let previewMode: NotificationPreviewMode
+    public let updatedAt: Date
+
+    init(response: APINotificationSettings) {
+        messageAlerts = response.messageAlerts
+        messageRequestAlerts = response.messageRequestAlerts
+        mentionAlerts = response.mentionAlerts
+        sound = response.sound
+        badge = response.badge
+        previewMode = response.previewMode
+        updatedAt = response.updatedAt
+    }
+}
+
+public struct NotificationSettingsPatch: Encodable, Equatable, Sendable {
+    public let messageAlerts: Bool?
+    public let messageRequestAlerts: Bool?
+    public let mentionAlerts: Bool?
+    public let sound: Bool?
+    public let badge: Bool?
+    public let previewMode: NotificationPreviewMode?
+
+    public init(
+        messageAlerts: Bool? = nil,
+        messageRequestAlerts: Bool? = nil,
+        mentionAlerts: Bool? = nil,
+        sound: Bool? = nil,
+        badge: Bool? = nil,
+        previewMode: NotificationPreviewMode? = nil
+    ) {
+        self.messageAlerts = messageAlerts
+        self.messageRequestAlerts = messageRequestAlerts
+        self.mentionAlerts = mentionAlerts
+        self.sound = sound
+        self.badge = badge
+        self.previewMode = previewMode
+    }
+
+    var hasChanges: Bool {
+        messageAlerts != nil
+            || messageRequestAlerts != nil
+            || mentionAlerts != nil
+            || sound != nil
+            || badge != nil
+            || previewMode != nil
+    }
 }
 
 public struct PhoneUsernameAvailability: Equatable, Sendable {
@@ -157,6 +463,36 @@ struct APIPhoneRegistrationChallenge: Decodable, Sendable {
     let expiresAt: Date
 }
 
+struct APIPhonePasswordChallenge: Decodable, Sendable {
+    let passwordToken: String
+    let maskedPhone: String
+    let expiresAt: Date
+}
+
+struct APIPhonePasswordStatus: Decodable, Sendable {
+    let eligible: Bool
+    let enabled: Bool
+}
+
+struct APIPushRegistration: Decodable, Sendable {
+    let id: UUID
+    let platform: String
+    let environment: APNSPushEnvironment
+    let topic: String
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+struct APINotificationSettings: Decodable, Sendable {
+    let messageAlerts: Bool
+    let messageRequestAlerts: Bool
+    let mentionAlerts: Bool
+    let sound: Bool
+    let badge: Bool
+    let previewMode: NotificationPreviewMode
+    let updatedAt: Date
+}
+
 struct APIPhoneUsernameAvailability: Decodable, Sendable {
     let username: String
     let available: Bool
@@ -166,12 +502,14 @@ struct APIPhoneUsernameAvailability: Decodable, Sendable {
 enum APIPhoneCodeVerificationResult: Decodable, Sendable {
     case authenticated(APIAuthResponse)
     case profileRequired(APIPhoneRegistrationChallenge)
+    case passwordRequired(APIPhonePasswordChallenge)
 
     private enum CodingKeys: String, CodingKey {
         case status
         case user
         case tokens
         case registrationToken
+        case passwordToken
         case maskedPhone
         case expiresAt
     }
@@ -179,6 +517,7 @@ enum APIPhoneCodeVerificationResult: Decodable, Sendable {
     private enum Status: String, Decodable {
         case authenticated
         case profileRequired = "profile_required"
+        case passwordRequired = "password_required"
     }
 
     init(from decoder: Decoder) throws {
@@ -199,7 +538,27 @@ enum APIPhoneCodeVerificationResult: Decodable, Sendable {
                     expiresAt: try container.decode(Date.self, forKey: .expiresAt)
                 )
             )
+        case .passwordRequired:
+            self = .passwordRequired(
+                APIPhonePasswordChallenge(
+                    passwordToken: try container.decode(String.self, forKey: .passwordToken),
+                    maskedPhone: try container.decode(String.self, forKey: .maskedPhone),
+                    expiresAt: try container.decode(Date.self, forKey: .expiresAt)
+                )
+            )
         }
+    }
+}
+
+struct APIForwardProvenance: Decodable, Sendable {
+    let senderDisplayName: String
+    let originalCreatedAt: Date
+
+    var messageProvenance: MessageForwardProvenance {
+        MessageForwardProvenance(
+            senderDisplayName: senderDisplayName,
+            originalCreatedAt: originalCreatedAt
+        )
     }
 }
 
@@ -210,6 +569,9 @@ struct APIMessage: Decodable, Sendable {
     let kind: String
     let body: String?
     let replyToMessageId: UUID?
+    let topicId: UUID?
+    let forwardedFrom: APIForwardProvenance?
+    let isPinned: Bool
     let clientNonce: UUID
     let revision: Int
     let createdAt: Date
@@ -230,6 +592,26 @@ struct APIMessage: Decodable, Sendable {
             isOutgoing: sender.id == currentUserID
         )
     }
+
+    func snapshot(currentUserID: UUID) -> RemoteMessageSnapshot {
+        RemoteMessageSnapshot(
+            message: message(currentUserID: currentUserID),
+            metadata: MessageRemoteMetadata(
+                revision: revision,
+                replyToMessageID: replyToMessageId,
+                forwardedFrom: forwardedFrom?.messageProvenance,
+                isPinned: isPinned,
+                isDeleted: deletedAt != nil
+            )
+        )
+    }
+}
+
+struct APIMessagePin: Decodable, Sendable {
+    let chatId: UUID
+    let messageId: UUID
+    let pinnedBy: APIUser
+    let pinnedAt: Date
 }
 
 struct APIReactionSummary: Decodable, Sendable {
@@ -253,8 +635,14 @@ struct APIChat: Decodable, Sendable {
     let lastActivityAt: Date
     let createdAt: Date
     let unreadCount: Int
+    let archivedAt: Date?
+    let mutedUntil: Date?
 
-    func conversation(currentUserID: UUID) -> Conversation {
+    var preferences: ChatPreferences {
+        ChatPreferences(archivedAt: archivedAt, mutedUntil: mutedUntil)
+    }
+
+    func conversation(currentUserID: UUID, now: Date = Date()) -> Conversation {
         let participant = Participant(
             id: id,
             displayName: title,
@@ -274,12 +662,14 @@ struct APIChat: Decodable, Sendable {
             avatar: participant,
             memberCount: memberCount,
             unreadCount: unreadCount,
-            isMuted: false,
+            isMuted: mutedUntil.map { $0 > now } ?? false,
+            mutedUntil: mutedUntil,
             isPinned: false,
             isTyping: false,
-            isArchived: false,
+            isArchived: archivedAt != nil,
             lastActivity: lastActivityAt,
-            folder: kind == "direct" ? "personal" : "work"
+            folder: kind == "direct" ? "personal" : "work",
+            serverRole: role
         )
     }
 }
@@ -317,6 +707,7 @@ struct APICapabilities: Decodable, Sendable {
         let safetyReports: Bool
         let realtime: Bool
         let reconciliation: Bool
+        let chatFolders: Bool
         let mediaUploads: Bool
         let serverSearchConfigured: Bool
         let calls: Bool
@@ -328,6 +719,11 @@ struct APICapabilities: Decodable, Sendable {
         let maxMessageCodePoints: Int
         let maxAttachmentsPerMessage: Int
         let maxAttachmentBytes: Int
+        let maxChatFolders: Int
+        let maxChatFolderTitleLength: Int
+        let maxChatFolderOverrides: Int
+        let chatFolderIdempotencyTtlSeconds: Int
+        let maxChatFolderActiveCommandReceipts: Int
     }
 
     struct Compatibility: Decodable, Sendable {
@@ -346,18 +742,47 @@ struct APICapabilities: Decodable, Sendable {
     let compatibility: Compatibility
 
     func validated() throws -> ServerCapabilities {
+        let advertisedRealtime = versions.realtime
+        let supported = advertisedRealtime.supported
         guard schemaVersion == 1,
               identityContractVersion == 1,
               versions.http.contains(1),
-              versions.realtime.supported.contains(1),
-              versions.realtime.minimum <= 1,
+              !versions.reconciliation.isEmpty,
+              Set(versions.reconciliation).count == versions.reconciliation.count,
+              versions.reconciliation.allSatisfy({ $0 > 0 }),
+              !supported.isEmpty,
+              Set(supported).count == supported.count,
+              supported.allSatisfy({ $0 > 0 }),
+              supported.contains(advertisedRealtime.preferred),
+              supported.contains(advertisedRealtime.minimum),
               compatibility.additiveResponseFields == "ignore",
               compatibility.unknownMutationFields == "reject",
               compatibility.securityCriticalIncompatibility == "required_upgrade",
-              compatibility.realtimeBelowMinimum == "no_downgrade"
+              compatibility.realtimeBelowMinimum == "no_downgrade",
+              features.chatFolders,
+              limits.maxChatFolders == ChatFolderContract.maximumFolders,
+              limits.maxChatFolderTitleLength == ChatFolderContract.maximumTitleCodePoints,
+              limits.maxChatFolderOverrides == ChatFolderContract.maximumOverrides,
+              limits.chatFolderIdempotencyTtlSeconds == ChatFolderContract.idempotencyTTLSeconds,
+              limits.maxChatFolderActiveCommandReceipts
+                == ChatFolderContract.maximumActiveCommandReceipts
         else {
             throw LuxoraAPIError.incompatibleServer
         }
+
+        let clientSupported = Set([1, 2])
+        let compatible = supported.filter {
+            clientSupported.contains($0)
+                && $0 >= advertisedRealtime.minimum
+                && ($0 != 2 || (features.reconciliation && versions.reconciliation.contains(2)))
+        }
+        guard let selectedRaw = (
+            compatible.contains(advertisedRealtime.preferred)
+                ? advertisedRealtime.preferred
+                : compatible.max()
+        ),
+              let selectedRealtime = LuxoraRealtimeProtocolVersion(rawValue: selectedRaw)
+        else { throw LuxoraAPIError.incompatibleServer }
 
         return ServerCapabilities(
             trust: .init(
@@ -374,6 +799,7 @@ struct APICapabilities: Decodable, Sendable {
                 safetyReports: features.safetyReports,
                 realtime: features.realtime,
                 reconciliation: features.reconciliation,
+                chatFolders: features.chatFolders,
                 mediaUploads: features.mediaUploads,
                 serverSearchConfigured: features.serverSearchConfigured,
                 calls: features.calls,
@@ -383,8 +809,14 @@ struct APICapabilities: Decodable, Sendable {
             limits: .init(
                 maxMessageCodePoints: limits.maxMessageCodePoints,
                 maxAttachmentsPerMessage: limits.maxAttachmentsPerMessage,
-                maxAttachmentBytes: limits.maxAttachmentBytes
-            )
+                maxAttachmentBytes: limits.maxAttachmentBytes,
+                maxChatFolders: limits.maxChatFolders,
+                maxChatFolderTitleLength: limits.maxChatFolderTitleLength,
+                maxChatFolderOverrides: limits.maxChatFolderOverrides,
+                chatFolderIdempotencyTTLSeconds: limits.chatFolderIdempotencyTtlSeconds,
+                maxChatFolderActiveCommandReceipts: limits.maxChatFolderActiveCommandReceipts
+            ),
+            realtimeProtocolVersion: selectedRealtime
         )
     }
 }
@@ -401,6 +833,7 @@ struct APIErrorEnvelope: Decodable, Sendable {
 enum LuxoraAPIError: LocalizedError, Sendable {
     case invalidResponse
     case incompatibleServer
+    case syncUnstable
     case server(status: Int, code: String, message: String)
     case transport(String)
     case missingSession
@@ -409,6 +842,7 @@ enum LuxoraAPIError: LocalizedError, Sendable {
         switch self {
         case .invalidResponse: LuxoraL10n.text("error.invalid_response")
         case .incompatibleServer: LuxoraL10n.text("error.incompatible_server")
+        case .syncUnstable: "Состояние менялось во время синхронизации. Повторите ещё раз."
         case let .server(status, code, _):
             "\(LuxoraL10n.text("error.server_rejected")) \(code) (\(status))."
         case .transport: LuxoraL10n.text("error.transport")

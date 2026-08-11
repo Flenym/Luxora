@@ -24,10 +24,18 @@ describe("content encryption", () => {
     expect(() => cipher.decrypt(tampered)).toThrow();
   });
 
-  it("requires an encryption keyring in production", () => {
+  it("requires an encryption keyring in every runnable environment outside tests", () => {
     expect(() => loadConfig({
       NODE_ENV: "production",
       JWT_SECRET: "production-secret-with-at-least-thirty-two-bytes"
-    })).toThrow(/Production requires DATA_ENCRYPTION_KEYS/);
+    })).toThrow(/requires DATA_ENCRYPTION_KEYS/);
+    expect(() => loadConfig({
+      NODE_ENV: "development",
+      JWT_SECRET: "development-secret-with-at-least-thirty-two-bytes"
+    })).toThrow(/requires DATA_ENCRYPTION_KEYS/);
+    expect(loadConfig({
+      NODE_ENV: "test",
+      JWT_SECRET: "test-only-secret-with-at-least-thirty-two-bytes"
+    }).dataEncryptionKeys).toEqual({});
   });
 });

@@ -37,6 +37,7 @@ const PUBLIC_HTTP_POLICIES = [
   "POST /v1/auth/refresh",
   "POST /v1/auth/phone/challenges",
   "POST /v1/auth/phone/challenges/:id/verify",
+  "POST /v1/auth/phone/password",
   "POST /v1/auth/phone/registrations",
   "POST /v1/auth/phone/usernames/check",
   "GET /openapi.json"
@@ -50,6 +51,59 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
   { key: "DELETE /v1/auth/sessions/current", method: "DELETE", url: "/v1/auth/sessions/current" },
   { key: "DELETE /v1/auth/sessions/:id", method: "DELETE", url: `/v1/auth/sessions/${RESOURCE_ID_CANARY}` },
   { key: "GET /v1/me", method: "GET", url: "/v1/me" },
+  {
+    key: "PATCH /v1/me",
+    method: "PATCH",
+    url: "/v1/me",
+    payload: { displayName: PROFILE_CANARY }
+  },
+  {
+    key: "PUT /v1/me/avatar",
+    method: "PUT",
+    url: "/v1/me/avatar",
+    payload: { attachmentId: RESOURCE_ID_CANARY }
+  },
+  { key: "DELETE /v1/me/avatar", method: "DELETE", url: "/v1/me/avatar" },
+  { key: "GET /v1/me/phone-password", method: "GET", url: "/v1/me/phone-password" },
+  {
+    key: "PUT /v1/me/phone-password",
+    method: "PUT",
+    url: "/v1/me/phone-password",
+    payload: { password: PASSWORD }
+  },
+  {
+    key: "DELETE /v1/me/phone-password",
+    method: "DELETE",
+    url: "/v1/me/phone-password",
+    payload: { currentPassword: PASSWORD }
+  },
+  {
+    key: "GET /v1/push/registrations/current",
+    method: "GET",
+    url: "/v1/push/registrations/current"
+  },
+  {
+    key: "PUT /v1/push/registrations/current",
+    method: "PUT",
+    url: "/v1/push/registrations/current",
+    payload: { platform: "apns", environment: "development", token: "ab".repeat(32) }
+  },
+  {
+    key: "DELETE /v1/push/registrations/current",
+    method: "DELETE",
+    url: "/v1/push/registrations/current"
+  },
+  {
+    key: "GET /v1/notifications/settings",
+    method: "GET",
+    url: "/v1/notifications/settings"
+  },
+  {
+    key: "PATCH /v1/notifications/settings",
+    method: "PATCH",
+    url: "/v1/notifications/settings",
+    payload: { previewMode: "hidden" }
+  },
   { key: "GET /v1/users/search", method: "GET", url: `/v1/users/search?q=${PROFILE_CANARY}` },
   { key: "GET /v1/users/lookup", method: "GET", url: "/v1/users/lookup?username=profile_canary" },
   { key: "GET /v1/privacy", method: "GET", url: "/v1/privacy" },
@@ -96,6 +150,45 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
       alsoBlock: false
     }
   },
+  { key: "GET /v1/chat-folders", method: "GET", url: "/v1/chat-folders" },
+  {
+    key: "POST /v1/chat-folders",
+    method: "POST",
+    url: "/v1/chat-folders",
+    payload: {
+      title: CONTENT_CANARY,
+      rules: {
+        includeKinds: ["direct"],
+        unreadOnly: false,
+        excludeMuted: false,
+        includeArchived: false
+      },
+      overrides: [],
+      clientNonce: SECOND_RESOURCE_ID
+    }
+  },
+  {
+    key: "PUT /v1/chat-folders/order",
+    method: "PUT",
+    url: "/v1/chat-folders/order",
+    payload: {
+      folderIds: [RESOURCE_ID_CANARY],
+      expectedStateRevision: 0,
+      clientNonce: SECOND_RESOURCE_ID
+    }
+  },
+  {
+    key: "PATCH /v1/chat-folders/:id",
+    method: "PATCH",
+    url: `/v1/chat-folders/${RESOURCE_ID_CANARY}`,
+    payload: { title: CONTENT_CANARY, expectedRevision: 1, clientNonce: SECOND_RESOURCE_ID }
+  },
+  {
+    key: "DELETE /v1/chat-folders/:id",
+    method: "DELETE",
+    url: `/v1/chat-folders/${RESOURCE_ID_CANARY}`,
+    payload: { expectedRevision: 1, clientNonce: SECOND_RESOURCE_ID }
+  },
   { key: "GET /v1/chats", method: "GET", url: "/v1/chats" },
   {
     key: "POST /v1/chats",
@@ -104,6 +197,17 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
     payload: { kind: "direct", userId: RESOURCE_ID_CANARY }
   },
   { key: "GET /v1/chats/:id", method: "GET", url: `/v1/chats/${RESOURCE_ID_CANARY}` },
+  {
+    key: "GET /v1/chats/:id/preferences",
+    method: "GET",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/preferences`
+  },
+  {
+    key: "PATCH /v1/chats/:id/preferences",
+    method: "PATCH",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/preferences`,
+    payload: { archived: true }
+  },
   {
     key: "GET /v1/chats/:id/members",
     method: "GET",
@@ -409,7 +513,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(53);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(71);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {
@@ -540,6 +644,23 @@ describe("complete HTTP authorization matrix", () => {
 
     expect((await app.inject({
       method: "POST",
+      url: "/v1/chat-folders",
+      headers: auth(owner),
+      payload: {
+        title: CONTENT_CANARY,
+        rules: {
+          includeKinds: ["group"],
+          unreadOnly: false,
+          excludeMuted: false,
+          includeArchived: false
+        },
+        overrides: [],
+        clientNonce: randomUUID()
+      }
+    })).statusCode).toBe(201);
+
+    expect((await app.inject({
+      method: "POST",
       url: "/v1/safety/reports",
       headers: auth(owner),
       payload: {
@@ -562,10 +683,12 @@ describe("complete HTTP authorization matrix", () => {
     const probes: Array<{ name: string; url: string }> = [
       { name: "sessions", url: "/v1/auth/sessions" },
       { name: "self", url: "/v1/me" },
+      { name: "phone password", url: "/v1/me/phone-password" },
       { name: "privacy", url: "/v1/privacy" },
       { name: "incoming requests", url: "/v1/message-requests?direction=incoming" },
       { name: "outgoing requests", url: "/v1/message-requests?direction=outgoing" },
       { name: "blocks", url: "/v1/blocks" },
+      { name: "chat folders", url: "/v1/chat-folders" },
       { name: "chats", url: "/v1/chats" },
       { name: "message search", url: `/v1/search/messages?q=${CONTENT_CANARY}` },
       { name: "file search", url: "/v1/search/files?q=matrix-private-file-canary" },

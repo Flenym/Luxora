@@ -11,6 +11,9 @@
 		0E36CE40105D7D08538A8076 /* LuxoraKit in Frameworks */ = {isa = PBXBuildFile; productRef = 31B27A4FAA978DF73B53166E /* LuxoraKit */; };
 		0F9C76AB8B342E597D70F16D /* LuxoraMobileUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA56D6682F942801D5470F0F /* LuxoraMobileUITests.swift */; };
 		A11111111111111111111111 /* LuxoraNavigationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22222222222222222222222 /* LuxoraNavigationUITests.swift */; };
+		D4A6C2E1F0B9876543210001 /* LuxoraSessionLoaderUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A6C2E1F0B9876543210002 /* LuxoraSessionLoaderUITests.swift */; };
+		D5A6C2E1F0B9876543210001 /* LuxoraDeviceSessionsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A6C2E1F0B9876543210002 /* LuxoraDeviceSessionsUITests.swift */; };
+		D6A6C2E1F0B9876543210001 /* LuxoraAccessibilityAuditUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6A6C2E1F0B9876543210002 /* LuxoraAccessibilityAuditUITests.swift */; };
 		1281134C5258CB5F26F7F6FF /* LuxoraMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99BE6248B94DA5A994404DA /* LuxoraMacApp.swift */; };
 		16F3806636371832D637582A /* ConceptScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = D196CAD2208155889E07FB09 /* ConceptScreens.swift */; };
 		2015E971A9FA3C68D454161C /* LuxoraDesignLabUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7CC71E90F5747B3D2C809BD /* LuxoraDesignLabUITests.swift */; };
@@ -46,6 +49,9 @@
 		98DC971EB956BD5F349DF671 /* LuxoraDesignLabUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LuxoraDesignLabUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA56D6682F942801D5470F0F /* LuxoraMobileUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxoraMobileUITests.swift; sourceTree = "<group>"; };
 		A22222222222222222222222 /* LuxoraNavigationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxoraNavigationUITests.swift; sourceTree = "<group>"; };
+		D4A6C2E1F0B9876543210002 /* LuxoraSessionLoaderUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxoraSessionLoaderUITests.swift; sourceTree = "<group>"; };
+		D5A6C2E1F0B9876543210002 /* LuxoraDeviceSessionsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxoraDeviceSessionsUITests.swift; sourceTree = "<group>"; };
+		D6A6C2E1F0B9876543210002 /* LuxoraAccessibilityAuditUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxoraAccessibilityAuditUITests.swift; sourceTree = "<group>"; };
 		C2AA87A8369EAC06CEE80F8C /* LuxoraMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LuxoraMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7CC71E90F5747B3D2C809BD /* LuxoraDesignLabUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxoraDesignLabUITests.swift; sourceTree = "<group>"; };
 		C99BE6248B94DA5A994404DA /* LuxoraMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxoraMacApp.swift; sourceTree = "<group>"; };
@@ -91,6 +97,9 @@
 			children = (
 				AA56D6682F942801D5470F0F /* LuxoraMobileUITests.swift */,
 				A22222222222222222222222 /* LuxoraNavigationUITests.swift */,
+				D4A6C2E1F0B9876543210002 /* LuxoraSessionLoaderUITests.swift */,
+				D5A6C2E1F0B9876543210002 /* LuxoraDeviceSessionsUITests.swift */,
+				D6A6C2E1F0B9876543210002 /* LuxoraAccessibilityAuditUITests.swift */,
 			);
 			name = LuxoraMobileUITests;
 			path = Tests/LuxoraMobileUITests;
@@ -386,6 +395,9 @@
 			files = (
 				0F9C76AB8B342E597D70F16D /* LuxoraMobileUITests.swift in Sources */,
 				A11111111111111111111111 /* LuxoraNavigationUITests.swift in Sources */,
+				D4A6C2E1F0B9876543210001 /* LuxoraSessionLoaderUITests.swift in Sources */,
+				D5A6C2E1F0B9876543210001 /* LuxoraDeviceSessionsUITests.swift in Sources */,
+				D6A6C2E1F0B9876543210001 /* LuxoraAccessibilityAuditUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -462,7 +474,9 @@
 		36907BFB953463216D42C7DC /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Apps/iOS/LuxoraMobile.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_LANGUAGE = ru;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -489,7 +503,9 @@
 		48E5A1C2CF172C6564F56EB9 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Apps/iOS/LuxoraMobile.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_LANGUAGE = ru;
 				GENERATE_INFOPLIST_FILE = YES;

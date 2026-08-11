@@ -10,6 +10,10 @@ const strictFeatureFlag = z.enum(["0", "1", "false", "true"])
   .default("false")
   .transform((value) => value === "1" || value === "true");
 
+const strictDefaultOnFeatureFlag = z.enum(["0", "1", "false", "true"])
+  .default("true")
+  .transform((value) => value === "1" || value === "true");
+
 const ConfigSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   HOST: z.string().default("0.0.0.0"),
@@ -52,7 +56,8 @@ const ConfigSchema = z.object({
   PHONE_AUTH_CHALLENGE_TTL_SECONDS: z.coerce.number().int().min(120).max(600).default(300),
   PHONE_AUTH_REGISTRATION_TTL_SECONDS: z.coerce.number().int().min(300).max(1_800).default(600),
   PHONE_AUTH_RETRY_AFTER_SECONDS: z.coerce.number().int().min(30).max(300).default(60),
-  PHONE_AUTH_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5)
+  PHONE_AUTH_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5),
+  SYNC_INVALIDATION_ENABLED: strictDefaultOnFeatureFlag
 });
 
 export interface AppConfig {
@@ -107,6 +112,8 @@ export interface AppConfig {
   phoneAuthRegistrationTtlSeconds: number;
   phoneAuthRetryAfterSeconds: number;
   phoneAuthMaxAttempts: number;
+  /** Emergency rollback seam; false suppresses only sync.invalidated emission and delivery. */
+  syncInvalidationEnabled: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -162,10 +169,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error("ACTIVE_DATA_ENCRYPTION_KEY_ID is not present in DATA_ENCRYPTION_KEYS");
   }
   if (
-    parsed.NODE_ENV === "production" &&
+    parsed.NODE_ENV !== "test" &&
     (parsed.ACTIVE_DATA_ENCRYPTION_KEY_ID === undefined || Object.keys(dataEncryptionKeys).length === 0)
   ) {
-    throw new Error("Production requires DATA_ENCRYPTION_KEYS and ACTIVE_DATA_ENCRYPTION_KEY_ID");
+    throw new Error(
+      "Luxora API requires DATA_ENCRYPTION_KEYS and ACTIVE_DATA_ENCRYPTION_KEY_ID outside tests"
+    );
   }
   let passkeyBootstrapRefreshKeys: Record<string, string> | undefined;
   if (parsed.PASSKEY_BOOTSTRAP_REFRESH_KEYS !== undefined) {
@@ -420,6 +429,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     phoneAuthChallengeTtlSeconds: parsed.PHONE_AUTH_CHALLENGE_TTL_SECONDS,
     phoneAuthRegistrationTtlSeconds: parsed.PHONE_AUTH_REGISTRATION_TTL_SECONDS,
     phoneAuthRetryAfterSeconds: parsed.PHONE_AUTH_RETRY_AFTER_SECONDS,
-    phoneAuthMaxAttempts: parsed.PHONE_AUTH_MAX_ATTEMPTS
+    phoneAuthMaxAttempts: parsed.PHONE_AUTH_MAX_ATTEMPTS,
+    syncInvalidationEnabled: parsed.SYNC_INVALIDATION_ENABLED
   };
 }

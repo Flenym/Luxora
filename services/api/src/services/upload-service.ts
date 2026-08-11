@@ -415,18 +415,19 @@ export class UploadService {
     }
     const orphanBefore = new Date(now.getTime() - this.config.orphanAttachmentTtlHours * 3_600_000).toISOString();
     const staleOrphanClaim = new Date(now.getTime() - 60 * 60_000).toISOString();
-    const orphans = this.store.claimOrphanAttachments(
+    const orphanClaim = this.store.claimOrphanAttachments(
       this.storage.name,
       orphanBefore,
       staleOrphanClaim,
       now.toISOString(),
       100
     );
+    this.publisher.publish(orphanClaim.invalidations);
     let deletedOrphans = 0;
-    for (const attachment of orphans) {
+    for (const attachment of orphanClaim.attachments) {
       try {
         await this.storage.delete(attachment.storageKey);
-        this.store.deleteAttachmentRecord(attachment.id, now.toISOString());
+        this.publisher.publish(this.store.deleteAttachmentRecord(attachment.id, now.toISOString()));
         deletedOrphans += 1;
       } catch {
         // The delete is intentionally irreversible: remote failures are ambiguous,

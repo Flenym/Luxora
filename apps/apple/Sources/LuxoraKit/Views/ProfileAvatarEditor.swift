@@ -7,17 +7,36 @@ import UIKit
 struct ProfileAvatarEditor: View {
     let displayName: String
     @Binding var avatarPNGData: Data?
+    let identifierPrefix: String
+    let existingParticipant: Participant?
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var cropSource: UIImage?
     @State private var isCropperPresented = false
     @State private var loadError: String?
+    @State private var didPrepareUITestFixture = false
+
+    init(
+        displayName: String,
+        avatarPNGData: Binding<Data?>,
+        identifierPrefix: String = "auth-avatar",
+        existingParticipant: Participant? = nil
+    ) {
+        self.displayName = displayName
+        _avatarPNGData = avatarPNGData
+        self.identifierPrefix = identifierPrefix
+        self.existingParticipant = existingParticipant
+    }
 
     var body: some View {
         let previewData = avatarPNGData
         PhotosPicker(selection: $pickerItem, matching: .images, photoLibrary: .shared()) {
             ZStack(alignment: .bottomTrailing) {
-                OnboardingAvatarPreview(displayName: displayName, avatarPNGData: previewData)
+                OnboardingAvatarPreview(
+                    displayName: displayName,
+                    avatarPNGData: previewData,
+                    existingParticipant: existingParticipant
+                )
                     .frame(width: 112, height: 112)
 
                 Image(systemName: "camera.fill")
@@ -30,7 +49,8 @@ struct ProfileAvatarEditor: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(avatarPNGData == nil ? "Добавить фото профиля" : "Изменить фото профиля")
-        .accessibilityIdentifier("auth-avatar-picker")
+        .accessibilityIdentifier("\(identifierPrefix)-picker")
+        .onAppear { prepareUITestFixtureIfNeeded() }
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
             Task { @MainActor in
@@ -52,7 +72,7 @@ struct ProfileAvatarEditor: View {
         }
         .fullScreenCover(isPresented: $isCropperPresented) {
             if let cropSource {
-                CircularAvatarCropper(image: cropSource) { result in
+                CircularAvatarCropper(image: cropSource, identifierPrefix: identifierPrefix) { result in
                     if let result {
                         avatarPNGData = result
                     }
@@ -71,11 +91,37 @@ struct ProfileAvatarEditor: View {
             Text(loadError ?? "")
         }
     }
+
+    private func prepareUITestFixtureIfNeeded() {
+        #if DEBUG
+        guard !didPrepareUITestFixture,
+              identifierPrefix == "profile-avatar",
+              ProcessInfo.processInfo.environment["LUXORA_UI_TEST_AVATAR_FIXTURE"] == "1"
+        else { return }
+        didPrepareUITestFixture = true
+
+        let size = CGSize(width: 768, height: 768)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        cropSource = renderer.image { context in
+            let bounds = CGRect(origin: .zero, size: size)
+            UIColor(red: 0.18, green: 0.10, blue: 0.52, alpha: 1).setFill()
+            context.fill(bounds)
+            UIColor(red: 0.48, green: 0.36, blue: 1, alpha: 1).setFill()
+            context.cgContext.fillEllipse(in: bounds.insetBy(dx: 92, dy: 92))
+            UIColor(red: 0.15, green: 0.82, blue: 0.92, alpha: 0.92).setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 330, y: 128, width: 310, height: 310))
+            UIColor.white.withAlphaComponent(0.92).setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 244, y: 250, width: 172, height: 172))
+        }.normalizedForDisplay
+        isCropperPresented = true
+        #endif
+    }
 }
 
 private struct OnboardingAvatarPreview: View {
     let displayName: String
     let avatarPNGData: Data?
+    let existingParticipant: Participant?
 
     var body: some View {
         Group {
@@ -85,6 +131,8 @@ private struct OnboardingAvatarPreview: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
+            } else if let existingParticipant {
+                AvatarView(participant: existingParticipant, size: 112, showsPresence: false)
             } else {
                 Circle()
                     .fill(defaultGradient)
@@ -131,6 +179,7 @@ private struct OnboardingAvatarPreview: View {
 
 private struct CircularAvatarCropper: View {
     let image: UIImage
+    let identifierPrefix: String
     let completion: (Data?) -> Void
 
     @State private var zoom: CGFloat = 1
@@ -158,7 +207,7 @@ private struct CircularAvatarCropper: View {
                     .shadow(color: .black.opacity(0.4), radius: 18)
                     .gesture(cropGesture(diameter: diameter))
                     .accessibilityLabel("Круглая область кадрирования")
-                    .accessibilityIdentifier("auth-avatar-crop")
+                    .accessibilityIdentifier("\(identifierPrefix)-crop")
 
                     Label("Сведите пальцы для масштаба и перетащите фото", systemImage: "hand.draw")
                         .font(.subheadline)
@@ -169,7 +218,7 @@ private struct CircularAvatarCropper: View {
                         .tint(LuxoraTheme.iris)
                         .padding(.horizontal, 30)
                         .accessibilityLabel("Масштаб фото")
-                        .accessibilityIdentifier("auth-avatar-zoom")
+                        .accessibilityIdentifier("\(identifierPrefix)-zoom")
                         .onChange(of: zoom) { _, value in committedZoom = value }
 
                     Spacer(minLength: 20)
@@ -179,14 +228,14 @@ private struct CircularAvatarCropper: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Отмена") { completion(nil) }
-                            .accessibilityIdentifier("auth-avatar-crop-cancel")
+                            .accessibilityIdentifier("\(identifierPrefix)-crop-cancel")
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Готово") {
                             completion(renderedAvatar(diameter: diameter))
                         }
                         .fontWeight(.semibold)
-                        .accessibilityIdentifier("auth-avatar-crop-done")
+                        .accessibilityIdentifier("\(identifierPrefix)-crop-done")
                     }
                 }
                 .navigationTitle("Фото профиля")
@@ -264,17 +313,45 @@ private struct AvatarCropCanvas: View {
 }
 
 enum PendingProfileAvatarStore {
-    static func save(_ data: Data) throws {
+    static func save(_ data: Data, username: String) throws {
+        try data.write(
+            to: fileURL(username: username),
+            options: [.atomic, .completeFileProtection]
+        )
+    }
+
+    static func load(username: String) throws -> Data? {
+        let url = try fileURL(username: username, createDirectory: false)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try Data(contentsOf: url, options: .mappedIfSafe)
+    }
+
+    static func remove(username: String) throws {
+        let url = try fileURL(username: username, createDirectory: false)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+    }
+
+    private static func fileURL(username: String, createDirectory: Bool = true) throws -> URL {
+        guard !username.isEmpty,
+              username.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") })
+        else { throw PendingProfileAvatarError.invalidUsername }
         let base = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
-            create: true
+            create: createDirectory
         )
         let directory = base.appendingPathComponent("Luxora", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try data.write(to: directory.appendingPathComponent("pending-profile-avatar.png"), options: .atomic)
+        if createDirectory {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        return directory.appendingPathComponent("pending-profile-avatar-\(username.lowercased()).png")
     }
+}
+
+private enum PendingProfileAvatarError: Error {
+    case invalidUsername
 }
 
 private extension UIImage {

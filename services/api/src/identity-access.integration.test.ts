@@ -134,7 +134,7 @@ describe("IA-1 identity and relationship boundary", () => {
     });
     expect(visible.statusCode).toBe(200);
     expect(Object.keys(visible.json().profile).sort()).toEqual([
-      "avatarUrl", "bio", "displayName", "id", "username"
+      "avatarPath", "avatarUrl", "bio", "displayName", "id", "username"
     ]);
 
     const hidden = await app.inject({
@@ -254,6 +254,10 @@ describe("IA-1 identity and relationship boundary", () => {
     expect(known.json().items[0].lastSeenAt).toBeUndefined();
   });
 
+  // This boundary intentionally performs two production-cost Argon2id
+  // registrations plus four independently bounded realtime handshakes. Keep
+  // the outer budget above their normal aggregate without weakening any of
+  // the per-message 3 s deadlines in RealtimeClient.waitFor.
   it("keeps dismiss and block direction private across realtime versions", async () => {
     app = await buildApp({ config: testConfig(), logger: false });
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -358,7 +362,7 @@ describe("IA-1 identity and relationship boundary", () => {
     const cooldown = await createRequest(alice, bob, "Must not reveal dismissal");
     expect(cooldown.statusCode).toBe(403);
     expect(cooldown.json().error.details).toEqual({ reason: "relationship_unavailable" });
-  });
+  }, 10_000);
 
   it("stores only selected authorized report evidence and makes optional block effective", async () => {
     app = await buildApp({ config: testConfig(), logger: false });

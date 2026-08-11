@@ -24,6 +24,19 @@ final class PhoneNavigationSupportTests: XCTestCase {
         XCTAssertFalse(payload.qrText.contains("+7"))
     }
 
+    func testProfilePatchBodyContainsOnlyServerOwnedEditableFields() {
+        let body = APIProfileBody.update(
+            displayName: "Егор Flenym",
+            bio: "Создаёт Luxora Beta-0.1"
+        )
+
+        XCTAssertEqual(Set(body.keys), ["displayName", "bio"])
+        XCTAssertEqual(body["displayName"], "Егор Flenym")
+        XCTAssertEqual(body["bio"], "Создаёт Luxora Beta-0.1")
+        XCTAssertNil(body["username"])
+        XCTAssertNil(body["avatarUrl"])
+    }
+
     func testFolderSummaryCountsServerLoadedConversationsWithoutInventingFolders() {
         let direct = conversation(
             id: "20000000-0000-0000-0000-000000000001",

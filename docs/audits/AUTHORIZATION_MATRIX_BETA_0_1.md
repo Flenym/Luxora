@@ -1,7 +1,7 @@
 # Luxora HTTP and realtime authorization matrix — Beta-0.1
 
 Owner: Flenym  
-Checkpoint: 2026-08-03  
+Checkpoint: 2026-08-11
 Scope: every explicitly registered current HTTP resource/action, both current
 WebSocket endpoints, every current client command, and every current durable
 event audience branch.
@@ -9,8 +9,8 @@ event audience branch.
 ## Claim boundary
 
 This is an executable matrix for the routes and schemas that exist now. It does
-not claim coverage for future membership mutation, moderation, calls, passkeys,
-push, export/deletion, administration, or E2EE surfaces because those endpoints
+not claim coverage for future ownership transfer/invitation approval, moderation, calls, passkeys,
+APNs delivery, export/deletion, administration, or E2EE surfaces because those endpoints
 do not exist. A source-inventory assertion fails when an explicit HTTP route,
 dynamic realtime path, client command variant, or durable event branch is added
 without updating the matrix.
@@ -18,8 +18,8 @@ without updating the matrix.
 Evidence labels below map to named tests:
 
 - `H-INV`: explicit route-source inventory equals the public-policy list plus all
-  49 protected HTTP rows.
-- `H-UNA`: invalid authentication is table-tested on all 49 protected rows;
+  71 protected HTTP rows: 84 explicit routes total with 13 classified public.
+- `H-UNA`: invalid authentication is table-tested on all 71 protected rows;
   every response is `401`, contains no ID/content/profile/token canary, is
   `private, no-store`, and creates no durable event.
 - `H-SCOPE`: unrelated-account probes cover every self/account collection and
@@ -30,7 +30,7 @@ Evidence labels below map to named tests:
 - `H-ROLE`: owner/admin/member/outsider and author/non-author HTTP checks.
 - `H-DIRECT`: accepted Direct operations, either-direction block cutoff,
   retained-history policy, and own-delete exception.
-- `R-INV`: both dynamic WS paths, six client commands and 19 durable audience
+- `R-INV`: both dynamic WS paths, six client commands and 23 durable audience
   branches are source-inventoried.
 - `R-UNA`: every non-auth command and invalid authentication are denied on both
   protocols before ready/state change.
@@ -40,8 +40,9 @@ Evidence labels below map to named tests:
   side effect.
 - `R-CHAT`: all 11 chat-scoped durable events are delivered to a current member
   and filtered for an outsider.
-- `R-ACTOR`: attachment-owner and all seven identity/audience branches are
-  produced and replayed only for their intended accounts.
+- `R-ACTOR`: attachment-owner, private chat-preference/folder accounts and all
+  seven identity/audience branches are produced and replayed only for their
+  intended accounts.
 - `EXISTING`: deeper media, identity, refresh-session, cursor, reconciliation,
   relationship and logging regressions in the existing focused suites.
 
@@ -79,6 +80,11 @@ These are not labelled IDOR surfaces.
 | `POST /v1/auth/register` | Unauthenticated credential bootstrap with network rate limit; creates only the registering account/session. | Sensitive `private, no-store`. | `H-INV`, auth suites |
 | `POST /v1/auth/login` | Unauthenticated credential verification with generic failure and rate limit. | Sensitive `private, no-store`. | `H-INV`, auth suites |
 | `POST /v1/auth/refresh` | Unauthenticated bearer-family rotation endpoint; authorization is possession plus strict one-time refresh semantics, not object ID access. | Sensitive `private, no-store`. | `H-INV`, refresh race suites |
+| `POST /v1/auth/phone/challenges` | Unauthenticated development/external-provider phone challenge bootstrap with strict E.164 input, replay nonce and resend/rate controls; feature remains default-off. | Sensitive `private, no-store`; response never contains the code. | `H-INV`, phone-auth suites |
+| `POST /v1/auth/phone/challenges/:id/verify` | Challenge possession plus correct OTP and exact command nonce; account lookup occurs only after code verification. | Sensitive `private, no-store`; bounded invalid/expired/exhausted outcomes reveal no account existence. | `H-INV`, phone-auth suites |
+| `POST /v1/auth/phone/password` | Possession of a short-lived post-OTP continuation plus the enabled account phone password and exact nonce. | Sensitive `private, no-store`; separate Argon2id hash/flag cannot enable username-only login, bounded durable failures, terminal grant lock and encrypted exact response replay. | `H-INV`, phone-password suites |
+| `POST /v1/auth/phone/registrations` | Short-lived verified registration grant creates the phone account/session exactly once. | Sensitive `private, no-store`; exact response-loss replay only. | `H-INV`, phone-auth suites |
+| `POST /v1/auth/phone/usernames/check` | Short-lived verified registration grant checks a normalized candidate and bounded alternatives before account creation. | Sensitive `private, no-store`; no unrelated private-profile projection. | `H-INV`, phone-auth suites |
 | `GET /openapi.json` | Public generated API description; no account state. | Public; no forced private header. | `H-INV`, public-policy test |
 | `/docs` generated Swagger UI | Public static documentation surface; not an application resource/action. | Plugin/static policy. | route/plugin configuration |
 
@@ -94,6 +100,17 @@ Every row also carries `H-UNA`.
 | `DELETE /v1/auth/sessions/current` | Principal revokes current session. | Active current session. | `401`; no caller-supplied object ID. | `EXISTING` |
 | `DELETE /v1/auth/sessions/:id` | Principal revokes one of its sessions. | Target session must belong to principal account. | Foreign and random IDs are identical generic `404`; foreign session remains active. | `H-ORACLE`, `EXISTING` |
 | `GET /v1/me` | Principal reads its own profile. | Active session; self derived from token. | `401`; no foreign account selector. | `H-SCOPE` |
+| `PATCH /v1/me` | Principal updates only its own display name and/or bio. | Active session; self derived from token; strict non-empty bounded schema. | `401`/`400`; no account selector or arbitrary avatar URL; no foreign mutation. | `H-UNA`, profile-update suite |
+| `PUT /v1/me/avatar` | Principal creates and binds a processed derivative from one uploaded image. | Source attachment is active, exact owner and verified image; server bounds bytes/pixels, decodes, strips metadata, crops/re-encodes, then quota-checks and binds under the writer lock. | Foreign/random source is generic `404`; invalid media/quota fails without avatar row or retained output object; arbitrary URL is not accepted. | `H-UNA`, profile-avatar suite |
+| `DELETE /v1/me/avatar` | Principal clears only its own current processed derivative. | Active session; self derived from token. | `401`; previous derivative becomes unlinked for retention cleanup without exposing another account selector. | `H-UNA`, profile-avatar suite |
+| `GET /v1/me/phone-password` | Principal reads whether its verified phone account has the optional second password enabled. | Active session; self derived from token; legacy accounts without phone binding are ineligible. | `401`; no phone number, hash or foreign selector. | `H-SCOPE`, phone-password suite |
+| `PUT /v1/me/phone-password` | Principal enables or changes its own post-OTP password. | Verified phone binding; an existing password must be supplied before CAS replacement. | `401`/`409`; no account selector, raw password response or cross-account mutation. | `H-UNA`, phone-password suite |
+| `DELETE /v1/me/phone-password` | Principal disables its own post-OTP password. | Verified phone binding plus current password; CAS replaces the hash with a fresh discarded-secret Argon2id placeholder. | `401`/`409`; concurrent changes fail closed. | `H-UNA`, phone-password suite |
+| `GET /v1/push/registrations/current` | Principal reads the token-free projection for its current session. | Active session; account and session derive only from the bearer. | `401`; no raw token or caller-supplied account/session selector. | `H-SCOPE`, push-notification suite |
+| `PUT /v1/push/registrations/current` | Principal binds one APNs token to its current session. | Strict APNs/environment input; server-fixed app topic; token transfer/rotation is atomic and encrypted. | `401`/`400`; another account cannot be selected and no token is returned. | `H-UNA`, push-notification suite |
+| `DELETE /v1/push/registrations/current` | Principal idempotently revokes its current push row. | Active current session; self derived from token. | `401`; no foreign registration ID/token oracle. | `H-UNA`, push-notification suite |
+| `GET /v1/notifications/settings` | Principal reads its synchronized global notification preferences. | Self derived from token; hidden preview is the privacy default. | `401`; no account selector. | `H-SCOPE`, push-notification suite |
+| `PATCH /v1/notifications/settings` | Principal changes a strict non-empty subset of its own preferences. | Self derived from token. | `401`/`400`; no cross-account mutation or unknown fields. | `H-UNA`, push-notification suite |
 | `GET /v1/users/search` | Principal searches known users. | Accepted current relationship plus privacy/block projection. | No unrelated/private account result; rate-limited. | `H-SCOPE`, `EXISTING` |
 | `GET /v1/users/lookup` | Principal performs exact username lookup. | Target must be discoverable and not blocked; public-profile projection only. | Null/generic projection; no presence, last-seen, session, email or token. | `EXISTING` |
 | `GET /v1/privacy` | Principal reads own privacy settings. | Self derived from token. | `401`; no account selector. | `H-SCOPE` |
@@ -107,13 +124,24 @@ Every row also carries `H-UNA`.
 | `GET /v1/blocks` | Principal lists own block edges/projections. | Self derived from token. | Other account's block graph absent. | `H-SCOPE`, `EXISTING` |
 | `POST /v1/safety/reports` | Reporter submits private report about target. | Reporter must be a member of each selected message's chat; each evidence message must be authored by subject. | Generic unavailable evidence `404`; no report/block/audit/event on failure; subject gets no report event/content. | `R-ACTOR`, `EXISTING` |
 
-### Chats, messages, pins, topics and receipts
+### Chat folders, chats, messages, pins, topics and receipts
 
 | Surface | Actor and resource | Required relation/role | Expected denial and concealment | Evidence |
 | --- | --- | --- | --- | --- |
+| `GET /v1/chat-folders` | Principal lists only its synchronized custom folders and account state revision. | Account ID derives from the bearer; no caller-supplied account selector. | Another account's titles/chat IDs/folder IDs are absent. | `H-SCOPE`, folder API/storage suites |
+| `POST /v1/chat-folders` | Principal creates one folder under its own account with an actor-scoped exact nonce. | Strict bounded rules/overrides; every override chat requires current membership; 10-folder/100-override bounds. | `401`/`400`/`409`; no foreign chat oracle, partial folder, receipt or event. | `H-UNA`, `R-ACTOR`, folder API/storage suites |
+| `PUT /v1/chat-folders/order` | Principal replaces its own complete folder order. | Non-empty unique list must be the exact current account folder-ID set and `expectedStateRevision` must match the atomic snapshot. | Stale revision or changed/foreign/incomplete set is generic `409`; two-device reorder race has one winner; semantic no-op creates no state/event change. | `H-UNA`, `R-ACTOR`, folder API/storage/race suites |
+| `PATCH /v1/chat-folders/:id` | Principal changes title/rules/overrides of one owned folder under `expectedRevision`. | Folder account ownership; strict non-empty mutable patch; position is not patchable. | Foreign/random folder is the same generic `404`; stale revision `409`; normalized no-op preserves revisions/event sequence. | `H-UNA`, folder API/storage suites |
+| `DELETE /v1/chat-folders/:id` | Principal deletes one owned folder under `expectedRevision`; remaining positions normalize. | Folder account ownership and exact revision. | Foreign/random folder is generic `404`; stale revision `409`; no cross-account delete. | `H-UNA`, `R-ACTOR`, folder API/storage suites |
 | `GET /v1/chats` | Principal lists current memberships. | Current member; account scope in SQL. | Foreign chats and canaries absent. | `H-SCOPE` |
 | `POST /v1/chats` | Principal creates Direct/group/channel. | Direct requires accepted unblocked relation; group/channel invitees must be accepted and unblocked; creator is owner. | Generic relationship `403`; atomic no-chat/no-event failure. | `H-DIRECT`, `EXISTING` |
 | `GET /v1/chats/:id` | Member reads one chat projection. | Current membership. | Foreign/random identical generic `404`. | `H-ORACLE` |
+| `GET /v1/chats/:id/preferences` | Member reads only its own archive/mute state for one chat. | Current membership; account scope derives from the bearer and membership row. | Foreign/absent outer chat uses the generic membership denial; no other member preference state appears. | `H-UNA`, chat-preferences suite |
+| `PATCH /v1/chats/:id/preferences` | Member changes a strict non-empty subset of only its own archive/mute state. | Current membership; desired-state archive is idempotent and independent columns update atomically. | `401`/`403`/`400`; no other member selector, unknown field or cross-account mutation. | `H-UNA`, chat-preferences suite |
+| `GET /v1/chats/:id/members` | Member lists the current bounded membership projection. | Current membership. | Foreign/absent outer chat same generic membership denial; no unrelated graph. | `H-SCOPE`, `EXISTING` |
+| `POST /v1/chats/:id/members` | Group/channel owner/admin adds an accepted, unblocked account with an actor-scoped idempotency nonce. | Current moderation role; Direct immutable; 200-member bound. | Role/relation denial; no membership/event/nonce side effect. | `H-ROLE`, `EXISTING` |
+| `PATCH /v1/chats/:id/members/:userId` | Group/channel owner/admin changes a mutable member/admin role with expected revision. | Current moderation role; sole owner immutable. | Foreign/random target concealed; stale revision conflicts without mutation/event. | `H-ROLE`, `H-ORACLE`, `EXISTING` |
+| `DELETE /v1/chats/:id/members/:userId` | Group/channel owner/admin removes a non-owner member with expected revision. | Current moderation role; Direct and sole owner immutable; affected overrides owned by the removed account are reconciled atomically. | Role/oracle/revision denial; removed member loses future access immediately and no stale override survives. | `H-ROLE`, `H-ORACLE`, folder API/storage suites, `EXISTING` |
 | `GET /v1/chats/:id/messages` | Member reads chat history; optional topic must belong to chat. | Current membership. Historical Direct read remains after block. | Foreign/absent outer chat same `403`; cross-chat topic `404`; no content canary. | `H-SCOPE`, `H-NEST`, `H-DIRECT` |
 | `POST /v1/chats/:id/messages` | Member posts message. | Current member; active Direct; channel owner/admin; owned attachments; reply/topic in same chat and topic open. | `403` relation/role/outsider; nested `404`; no nonce consumption/message/event. | `H-NEST`, `H-ROLE`, `H-DIRECT`, `EXISTING` |
 | `PATCH /v1/messages/:messageId` | Author edits visible message. | Current member, exact author, active Direct. | Outsider/random identical `404`; visible non-author `403`; no version/search/event mutation. | `H-ORACLE`, `H-ROLE`, `H-DIRECT` |
@@ -141,7 +169,7 @@ Every row also carries `H-UNA`.
 | `GET /v1/uploads/:id` | Upload owner reads session. | Exact owner account. | Existing foreign/random identical generic `404`. | `H-ORACLE`, `EXISTING` |
 | `PUT /v1/uploads/:id/chunks/:index` | Upload owner writes exact chunk. | Exact owner plus active session/range/digest. Auth runs before buffering. | Existing foreign/random identical `404`; no staging/quota mutation. | `H-ORACLE`, `EXISTING` |
 | `POST /v1/uploads/:id/complete` | Upload owner completes session. | Exact owner and complete validated chunks. | Existing foreign/random identical `404`; no attachment/event. | `H-ORACLE`, `EXISTING` |
-| `GET /v1/attachments/:id/content` | Owner or user with current message-derived grant downloads. | Owner, or current chat membership; Direct grant additionally requires accepted unblocked relation. | Existing foreign/random identical generic `404`; no size/range/MIME/content leak. | `H-ORACLE`, `EXISTING` |
+| `GET /v1/attachments/:id/content` | Owner or user with a current message/profile-derived grant downloads. | Owner; current chat membership (Direct additionally accepted/unblocked); or currently bound avatar that is discoverable/shared-chat and unblocked. | Existing foreign/random identical generic `404`; clear/privacy/block revokes the avatar-derived grant; no size/range/MIME/content leak. | `H-ORACLE`, `EXISTING`, profile-avatar suite |
 | `GET /v1/search/messages` | Principal searches only messages in current memberships; optional chat filter remains membership-scoped. | SQL account/chat membership predicates. | Foreign/absent chat yields no foreign result/content. | `H-SCOPE`, `EXISTING` |
 | `GET /v1/search/files` | Principal searches owned or currently authorized linked attachments. | Same grant predicate as download. | Revoked/foreign files absent without metadata/snippet. | `H-SCOPE`, `EXISTING` |
 | `GET /v1/attachments` | Principal rebuilds own uploaded attachment collection. | Owner ID derived from token. | Other owners' IDs/names absent. | `H-SCOPE`, `R-ACTOR` |
@@ -169,7 +197,8 @@ recheck, authorization rules and the 60 authenticate-frame/IP/minute guard.
 
 ## Durable realtime event matrix
 
-V1 dispatch accepts the 12 messaging branches only. V2 accepts all 19 branches.
+V1 dispatch accepts the 12 messaging branches only. V2 accepts all 23 audience
+branches.
 Every live/replayed chat event rechecks current chat membership; Direct chat
 events additionally require a current accepted unblocked relation. Reaction
 aggregates are reprojected for the viewer. Active device session is rechecked
@@ -189,6 +218,10 @@ before every delivery.
 | `receipt.delivered` | Current chat member; blocked group actors filtered for viewer. | Outsider/blocked actor event filtered. | `R-CHAT`, `EXISTING` |
 | `receipt.read` | Same as delivered. | Same filtering. | `R-CHAT`, `EXISTING` |
 | `reaction.updated` | Current chat member; actor must not be blocked unless self; aggregate reprojected. | Outsider/blocked actor and reaction canary filtered. | `R-CHAT`, `EXISTING` |
+| `chat.member.changed:member_account` | Every current chat member after add, role update or removal. | A removed/foreign account cannot receive the current-member projection. | `R-INV`, `EXISTING` |
+| `chat.member.changed:removed_account` | Exact removed account, only after its membership row is gone. | Current/foreign accounts cannot receive this projection; older queued chat events fail membership recheck. | `R-INV`, `EXISTING` |
+| `chat.preferences.updated:member_account` | Exact account whose own archive/mute row changed, while it remains a member. | Another current member and every outsider are filtered; replaying the same desired state emits no event. | `R-ACTOR`, chat-preferences suite |
+| `chat.folders.updated:actor_account` | Exact account whose global folder state changed, including cleanup after its chat membership is removed. | A different account is filtered even when the stored outbox audience is synthetically misaddressed; exact replay remains account-bound and semantic no-ops emit nothing. | `R-INV`, `R-ACTOR`, folder API/storage suites |
 | `relationship.request.created:sender_account` | Exact sender account, sender-safe projection. | No unrelated audience; no recipient-private state. | `R-ACTOR`, `EXISTING` |
 | `relationship.request.created:recipient_account` | Exact current recipient while request is pending and unblocked. | Sender/unrelated audience cannot receive recipient projection. | `R-ACTOR`, `EXISTING` |
 | `relationship.request.removed:recipient_account` | Exact recipient account synchronizing private removal. | Sender receives no dismiss/block reason. | `R-ACTOR`, `EXISTING` |
@@ -224,21 +257,23 @@ npm --prefix services/api test -- --run \
   src/authorization-realtime-matrix.integration.test.ts
 ```
 
-The checkpoint focused result is 2 files / 14 tests. The final combined API gate
-passed production typecheck, test typecheck, all 28 files / 168 tests, and the
-production TypeScript build.
+The current folder checkpoint results are: shared protocol 10 files / 83 tests;
+folder API plus direct storage 2 files / 11 tests; and these HTTP/realtime
+matrices 2 files / 14 tests in Docker Node 22. The focused matrix test typecheck
+also passes. No full merged API-suite result is claimed here until its separate
+post-folder run completes.
 
 ## Honest residual gaps
 
-1. This covers only current routes/events. Future membership removal, role
-   mutation, moderation/admin, calls, passkeys, push, account lifecycle and
+1. This covers only current routes/events. Future ownership transfer, invitation
+   approval/join links, broader moderation/admin, calls, passkeys, APNs delivery, account lifecycle and
    deletion endpoints must add new rows and hostile probes before merge.
 2. Current reconciliation page cursors are bounded but not signed or bound to
    account/resource. SQL ownership predicates prevent tested cross-account reads;
    authenticated page cursors remain a production robustness gate.
-3. Group/channel membership is fixture-created because public membership/role
-   mutation endpoints do not exist. The matrix proves current action BFLA but
-   cannot prove immediate removal or role-change propagation for absent features.
+3. Group/channel list/add/role/remove routes now have executable authorization,
+   idempotency and independent-writer evidence. Ownership transfer, invitation
+   approval/privacy and production-database removal/role fault injection remain open.
 4. The durable event database and producer transactions are trusted integrity
    boundaries. Delivery rechecks current account/chat authorization, but a full
    tamper-evident event-log design remains separate.

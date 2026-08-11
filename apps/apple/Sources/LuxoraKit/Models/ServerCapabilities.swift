@@ -1,5 +1,10 @@
 import Foundation
 
+public enum LuxoraRealtimeProtocolVersion: Int, Equatable, Sendable {
+    case legacyV1 = 1
+    case scopedV2 = 2
+}
+
 public struct ServerCapabilities: Equatable, Sendable {
     public struct Trust: Equatable, Sendable {
         public let profile: String
@@ -26,6 +31,7 @@ public struct ServerCapabilities: Equatable, Sendable {
         public let safetyReports: Bool
         public let realtime: Bool
         public let reconciliation: Bool
+        public let chatFolders: Bool
         public let mediaUploads: Bool
         public let serverSearchConfigured: Bool
         public let calls: Bool
@@ -41,6 +47,7 @@ public struct ServerCapabilities: Equatable, Sendable {
             safetyReports: Bool,
             realtime: Bool,
             reconciliation: Bool,
+            chatFolders: Bool = false,
             mediaUploads: Bool,
             serverSearchConfigured: Bool,
             calls: Bool,
@@ -55,6 +62,7 @@ public struct ServerCapabilities: Equatable, Sendable {
             self.safetyReports = safetyReports
             self.realtime = realtime
             self.reconciliation = reconciliation
+            self.chatFolders = chatFolders
             self.mediaUploads = mediaUploads
             self.serverSearchConfigured = serverSearchConfigured
             self.calls = calls
@@ -67,26 +75,48 @@ public struct ServerCapabilities: Equatable, Sendable {
         public let maxMessageCodePoints: Int
         public let maxAttachmentsPerMessage: Int
         public let maxAttachmentBytes: Int
+        public let maxChatFolders: Int
+        public let maxChatFolderTitleLength: Int
+        public let maxChatFolderOverrides: Int
+        public let chatFolderIdempotencyTTLSeconds: Int
+        public let maxChatFolderActiveCommandReceipts: Int
 
         public init(
             maxMessageCodePoints: Int,
             maxAttachmentsPerMessage: Int,
-            maxAttachmentBytes: Int
+            maxAttachmentBytes: Int,
+            maxChatFolders: Int = ChatFolderContract.maximumFolders,
+            maxChatFolderTitleLength: Int = ChatFolderContract.maximumTitleCodePoints,
+            maxChatFolderOverrides: Int = ChatFolderContract.maximumOverrides,
+            chatFolderIdempotencyTTLSeconds: Int = ChatFolderContract.idempotencyTTLSeconds,
+            maxChatFolderActiveCommandReceipts: Int = ChatFolderContract.maximumActiveCommandReceipts
         ) {
             self.maxMessageCodePoints = maxMessageCodePoints
             self.maxAttachmentsPerMessage = maxAttachmentsPerMessage
             self.maxAttachmentBytes = maxAttachmentBytes
+            self.maxChatFolders = maxChatFolders
+            self.maxChatFolderTitleLength = maxChatFolderTitleLength
+            self.maxChatFolderOverrides = maxChatFolderOverrides
+            self.chatFolderIdempotencyTTLSeconds = chatFolderIdempotencyTTLSeconds
+            self.maxChatFolderActiveCommandReceipts = maxChatFolderActiveCommandReceipts
         }
     }
 
     public let trust: Trust
     public let features: Features
     public let limits: Limits
+    public let realtimeProtocolVersion: LuxoraRealtimeProtocolVersion
 
-    public init(trust: Trust, features: Features, limits: Limits) {
+    public init(
+        trust: Trust,
+        features: Features,
+        limits: Limits,
+        realtimeProtocolVersion: LuxoraRealtimeProtocolVersion = .legacyV1
+    ) {
         self.trust = trust
         self.features = features
         self.limits = limits
+        self.realtimeProtocolVersion = realtimeProtocolVersion
     }
 }
 
@@ -286,8 +316,10 @@ public struct LuxoraFeatureMatrix: Equatable, Sendable {
             id: "communities",
             title: LuxoraL10n.text("feature.communities.title"),
             symbol: "person.3",
-            state: .unavailable,
-            detail: LuxoraL10n.text("feature.communities.unavailable")
+            state: features.messaging ? .limited : .unavailable,
+            detail: features.messaging
+                ? LuxoraL10n.text("feature.communities.limited")
+                : LuxoraL10n.text("feature.communities.unavailable")
         )
         stories = FeatureGate(
             id: "stories",
@@ -354,7 +386,7 @@ public struct LuxoraFeatureMatrix: Equatable, Sendable {
             id: "devices",
             title: LuxoraL10n.text("feature.devices.title"),
             symbol: "laptopcomputer.and.iphone",
-            state: features.deviceSessions ? .limited : .unavailable,
+            state: features.deviceSessions ? .available : .unavailable,
             detail: features.deviceSessions
                 ? LuxoraL10n.text("feature.devices.limited")
                 : LuxoraL10n.text("feature.devices.unavailable")

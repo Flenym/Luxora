@@ -1,11 +1,202 @@
 # Luxora — контекст разговора и передачи проекта
 
-> Актуальность снимка: **4 августа 2026, около 20:55 MSK (UTC+3)**.  
+> Актуальность снимка: **11 августа 2026, активная рабочая сессия MSK (UTC+3)**.
 > Владелец и разработчик продукта: **Flenym**.  
 > Единственная пользовательская версия: **Beta-0.1**.  
 > Этот файл специально создан для переноса работы в новый сеанс Codex и на другой компьютер. Он описывает историю, намерения, принятые решения и фактическую правду репозитория на момент снимка. Состояние кода после указанного времени необходимо перепроверять командами, а не считать неизменным.
 
-## 0. Самый свежий checkpoint после перезапуска Mac
+## 0A. Активный checkpoint 11 августа 2026
+
+### 0A.1. Exact-tree checkpoint — прочитать первым
+
+Этот подраздел имеет приоритет над всеми числами и статусами ниже. Он записан
+во время продолжающейся рабочей сессии: строки со словом **PENDING** нельзя
+трактовать как завершённые release gates.
+
+- Exact-tree server regression зелёный: protocol **10 файлов / 85 тестов PASS**,
+  API **68 файлов / 606 тестов PASS**, production/test typecheck также PASS.
+- Server source и live volume содержат forward-only migrations **023** для
+  синхронизируемых папок чатов и **024** для monotonic membership revision
+  ledger. Reconciliation snapshot содержит ровно **12 collections**, включая
+  `chat_folders`. Строгий default-on `SYNC_INVALIDATION_ENABLED` имеет
+  schema-compatible emergency mode `false`: он подавляет только создание,
+  replay/live/outbox delivery `sync.invalidated`, сохраняет обычные domain
+  events и честно публикует capability `false`.
+- Два independently-built no-cache runtime artifacts созданы из одного frozen
+  source context и имеют одинаковый проверенный runtime payload. Primary:
+  `luxora-api:beta-0.1-sync-primary-20260811t1405z`, image ID
+  `sha256:47e66d5d490d770d79a62708be5061519e5d04b63888e78dfd7934e63f4a046a`.
+  Единственный schema-compatible fallback:
+  `luxora-api:beta-0.1-sync-fallback-20260811t1405z`, image ID
+  `sha256:f907528e5f0d39656989e5c77cbae8cf4bcabdb97216d14de8bf3bc27063c3d0`,
+  только с explicit flag `false`. Оба прошли Trivy: **0 High / 0 Critical / 0
+  secrets**; primary fresh smoke и fallback migration-024 clone rehearsal PASS.
+- После отдельного явного GO controlled local-live promotion завершён. Текущий
+  `luxora-phone-live` использует exact primary `47e66d5d…`, explicit flag
+  `true`, volume `luxora_phone_live_data`, loopback `127.0.0.1:8080` и migration
+  **024**. Downtime составил **12.005 s**. Health/readiness, unchanged pre-smoke
+  counts, SQLite integrity/FK, phone authentication, folder exact replay, V2
+  live+replay invalidation, V1 absence, drained outbox и loopback OTP console —
+  PASS.
+- Новый sealed backup:
+  `/Users/vikavavilina/Documents/egor/Luxora-local-backups/Beta-0.1/pre-live-m024-promotion-20260811T143400Z`;
+  `SHA256SUMS` digest
+  `f0867986a23f8b03b919e3117616ee6e18d5ab7dd09b89873bb1f538778cbabc`,
+  9 files, verification PASS. Старый image
+  `sha256:c514db0ed19b68fd44766f7999217596dec2848ff1121e818f385860b580d7a6`
+  сохранён только в stopped container
+  `luxora-phone-live-pre-m024-20260811T143400Z`: **никогда не запускать его на
+  migration 024**. Подробный runbook —
+  `docs/audits/SYNC_INVALIDATION_SCHEMA_COMPATIBLE_FALLBACK_2026-08-11.md`.
+- Это успешный local-live preview checkpoint, не 100% server completion:
+  production SMS/database/broker, real push delivery, calls, E2EE, off-host DR,
+  pentest и остальные незакрытые строки `TODO.md` остаются открытыми. Никогда
+  не выводить OTP, server env, bearer material или encryption keys.
+- Current-source iPhone regression: **259 XCTest cases**, 4 ожидаемых live-only
+  skips, 0 failures; Swift Testing **8/8 PASS**. После promotion отдельно PASS
+  Community, Message Requests, registration/chat/mutations и scoped V2
+  preferences/recovery. Первый combined live run получил общий HTTP `429`, а
+  два затронутых пути затем PASS в изолированных повторах; это не один
+  непрерывный monolithic live run.
+- iPhone chat-folders **v13** принят: visual journey **1/1 PASS** в
+  `Test-LuxoraMobile-2026.08.11_17-49-50-+0300.xcresult`, свежий combined
+  folder/navigation/accessibility gate **4/4 PASS, 0 failures/skips** в
+  `Test-LuxoraMobile-2026.08.11_17-53-16-+0300.xcresult`. Семь PNG `1206×2622`
+  в `screens_app_iphone/production/v13-chat-folders-ru/` совпадают с
+  manifest/SHA и просмотрены root+independent reviewer; P0/P2 нет. Финальный
+  combined 4/4 содержит ровно одно non-failing предупреждение
+  `Invalid frame dimension` в более широком composer/keyboard journey; A/B
+  внешнего `GlassEffectContainer` не помог и был откатан. Это открытый P1 и
+  bounded folder checkpoint, не завершение iPhone-продукта.
+- Честная оценка полного Beta-0.1 scope на этом checkpoint: server/backend около
+  **78%**, iPhone около **63%**. Это progress estimate, не release claim;
+  источники правды — `TODO.md`, тестовые результаты и
+  `docs/specs/IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md`.
+- Git transfer checkpoint: аудит всего intended-набора (825 путей) не нашёл
+  high-confidence secrets, файлов от 50 MiB, Windows-incompatible имён или
+  case-fold collisions; ignored `.env`, runtime DB, caches и dependencies не
+  добавлялись. Финальный локальный checkpoint — вершина `main` (`git log -1`).
+  Main-only bundle для Windows находится рядом с проектом по пути
+  `/Users/vikavavilina/Documents/egor/Luxora-Beta-0.1-transfer.bundle`, его
+  digest — в одноимённом `.sha256`; оба нужно перепроверить перед переносом.
+  Remote и команда `gh` отсутствуют. GitHub connector аутентифицирован как
+  `Flenym` и возвращает пустой список repositories, но не предоставляет
+  create-repository. **BLOCKED только private publish:** нужен существующий
+  private remote либо интерактивно авторизованный `gh`; public fallback
+  запрещён.
+
+### 0A.2. Более ранний checkpoint того же дня — история
+
+Нижеследующие детали сохранены как история работы до exact-tree checkpoint
+0A.1. При расхождении приоритет имеет 0A.1; незавершённые live-прогоны нужно
+перепроверить по `TODO.md`, Git diff и сохранённым xcresult/скриншотам.
+
+- Текущий живой API уже безопасно переключён на контейнер
+  `luxora-phone-live`, image
+  `luxora-api:chat-preferences-realtime-live-20260811`,
+  `127.0.0.1:8080`, healthy, UID/GID `65532`, read-only root,
+  `cap-drop=ALL`, `no-new-privileges`; SQLite находится на migration 021.
+  До миграции было 30 users/39 sessions, после switch осталось ровно 30/39;
+  push post-deploy HTTP smoke добавил один test account, archive/mute HTTP smoke
+  — ещё один, а authenticated V2 realtime smoke — третий, поэтому текущие числа
+  33/42. Integrity `ok`,
+  foreign-key violations 0. Loopback-only
+  OTP console на `127.0.0.1:8081` также healthy и её code совпадает с API env
+  без вывода значения. Не выводить code, server env или bearer material в
+  логи/документы.
+- Server source уже содержит migration 021 и строгий session-bound APNs
+  registration/preferences foundation: token transport нормализуется как
+  bounded opaque hex, raw token не возвращается, equality digest хранится
+  отдельно от context-bound encrypted envelope, transfer/rotation/revoke
+  атомарны, revoke session каскадно гасит registration, preview default —
+  `hidden`. Реальный APNs sender/credentials/jobs/410 feedback отсутствуют,
+  поэтому `features.push` остаётся `false`.
+- Полный merged protocol regression: **9 файлов / 69 тестов PASS**. Полный API
+  regression: **64 файла / 568 тестов PASS**. Authorization matrix содержит 66
+  защищённых HTTP маршрутов. После push-deploy source также активировал уже
+  существующие account-scoped `chat_members.archived_at/muted_until`: строгие
+  GET/PATCH, idempotent archive timestamp, column-selective lost-update guard и
+  chat-list projection. V2 `chat.preferences.updated` дополнительно связан с
+  exact account/chat и создаётся только при реальном изменении подтверждённого
+  состояния; live/replay recheck не пропускает его другому участнику. Fresh-volume,
+  real-data clone и authenticated live HTTP/WebSocket gates PASS; текущий runtime
+  уже содержит этот срез.
+- Последний candidate/live image:
+  `luxora-api:chat-preferences-realtime-candidate-20260811` /
+  `luxora-api:chat-preferences-realtime-live-20260811`, OCI manifest/image ID
+  `sha256:c514db0ed19b68fd44766f7999217596dec2848ff1121e818f385860b580d7a6`.
+  Trivy 0.73 со свежей DB: 0 High, 0 Critical, 0 secret и 0 Node-package
+  findings; отдельный all-severity inventory честно фиксирует 2 Unknown, 7 Low
+  и 5 Medium Debian findings без доступной fixed version. См.
+  `docs/audits/CONTAINER_SCAN_BETA_0_1_2026-08-11.md`.
+- Candidate прошёл UID-правильный clone реального migration-020 volume: 30/39
+  сохранились, migration 021 применена, integrity/FK чистые, реальный HTTP
+  push/settings lost-update/avatar round trip PASS. Disposable clone удалён.
+  Перед switch создана и повторно проверена sealed backup
+  `/Users/vikavavilina/Documents/egor/Luxora-local-backups/Beta-0.1/pre-push-20260811T082301Z`;
+  raw temporary extraction удалён без возможности восстановления. Stopped
+  rollback container `luxora-phone-live-pre-push-20260811` сохранён. На live
+  отдельно PASS token-free/encrypted registration, settings partial patches,
+  revoke, readiness и hardening.
+- Перед chat-preferences switch дополнительно создана и проверена sealed backup
+  `/Users/vikavavilina/Documents/egor/Luxora-local-backups/Beta-0.1/pre-chat-preferences-20260811T085701Z`.
+  Real-data clone сохранил 31/40, migration 021, integrity/FK и push regression;
+  live smoke затем PASS. Disposable clone/raw extraction удалены, stopped
+  rollback `luxora-phone-live-pre-chat-preferences-20260811` сохранён.
+- Перед realtime-preferences switch создана и отдельно повторно проверена sealed
+  backup `/Users/vikavavilina/Documents/egor/Luxora-local-backups/Beta-0.1/pre-chat-preferences-realtime-20260811T092807Z`.
+  Stopped copy сохранил 32/41; fresh и real-data clone прошли migration 021,
+  integrity/FK, authenticated V2 dispatch/idempotency и push/settings regression.
+  Live smoke добавил один test account (33/42), а rollback
+  `luxora-phone-live-pre-chat-preferences-realtime-20260811` сохранён. Все
+  disposable volumes, raw restore copies, scan JSON и secret-bearing env extract
+  удалены после проверки.
+- iPhone auth/devices/avatar workstream: 39/39 focused Swift tests PASS и signed
+  `TEST BUILD SUCCEEDED`; fixture-free device list/revoke journey PASS 1/1 с
+  current-session marker и реальным исчезновением revoked session. Реальная
+  phone → OTP → `password_required` ветка, invalid password, correct login,
+  password change/disable PASS 1/1. Avatar crop/upload/save, app relaunch,
+  server restore и clear PASS 1/1. Final retained xcresults и 10 кадров в
+  `screens_app_iphone/production/v10-live-account-security-avatar-ru/` прошли
+  exact canary scan; secret-bearing temporary/failed artifacts удалены exact
+  path без возможности восстановления.
+- Message requests workstream: 18 selected Swift tests PASS, один opt-in live
+  skip ожидаем; отдельный fixture-free Docker acceptance/privacy journey PASS
+  1/1. Fresh signed unified UI PASS 4/4; все 11 оригинальных 1320×2868 PNG
+  визуально проверены и checksum-indexed в
+  `screens_app_iphone/production/v10-message-requests-ru/`.
+- Accessibility workstream: финальный signed v17 gate на iPhone 17 Pro Simulator
+  iOS 26.5 завершён **6/6 PASS, 0 failures, 188.806 s**. Auth/chats/conversation/
+  profile/profile-editor/settings закрывают текущий contract; узкий iOS 26.5
+  Inspector false positive для пяти полностью видимых AXXXL fixtures сохранён
+  как quarantine attachment вместе с ручным original screenshot proof. Root
+  подтвердил полный message body, но на том же AXXXL кадре нашёл отдельный
+  partially clipped conversation title/status; header остаётся открытым и
+  требует fix + combined signed rerun после shared merge.
+- iPhone APNs/preferences source foundation теперь включает AppDelegate token
+  bridge, token/session ordering, replacement/signout/401 fences, strict
+  token-free API/store и реальный экран global notification settings. Focused
+  tests 17/17, полный Swift package 150 executed + 2 expected skip, 0 failures,
+  Swift Testing 3/3; signed compile GREEN. Реальной APNs delivery без Apple
+  credentials/device evidence всё ещё нет.
+- Chat preferences iPhone source теперь имеет HTTP/store и strict account/session-
+  fenced V2 decoder/application: focused **24/24 PASS**, последний полный Swift
+  **174 executed + 2 expected skip, 0 failures**, Swift Testing 3/3. Unified V2
+  opaque cursor/reconciliation и shared Russian UI wiring выполняются после
+  accessibility release; нельзя считать эту функцию законченной раньше live UI proof.
+- Оценка для коммуникации, а не release claim: полный server/backend около 68%,
+  полный iPhone около 49%; узкое работающее ядро auth/profile/text chat заметно
+  выше. Проценты пересчитывать только по
+  `docs/specs/IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md`.
+- Локальная ветка `main` имеет commit `c0afbd2` и большой проверяемый working
+  tree. Remote отсутствует. GitHub connector аутентифицирован как `Flenym`, но
+  `Flenym/Luxora` возвращает 404 и connector не предоставляет create-repository;
+  `gh`/Homebrew отсутствуют. Нельзя создавать public fallback. После merged
+  тестов нужны secret/size audit, осмысленный локальный commit и Git bundle;
+  private publish требует, чтобы Flenym создал пустой private repository или
+  дал интерактивную `gh`-авторизацию.
+
+## 0. Checkpoint после перезапуска Mac (4 августа, исторический)
 
 Этот раздел новее исторических чисел ниже и имеет приоритет при расхождении.
 После непредвиденного выключения компьютера root-Codex восстановил Docker,
@@ -543,7 +734,7 @@ script/              Apple source scan, visual diff, build helpers
 - Pins, topics, edit versions и privacy-minimized forwards foundations.
 - Explicit delivered/read receipts; no timer inference.
 - Полные ownership transfer, invitations/join requests, comments/threads,
-  archive/folders/drafts/scheduled send и moderation пока не готовы.
+  drafts/scheduled send и moderation пока не готовы.
 
 ### 9.5. Realtime/sync
 
@@ -551,7 +742,11 @@ script/              Apple source scan, visual diff, build helpers
   backpressure и per-session connection caps.
 - Durable per-audience SQLite events/outbox.
 - V2 account/session-bound HMAC cursor, seven-day logical TTL, max 500 replay,
-  deterministic `sync.required` и authorized HTTP reconciliation snapshot.
+  deterministic `sync.required` и authorized 12-collection HTTP reconciliation
+  snapshot.
+- Account-scoped `sync.invalidated` поддерживает V2 live/replay и имеет
+  schema-compatible default-on emergency seam; V1 безопасно пропускает это
+  additive event.
 - Cross-process broker/fan-out, rolling deploy, production retention/load и
   distributed session revoke ещё не готовы.
 

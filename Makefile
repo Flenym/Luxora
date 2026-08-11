@@ -3,6 +3,7 @@ CALLS_ENV_FILE ?= infra/calls/.env.calls
 
 .PHONY: help install build typecheck test check check-truth api-dev web-dev \
 	apple-test android-test desktop-typecheck docker-build compose-config check-local-env \
+	otp-console-build \
 	calls-config calls-smoke compose-security-check check-calls-env calls-up calls-down prometheus-check \
 	api-log-canary s3-live-gate backup-restore-test compose-up compose-observability-up compose-down
 
@@ -14,6 +15,7 @@ help:
 	@echo "  make apple-test        Run the Swift package tests"
 	@echo "  make android-test      Run Android unit tests and lint"
 	@echo "  make compose-config    Validate Compose with placeholder-only .env.example"
+	@echo "  make otp-console-build Build the local development-only OTP console"
 	@echo "  make calls-config      Validate the local SFU/TURN Compose harness"
 	@echo "  make calls-smoke       Run disposable SFU/TURN health and auth probes"
 	@echo "  make compose-security-check  Check loopback, digest and privilege invariants"
@@ -87,6 +89,9 @@ desktop-typecheck:
 docker-build:
 	docker build --pull --file services/api/Dockerfile --tag luxora-api:beta-0.1 .
 
+otp-console-build:
+	docker build --pull --file tools/otp-console/Dockerfile --tag luxora-otp-console:beta-0.1 .
+
 api-log-canary: docker-build
 	bash infra/operations/smoke-api-log-canary.sh
 
@@ -94,7 +99,7 @@ s3-live-gate: docker-build
 	bash infra/operations/smoke-s3-provider.sh
 
 compose-config:
-	LUXORA_ENV_FILE=.env.example docker compose --env-file .env.example --profile observability config --quiet
+	LUXORA_ENV_FILE=.env.example docker compose --env-file .env.example --profile observability --profile development config --quiet
 
 calls-config:
 	docker compose --env-file infra/calls/environment.example --file docker-compose.calls.yml config --quiet
@@ -154,4 +159,4 @@ compose-observability-up: check-local-env
 	LUXORA_ENV_FILE=.env docker compose --env-file .env --profile observability up --build --detach
 
 compose-down:
-	LUXORA_ENV_FILE=.env.example docker compose --env-file .env.example --profile observability down
+	LUXORA_ENV_FILE=.env.example docker compose --env-file .env.example --profile observability --profile development down

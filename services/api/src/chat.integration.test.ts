@@ -42,6 +42,15 @@ describe("chat and message authorization", () => {
     const eve = await register("eve_user");
     const aliceAuth = { authorization: `Bearer ${alice.accessToken}` };
 
+    const savedMessages = await app.inject({
+      method: "POST",
+      url: "/v1/chats",
+      headers: aliceAuth,
+      payload: { kind: "direct", userId: alice.id }
+    });
+    expect(savedMessages.statusCode).toBe(201);
+    expect(savedMessages.json().chat.title).toBe("Избранное");
+
     await establishAcceptedRelationship(app, alice, bob);
 
     const createdChat = await app.inject({

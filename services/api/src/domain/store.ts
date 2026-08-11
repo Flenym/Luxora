@@ -2,6 +2,7 @@ import type {
   Attachment,
   Chat,
   ChatKind,
+  ChatPreferences,
   ChatRole,
   DurableRealtimeEvent,
   Message,
@@ -25,11 +26,17 @@ import type {
   BlockRecord,
   ClaimedRealtimeOutboxEvent,
   ChatMemberRecord,
+  ChatFolderCommandReceiptRecord,
+  ChatFolderRecord,
+  ChatFolderRulesRecord,
+  ChatFolderOverrideRecord,
   ChatMembershipCommandReceiptRecord,
   ChatRecord,
   IdentityAuditAction,
   MessageRecord,
   MessageRequestRecord,
+  NewPushRegistration,
+  NotificationSettingsRecord,
   PasskeyAuthenticatorCommandReceiptRecord,
   PasskeyAuthenticatorRecord,
   PasskeyAuthenticatorRevokeClaimsProjection,
@@ -49,8 +56,10 @@ import type {
   PhoneAuthChallengeRecord,
   PhoneAuthChallengeState,
   PhoneAuthCommandReceiptRecord,
+  PhoneAuthPasswordReceiptRecord,
   PhoneIdentityRecord,
   PrivacySettingsRecord,
+  PushRegistrationRecord,
   RefreshTokenRecord,
   RealtimeOutboxFailureCode,
   SafetyEvidenceSnapshot,
@@ -148,6 +157,42 @@ export interface CommitPhoneAuthRegistration extends PhoneAuthSessionInput {
   registrationTokenHash: string;
   user: NewUser & { bio: string };
   receipt: PhoneAuthReceiptInput;
+}
+
+export interface PhoneAuthPasswordReceiptInput {
+  scope: string;
+  fingerprint: string;
+  challengeId: string;
+  resultKind: PhoneAuthPasswordReceiptRecord["resultKind"];
+  responseJson: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface CommitPhoneAuthPasswordRequired {
+  challengeId: string;
+  expectedRevision: number;
+  userId: string;
+  passwordTokenHash: string;
+  passwordExpiresAt: string;
+  receipt: PhoneAuthPasswordReceiptInput & { resultKind: "password_required" };
+}
+
+export interface CommitPhoneAuthPasswordRejected {
+  challengeId: string;
+  expectedRevision: number;
+  userId: string;
+  passwordTokenHash: string;
+  maxAttempts: number;
+  receipt: Omit<PhoneAuthPasswordReceiptInput, "resultKind" | "responseJson">;
+}
+
+export interface CommitPhoneAuthPasswordAuthenticated extends PhoneAuthSessionInput {
+  challengeId: string;
+  expectedRevision: number;
+  userId: string;
+  passwordTokenHash: string;
+  receipt: PhoneAuthPasswordReceiptInput & { resultKind: "authenticated" };
 }
 
 export interface NewPasskeyLoginIntent {
@@ -500,6 +545,8 @@ export interface NewAttachment {
   metadata: Record<string, unknown>;
   storageProvider: "local" | "s3";
   storageKey: string;
+  safetyStatus?: "unscanned" | "reencoded";
+  metadataTrust?: "client_declared" | "server_verified";
   createdAt: string;
 }
 
@@ -519,6 +566,11 @@ export interface NewUploadSession {
   createdAt: string;
 }
 
+export interface ClaimedOrphanAttachments {
+  attachments: AttachmentRecord[];
+  invalidations: StoredEvent[];
+}
+
 export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   close(): void;
   ping(): boolean;
@@ -527,6 +579,13 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
 
   createUser(user: NewUser): UserRecord;
   findUserById(id: string): UserRecord | null;
+  updateUserProfile(
+    userId: string,
+    update: { displayName?: string | undefined; bio?: string | undefined },
+    at: string
+  ): UserRecord | null;
+  setUserAvatarAttachment(userId: string, attachmentId: string | null, at: string): UserRecord | null;
+  listProfileProjectionAudienceUserIds(userId: string): string[];
   findUserByUsername(normalizedUsername: string): UserRecord | null;
   findDiscoverableUserByUsername(viewerUserId: string, normalizedUsername: string): UserRecord | null;
   searchKnownUsers(viewerUserId: string, query: string, limit: number, cursor?: string): { items: User[]; nextCursor: string | null };
@@ -543,11 +602,26 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   activatePhoneAuthChallenge(id: string, expectedRevision: number, at: string): boolean;
   failPhoneAuthChallengeDelivery(id: string, expectedRevision: number, at: string): boolean;
   findPhoneIdentityByDigest(phoneDigest: string): PhoneIdentityRecord | null;
+  findPhoneIdentityByUserId(userId: string): PhoneIdentityRecord | null;
   findPhoneAuthCommandReceipt(scope: string): PhoneAuthCommandReceiptRecord | null;
+  findPhoneAuthPasswordReceipt(scope: string): PhoneAuthPasswordReceiptRecord | null;
   commitPhoneAuthRejected(input: CommitPhoneAuthRejected): boolean;
   commitPhoneAuthProfileRequired(input: CommitPhoneAuthProfileRequired): boolean;
   commitPhoneAuthAuthenticated(input: CommitPhoneAuthAuthenticated): boolean;
   commitPhoneAuthRegistration(input: CommitPhoneAuthRegistration): boolean;
+  commitPhoneAuthPasswordRequired(input: CommitPhoneAuthPasswordRequired): boolean;
+  commitPhoneAuthPasswordRejected(
+    input: CommitPhoneAuthPasswordRejected
+  ): "password_invalid" | "attempts_exhausted" | null;
+  commitPhoneAuthPasswordAuthenticated(input: CommitPhoneAuthPasswordAuthenticated): boolean;
+  compareAndSetPhonePassword(input: {
+    userId: string;
+    expectedPhonePasswordHash: string | null;
+    expectedEnabled: boolean;
+    nextPhonePasswordHash: string;
+    nextEnabled: boolean;
+    at: string;
+  }): boolean;
 
   getOrCreatePasskeyUserHandleBinding(accountId: string): Promise<PasskeyUserHandleBinding>;
   /** Returns an existing binding or a non-persisted candidate for atomic registration commit. */
@@ -620,6 +694,24 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     update: Partial<Pick<PrivacySettingsRecord, "usernameDiscoverable" | "messageRequests">>,
     at: string
   ): PrivacySettingsRecord;
+
+  findCurrentPushRegistration(userId: string, sessionId: string): PushRegistrationRecord | null;
+  upsertPushRegistration(registration: NewPushRegistration): PushRegistrationRecord;
+  revokeCurrentPushRegistration(userId: string, sessionId: string, at: string): boolean;
+  getNotificationSettings(userId: string): NotificationSettingsRecord;
+  updateNotificationSettings(
+    userId: string,
+    update: Partial<Pick<
+      NotificationSettingsRecord,
+      | "messageAlerts"
+      | "messageRequestAlerts"
+      | "mentionAlerts"
+      | "sound"
+      | "badge"
+      | "previewMode"
+    >>,
+    at: string
+  ): NotificationSettingsRecord;
 
   hasAcceptedRelationship(leftUserId: string, rightUserId: string): boolean;
   createAcceptedRelationship(
@@ -722,6 +814,45 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   createChatMembershipCommandReceipt(receipt: ChatMembershipCommandReceiptRecord): void;
   listPeerUserIds(userId: string): string[];
   getChatForUser(chatId: string, userId: string): Chat | null;
+  getChatPreferences(chatId: string, userId: string): ChatPreferences | null;
+  updateChatPreferences(
+    chatId: string,
+    userId: string,
+    input: { archived?: boolean; mutedUntil?: string | null; changedAt: string }
+  ): ChatPreferences | null;
+  getChatFolderStateRevision(userId: string): number;
+  advanceChatFolderStateRevision(userId: string, at: string): number;
+  countChatFolders(userId: string): number;
+  listChatFolders(userId: string): ChatFolderRecord[];
+  getChatFolderSnapshot(userId: string): {
+    items: ChatFolderRecord[];
+    stateRevision: number;
+  };
+  findChatFolder(userId: string, folderId: string): ChatFolderRecord | null;
+  createChatFolder(folder: ChatFolderRecord): ChatFolderRecord;
+  updateChatFolder(
+    userId: string,
+    folderId: string,
+    input: {
+      title: string;
+      rules: ChatFolderRulesRecord;
+      overrides: ChatFolderOverrideRecord[];
+      expectedRevision: number;
+      updatedAt: string;
+    }
+  ): ChatFolderRecord | null;
+  deleteChatFolder(userId: string, folderId: string, expectedRevision: number): boolean;
+  reorderChatFolders(userId: string, orderedFolderIds: string[], at: string): ChatFolderRecord[];
+  findChatFolderCommandReceipt(
+    userId: string,
+    clientNonce: string,
+    at: string
+  ): ChatFolderCommandReceiptRecord | null;
+  createChatFolderCommandReceipt(receipt: ChatFolderCommandReceiptRecord): void;
+  countActiveChatFolderCommandReceipts(userId: string, at: string): number;
+  getOldestChatFolderCommandReceiptExpiry(userId: string, at: string): string | null;
+  deleteExpiredChatFolderCommandReceipt(userId: string, clientNonce: string, at: string): boolean;
+  purgeExpiredChatFolderCommandReceipts(at: string, limit: number): number;
   listChats(userId: string, limit: number, cursor?: string): { items: Chat[]; nextCursor: string | null };
   listChatsForReconciliation(
     userId: string,
@@ -793,8 +924,8 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     staleClaimBefore: string,
     at: string,
     limit: number
-  ): AttachmentRecord[];
-  deleteAttachmentRecord(id: string, at: string): void;
+  ): ClaimedOrphanAttachments;
+  deleteAttachmentRecord(id: string, at: string): StoredEvent[];
 
   replaceMessageSearchTokens(messageId: string, tokens: Array<{ keyId: string; hash: string }>): void;
   replaceAttachmentSearchTokens(attachmentId: string, tokens: Array<{ keyId: string; hash: string }>): void;
@@ -808,7 +939,13 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   appendEvent(audienceUserId: string, event: DurableRealtimeEvent, at: string): StoredEvent;
   appendChatEvent(chatId: string, event: RealtimeEvent, at: string): StoredEvent[];
   getLatestSequence(): number;
-  replayEvents(userId: string, afterSequence: number, throughSequence: number, limit: number): StoredEvent[];
+  replayEvents(
+    userId: string,
+    afterSequence: number,
+    throughSequence: number,
+    limit: number,
+    includeSyncInvalidations?: boolean
+  ): StoredEvent[];
   claimRealtimeOutbox(
     workerId: string,
     at: string,

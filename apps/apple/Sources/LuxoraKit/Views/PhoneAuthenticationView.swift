@@ -5,6 +5,7 @@ enum PhoneAuthenticationStep: String, Sendable {
     case welcome
     case phone
     case code
+    case password
     case profile
     case username
     case permissions
@@ -45,11 +46,14 @@ public struct LuxoraPhoneAuthenticationScreen: View {
     private let isWorking: Bool
     private let isSynchronizing: Bool
     private let serverError: String?
+    private let authenticationFailure: PhoneAuthenticationFailure?
     private let allowsPreviewProgression: Bool
     private let requestCode: @MainActor (String, String) async -> PhoneCodeChallenge?
     private let verifyCode: @MainActor (String, String) async -> PhoneCodeVerificationResult?
+    private let completePassword: @MainActor (String, String) async -> Bool
     private let checkUsername: @MainActor (String, String) async -> PhoneUsernameAvailability?
     private let completeRegistration: @MainActor (String, String, String, String) async -> Bool
+    private let clearFailure: @MainActor () -> Void
 
     @State private var step: PhoneAuthenticationStep
     @State private var transitionTarget: PhoneAuthenticationStep?
@@ -58,6 +62,9 @@ public struct LuxoraPhoneAuthenticationScreen: View {
     @State private var selectedCountry = PhoneCountry.russia
     @State private var nationalNumber = ""
     @State private var code = ""
+    @State private var password = ""
+    @State private var passwordChallenge: PhonePasswordChallenge?
+    @State private var revealsPassword = false
     @State private var displayName = ""
     @State private var bio = ""
     @State private var username = ""
@@ -68,15 +75,18 @@ public struct LuxoraPhoneAuthenticationScreen: View {
     @State private var challenge: PhoneCodeChallenge?
     @State private var registration: PhoneRegistrationChallenge?
     @State private var retryAvailableAt: Date?
+    @State private var beginRetryAvailableAt: Date?
     @State private var localMessage: String?
     @FocusState private var focusedField: FocusField?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("luxora.phoneAuth.didCompleteIntro") private var didCompleteIntro = false
     @AppStorage("luxora.phoneAuth.needsPermissions") private var needsPostRegistrationPermissions = false
 
     private enum FocusField {
         case phone
         case code
+        case password
         case displayName
         case bio
         case username
@@ -86,25 +96,32 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         isWorking: Bool,
         isSynchronizing: Bool,
         serverError: String?,
+        authenticationFailure: PhoneAuthenticationFailure?,
         initialStep: PhoneAuthenticationStep = .welcome,
         allowsPreviewProgression: Bool = false,
         requestCode: @escaping @MainActor (String, String) async -> PhoneCodeChallenge?,
         verifyCode: @escaping @MainActor (String, String) async -> PhoneCodeVerificationResult?,
+        completePassword: @escaping @MainActor (String, String) async -> Bool,
         checkUsername: @escaping @MainActor (String, String) async -> PhoneUsernameAvailability?,
-        completeRegistration: @escaping @MainActor (String, String, String, String) async -> Bool
+        completeRegistration: @escaping @MainActor (String, String, String, String) async -> Bool,
+        clearFailure: @escaping @MainActor () -> Void
     ) {
         self.isWorking = isWorking
         self.isSynchronizing = isSynchronizing
         self.serverError = serverError
+        self.authenticationFailure = authenticationFailure
         self.allowsPreviewProgression = allowsPreviewProgression
         self.requestCode = requestCode
         self.verifyCode = verifyCode
+        self.completePassword = completePassword
         self.checkUsername = checkUsername
         self.completeRegistration = completeRegistration
+        self.clearFailure = clearFailure
         _step = State(initialValue: initialStep)
 
         #if DEBUG
         _challenge = State(initialValue: initialStep == .code ? .uiTestPreview : nil)
+        _passwordChallenge = State(initialValue: initialStep == .password ? .uiTestPreview : nil)
         _registration = State(
             initialValue: [.profile, .username, .permissions, .sync].contains(initialStep)
                 ? .uiTestPreview
@@ -143,6 +160,8 @@ public struct LuxoraPhoneAuthenticationScreen: View {
                     phoneScreen
                 case .code:
                     codeScreen
+                case .password:
+                    passwordScreen
                 case .profile:
                     profileScreen
                 case .username:
@@ -164,15 +183,54 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         .onChange(of: selectedCountry) { _, _ in
             nationalNumber = String(nationalNumber.filter(\.isNumber).prefix(maxNationalDigits))
             localMessage = nil
+            beginRetryAvailableAt = nil
+            clearFailure()
+        }
+        .onChange(of: authenticationFailure) { _, failure in
+            guard let failure else { return }
+            localMessage = nil
+            if case let .resendCooldown(seconds) = failure {
+                let availableAt = Date().addingTimeInterval(TimeInterval(seconds))
+                if step == .code {
+                    retryAvailableAt = availableAt
+                } else {
+                    beginRetryAvailableAt = availableAt
+                }
+            }
+            if failure == .invalidCode {
+                focusedField = .code
+            }
+            if failure == .invalidPassword {
+                #if DEBUG
+                if let livePassword = uiTestFragmentedValue(
+                    prefixKey: "LUXORA_LIVE_PHONE_PASSWORD_PREFIX",
+                    suffixKey: "LUXORA_LIVE_PHONE_PASSWORD_SUFFIX"
+                ) {
+                    password = livePassword
+                }
+                #endif
+                focusedField = .password
+            }
+            if step == .sync, failure.isRetryable {
+                transition(to: registration == nil ? .code : .username)
+            }
         }
         .onChange(of: isSynchronizing) { _, syncing in
-            if syncing, step == .code || step == .username {
+            if syncing, step == .code || step == .password || step == .username {
                 focusedField = nil
                 step = .sync
             }
         }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
+                if focusedField == .bio {
+                    Button("Назад") { focusedField = .displayName }
+                        .accessibilityIdentifier("auth-keyboard-previous")
+                }
+                if focusedField == .displayName {
+                    Button("Далее") { focusedField = .bio }
+                        .accessibilityIdentifier("auth-keyboard-next")
+                }
                 Spacer()
                 Button("Готово") { focusedField = nil }
                     .accessibilityIdentifier("auth-keyboard-done")
@@ -191,57 +249,66 @@ public struct LuxoraPhoneAuthenticationScreen: View {
     }
 
     private var welcomeScreen: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 72)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 72)
 
-            ZStack {
-                // The route itself stays invisible: exactly two runners move
-                // in the same direction and half a lap apart, then dissolve
-                // into the solid mark for the first-launch reveal.
-                PhoneContourTransitionView()
-                    .scaleEffect(0.72)
-                    .opacity(introLogoIsVisible ? 0 : 1)
+                    ZStack {
+                        // The route itself stays invisible: exactly two runners move
+                        // in the same direction and half a lap apart, then dissolve
+                        // into the solid mark for the first-launch reveal.
+                        PhoneContourTransitionView()
+                            .scaleEffect(0.72)
+                            .opacity(introLogoIsVisible ? 0 : 1)
 
-                LuxoraLogoView(size: 112)
-                    .shadow(color: LuxoraTheme.violet.opacity(0.28), radius: 24)
-                    .scaleEffect(introLogoIsVisible ? 1 : 0.82)
-                    .offset(y: introLogoIsVisible ? 0 : -14)
-                    .opacity(introLogoIsVisible ? 1 : 0)
+                        LuxoraLogoView(size: 112)
+                            .shadow(color: LuxoraTheme.violet.opacity(0.28), radius: 24)
+                            .scaleEffect(introLogoIsVisible ? 1 : 0.82)
+                            .offset(y: introLogoIsVisible ? 0 : -14)
+                            .opacity(introLogoIsVisible ? 1 : 0)
+                    }
+                    .frame(height: 150)
+                    .accessibilityHidden(true)
+
+                    Text("Luxora")
+                        .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                        .padding(.top, 24)
+                        .opacity(introCopyIsVisible ? 1 : 0)
+                        .accessibilityHeading(.h1)
+                        .accessibilityIdentifier("auth-welcome-screen")
+
+                    Text("Быстрые и спокойные разговоры\nна ваших устройствах")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 10)
+                        .opacity(introCopyIsVisible ? 1 : 0)
+
+                    Spacer(minLength: 52)
+
+                    PhoneAuthPrimaryButton(title: "Продолжить", isWorking: false, enabled: true) {
+                        didCompleteIntro = true
+                        transition(to: .phone)
+                    }
+                    .accessibilityIdentifier("auth-start")
+                    .opacity(introCopyIsVisible ? 1 : 0)
+
+                    Text("Beta-0.1 · Flenym")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.58))
+                        .padding(.top, 14)
+                        .padding(.bottom, 10)
+                        .opacity(introCopyIsVisible ? 1 : 0)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: geometry.size.height, alignment: .top)
+                .padding(.horizontal, 24)
             }
-            .frame(height: 150)
-            .accessibilityHidden(true)
-
-            Text("Luxora")
-                .font(.system(size: 34, weight: .semibold, design: .rounded))
-                .padding(.top, 24)
-                .opacity(introCopyIsVisible ? 1 : 0)
-                .accessibilityIdentifier("auth-welcome-screen")
-
-            Text("Быстрые и спокойные разговоры\nна ваших устройствах")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .padding(.top, 10)
-                .opacity(introCopyIsVisible ? 1 : 0)
-
-            Spacer(minLength: 52)
-
-            PhoneAuthPrimaryButton(title: "Продолжить", isWorking: false, enabled: true) {
-                didCompleteIntro = true
-                transition(to: .phone)
-            }
-            .accessibilityIdentifier("auth-start")
-            .opacity(introCopyIsVisible ? 1 : 0)
-
-            Text("Beta-0.1 · Flenym")
-                .font(.caption)
-                .foregroundStyle(Color.white.opacity(0.58))
-                .padding(.top, 14)
-                .padding(.bottom, 10)
-                .opacity(introCopyIsVisible ? 1 : 0)
+            .scrollIndicators(.hidden)
         }
-        .padding(.horizontal, 24)
         .task { await playWelcomeMotion() }
     }
 
@@ -258,58 +325,79 @@ public struct LuxoraPhoneAuthenticationScreen: View {
             )
 
             VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    Text(selectedCountry.flag)
-                    Text(selectedCountry.name)
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Text(selectedCountry.dialCode)
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Color.white.opacity(0.58))
+                Button {
+                    isCountryPickerPresented = true
+                } label: {
+                    Group {
+                        if dynamicTypeSize.isAccessibilitySize {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 10) {
+                                    countryFlag
+                                    Text(selectedCountry.name)
+                                        .foregroundStyle(.white)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Text(selectedCountry.dialCode)
+                                    .foregroundStyle(Color.white.opacity(0.78))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            HStack(spacing: 10) {
+                                countryFlag
+                                Text(selectedCountry.name)
+                                    .foregroundStyle(.white)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer()
+                                Text(selectedCountry.dialCode)
+                                    .foregroundStyle(Color.white.opacity(0.78))
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(Color.white.opacity(0.78))
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 16)
-                .frame(maxWidth: .infinity, minHeight: 52)
-                .contentShape(Rectangle())
-                .onTapGesture { isCountryPickerPresented = true }
+                .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton)
                 .accessibilityLabel("Страна, \(selectedCountry.name), \(selectedCountry.dialCode)")
+                .accessibilityHint("Открывает список стран")
                 .accessibilityIdentifier("auth-country")
 
                 Divider().padding(.leading, 16)
 
-                HStack(spacing: 10) {
-                    Text(selectedCountry.dialCode)
-                        .foregroundStyle(.secondary)
-                    TextField("Номер телефона", text: $nationalNumber)
-                        .keyboardType(.phonePad)
-                        .textContentType(.telephoneNumber)
-                        .focused($focusedField, equals: .phone)
-                        .accessibilityIdentifier("auth-phone")
-                        .onChange(of: nationalNumber) { _, value in
-                            nationalNumber = String(value.filter(\.isNumber).prefix(maxNationalDigits))
-                            localMessage = nil
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(selectedCountry.dialCode)
+                                .foregroundStyle(Color.white.opacity(0.78))
+                            phoneNumberField
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        HStack(spacing: 10) {
+                            Text(selectedCountry.dialCode)
+                                .foregroundStyle(Color.white.opacity(0.78))
+                            phoneNumberField
+                        }
+                    }
                 }
                 .padding(.horizontal, 16)
-                .frame(height: 52)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, minHeight: 52)
             }
             .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
             .padding(.top, 28)
 
-            PhoneAuthMessage(message: visibleMessage)
+            PhoneAuthMessage(message: visibleMessage, failure: authenticationFailure)
 
             Spacer(minLength: 30)
 
-            PhoneAuthPrimaryButton(
-                title: "Продолжить",
-                isWorking: isWorking,
-                enabled: isPhoneValid && !isWorking,
-                action: submitPhone
-            )
-            .accessibilityIdentifier("auth-phone-submit")
+            phoneSubmitControl
 
             Text("Luxora не имитирует отправку SMS или вход без ответа сервера.")
                 .font(.caption)
@@ -319,9 +407,54 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         }
     }
 
+    private var countryFlag: some View {
+        Canvas { context, size in
+            let flag = context.resolve(
+                Text(selectedCountry.flag)
+                    .font(.system(size: 20))
+            )
+            context.draw(flag, at: CGPoint(x: size.width / 2, y: size.height / 2))
+        }
+            .frame(width: 28, height: 28)
+            .accessibilityHidden(true)
+    }
+
+    private var phoneNumberField: some View {
+        TextField("Номер телефона", text: $nationalNumber)
+            .keyboardType(.phonePad)
+            .textContentType(.telephoneNumber)
+            .focused($focusedField, equals: .phone)
+            .foregroundStyle(.white)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel("Номер телефона без кода страны")
+            .accessibilityIdentifier("auth-phone")
+            .onAppear {
+                // Match the native phone-auth flow: once the phone step is
+                // visible the number field is immediately ready for input.
+                // This also avoids a short transition window where a real tap
+                // can land before SwiftUI has installed the focus bridge.
+                focusedField = .phone
+                #if DEBUG
+                if uiTestSecureAutofillEnabled,
+                   let value = ProcessInfo.processInfo.environment["LUXORA_LIVE_PHONE_NATIONAL_NUMBER"]
+                {
+                    nationalNumber = String(value.filter(\.isNumber).prefix(maxNationalDigits))
+                }
+                #endif
+            }
+            .onChange(of: nationalNumber) { _, value in
+                nationalNumber = String(value.filter(\.isNumber).prefix(maxNationalDigits))
+                localMessage = nil
+                beginRetryAvailableAt = nil
+                // The submit command clears any remote failure. Mutating the
+                // parent session on each keystroke can replace this focused
+                // field while iOS is still delivering the same input event.
+            }
+    }
+
     private var codeScreen: some View {
         PhoneAuthScrollableScreen(identifier: "auth-code-screen") {
-            PhoneAuthBackButton { transition(to: .phone) }
+            PhoneAuthBackButton { returnToPhone() }
 
             PhoneAuthStageSymbol(systemName: "message.fill")
                 .padding(.top, 22)
@@ -335,33 +468,143 @@ public struct LuxoraPhoneAuthenticationScreen: View {
                 .keyboardType(.numberPad)
                 .textContentType(.oneTimeCode)
                 .multilineTextAlignment(.center)
-                .font(.system(size: 30, weight: .semibold, design: .monospaced))
+                .font(.system(.title, design: .monospaced, weight: .semibold))
                 .tracking(8)
                 .focused($focusedField, equals: .code)
                 .padding(.horizontal, 18)
-                .frame(height: 60)
+                .frame(minHeight: 60)
                 .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityLabel("Код подтверждения")
                 .accessibilityIdentifier("auth-code")
+                .onAppear {
+                    focusedField = .code
+                    #if DEBUG
+                    if let value = uiTestFragmentedValue(
+                        prefixKey: "LUXORA_LIVE_PHONE_CODE_PREFIX",
+                        suffixKey: "LUXORA_LIVE_PHONE_CODE_SUFFIX"
+                    ) {
+                        code = String(value.filter(\.isNumber).prefix(6))
+                    }
+                    #endif
+                }
                 .onChange(of: code) { _, value in
                     code = String(value.filter(\.isNumber).prefix(6))
                     localMessage = nil
+                    // `verifyPhoneCode` clears the remote failure when the
+                    // next command starts. Keep the local field/root stable
+                    // while a six-digit AutoFill or paste event is arriving.
                 }
                 .padding(.top, 28)
 
             resendControl
 
-            PhoneAuthMessage(message: visibleMessage)
+            PhoneAuthMessage(message: visibleMessage, failure: authenticationFailure)
 
             Spacer(minLength: 30)
 
             PhoneAuthPrimaryButton(
-                title: "Продолжить",
+                title: authenticationFailure?.isRetryable == true ? "Повторить" : "Продолжить",
                 isWorking: isWorking,
-                enabled: code.count == 6 && !isWorking,
+                enabled: code.count == 6
+                    && !isWorking
+                    && authenticationFailure?.blocksCodeVerification != true,
                 action: submitCode
             )
             .accessibilityIdentifier("auth-code-submit")
+        }
+    }
+
+    private var passwordScreen: some View {
+        PhoneAuthScrollableScreen(identifier: "auth-phone-password-screen") {
+            PhoneAuthBackButton { restartAfterPasswordChallenge() }
+
+            PhoneAuthStageSymbol(systemName: "lock.shield.fill")
+                .padding(.top, 22)
+
+            PhoneAuthHeading(
+                title: "Пароль учётной записи",
+                detail: "Код для \(passwordChallenge?.maskedPhone ?? "подтверждённого номера") принят. Теперь введите секретный пароль Luxora."
+            )
+
+            HStack(spacing: 10) {
+                Group {
+                    if revealsPassword {
+                        TextField("Пароль", text: $password)
+                    } else {
+                        SecureField("Пароль", text: $password)
+                    }
+                }
+                .textContentType(.password)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.go)
+                .focused($focusedField, equals: .password)
+                .onSubmit(submitPassword)
+                .accessibilityLabel("Секретный пароль Luxora")
+                .accessibilityIdentifier("auth-phone-password")
+
+                Button {
+                    revealsPassword.toggle()
+                } label: {
+                    Image(systemName: revealsPassword ? "eye.slash.fill" : "eye.fill")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(revealsPassword ? "Скрыть пароль" : "Показать пароль")
+                .accessibilityIdentifier("auth-phone-password-reveal")
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 4)
+            .frame(minHeight: 60)
+            .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+            .padding(.top, 28)
+            .onChange(of: password) { _, value in
+                if value.count > 128 { password = String(value.prefix(128)) }
+                localMessage = nil
+                // Keep the parent session stable while the secure field is
+                // editing. Clearing the remote failure here invalidates the
+                // authentication root on the first character and can replace
+                // the focused UITextField before the remaining characters
+                // arrive. `completePhonePassword` clears the failure at the
+                // start of the next submission.
+            }
+
+            if let expiresAt = passwordChallenge?.expiresAt, expiresAt != .distantFuture {
+                Text("Проверку нужно завершить до \(expiresAt.formatted(date: .omitted, time: .shortened)).")
+                    .font(.caption)
+                    .foregroundStyle(Color.white.opacity(0.58))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 10)
+            }
+
+            PhoneAuthMessage(message: visibleMessage, failure: authenticationFailure)
+
+            Spacer(minLength: 30)
+
+            if authenticationFailure?.blocksPasswordVerification == true {
+                PhoneAuthPrimaryButton(
+                    title: "Получить новый код",
+                    isWorking: false,
+                    enabled: true,
+                    action: restartAfterPasswordChallenge
+                )
+                .accessibilityIdentifier("auth-phone-password-restart")
+            } else {
+                PhoneAuthPrimaryButton(
+                    title: authenticationFailure?.isRetryable == true ? "Повторить" : "Продолжить",
+                    isWorking: isWorking,
+                    enabled: !password.isEmpty && !isWorking,
+                    action: submitPassword
+                )
+                .accessibilityIdentifier("auth-phone-password-submit")
+            }
+
+            Text("Пароль передаётся только в теле защищённого запроса и не заменяет одноразовый код.")
+                .font(.caption)
+                .foregroundStyle(Color.white.opacity(0.58))
+                .multilineTextAlignment(.center)
+                .padding(.top, 12)
         }
     }
 
@@ -384,12 +627,14 @@ public struct LuxoraPhoneAuthenticationScreen: View {
 
             TextField("Ваше имя", text: $displayName)
                 .textContentType(.name)
-                .submitLabel(.done)
+                .submitLabel(.next)
                 .focused($focusedField, equals: .displayName)
                 .padding(.horizontal, 16)
-                .frame(height: 52)
+                .frame(minHeight: 52)
+                .fixedSize(horizontal: false, vertical: true)
                 .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityIdentifier("auth-display-name")
+                .onSubmit { focusedField = .bio }
                 .onChange(of: displayName) { _, value in
                     displayName = String(value.prefix(80))
                     localMessage = nil
@@ -469,7 +714,8 @@ public struct LuxoraPhoneAuthenticationScreen: View {
                     }
             }
             .padding(.horizontal, 16)
-            .frame(height: 52)
+            .frame(minHeight: 52)
+            .fixedSize(horizontal: false, vertical: true)
             .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
             .padding(.top, 28)
 
@@ -613,6 +859,26 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         .padding(24)
     }
 
+    private var phoneSubmitControl: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let seconds = max(
+                0,
+                Int((beginRetryAvailableAt ?? context.date)
+                    .timeIntervalSince(context.date)
+                    .rounded(.up))
+            )
+            PhoneAuthPrimaryButton(
+                title: seconds > 0
+                    ? "Повторить через \(seconds) с"
+                    : authenticationFailure?.isRetryable == true ? "Повторить" : "Продолжить",
+                isWorking: isWorking,
+                enabled: isPhoneValid && !isWorking && seconds == 0,
+                action: submitPhone
+            )
+            .accessibilityIdentifier("auth-phone-submit")
+        }
+    }
+
     private var resendControl: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let seconds = max(0, Int((retryAvailableAt ?? context.date).timeIntervalSince(context.date).rounded(.up)))
@@ -706,8 +972,45 @@ public struct LuxoraPhoneAuthenticationScreen: View {
             case let .profileRequired(nextRegistration):
                 registration = nextRegistration
                 transition(to: .profile)
+            case let .passwordRequired(nextPasswordChallenge):
+                passwordChallenge = nextPasswordChallenge
+                password = ""
+                revealsPassword = false
+                transition(to: .password)
             }
         }
+    }
+
+    private func submitPassword() {
+        guard let passwordChallenge, !password.isEmpty, !isWorking else {
+            localMessage = "Введите пароль учётной записи."
+            return
+        }
+        guard authenticationFailure?.blocksPasswordVerification != true else { return }
+        focusedField = nil
+        localMessage = nil
+
+        #if DEBUG
+        if allowsPreviewProgression {
+            transition(to: .sync)
+            return
+        }
+        #endif
+
+        Task { @MainActor in
+            let success = await completePassword(passwordChallenge.passwordToken, password)
+            if success { transition(to: .sync) }
+        }
+    }
+
+    private func restartAfterPasswordChallenge() {
+        clearFailure()
+        password = ""
+        passwordChallenge = nil
+        code = ""
+        challenge = nil
+        retryAvailableAt = nil
+        transition(to: .phone)
     }
 
     private func submitProfile() {
@@ -788,6 +1091,17 @@ public struct LuxoraPhoneAuthenticationScreen: View {
 
         needsPostRegistrationPermissions = true
         Task { @MainActor in
+            let stagedAvatar: Bool
+            if let avatarPNGData {
+                do {
+                    try PendingProfileAvatarStore.save(avatarPNGData, username: normalizedUsername)
+                    stagedAvatar = true
+                } catch {
+                    stagedAvatar = false
+                }
+            } else {
+                stagedAvatar = false
+            }
             let success = await completeRegistration(
                 registration.registrationToken,
                 displayName,
@@ -796,15 +1110,8 @@ public struct LuxoraPhoneAuthenticationScreen: View {
             )
             guard success else {
                 needsPostRegistrationPermissions = false
+                if stagedAvatar { try? PendingProfileAvatarStore.remove(username: normalizedUsername) }
                 return
-            }
-            if let avatarPNGData {
-                do {
-                    try PendingProfileAvatarStore.save(avatarPNGData)
-                } catch {
-                    // The account is already real. Keep the app truthful by
-                    // never claiming the optional local avatar was uploaded.
-                }
             }
         }
     }
@@ -829,22 +1136,31 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         }
     }
 
+    private func returnToPhone() {
+        clearFailure()
+        code = ""
+        password = ""
+        passwordChallenge = nil
+        revealsPassword = false
+        transition(to: .phone)
+    }
+
     private func transition(to target: PhoneAuthenticationStep) {
         focusedField = nil
         localMessage = nil
         transitionSequence += 1
         let sequence = transitionSequence
         transitionTarget = target
-        withAnimation(.easeOut(duration: 0.16)) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
             step = .transition
         }
         // Keep navigation independent from the lifetime of the outgoing screen's
         // `.task`. The welcome view owns its intro task and SwiftUI cancels that
         // task when the view fades out; a main-queue deadline guarantees that the
         // route itself cannot be stranded on the transition frame.
-        DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0.18 : 0.72)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0 : 0.72)) {
             guard sequence == transitionSequence, transitionTarget == target else { return }
-            withAnimation(.easeIn(duration: 0.18)) {
+            withAnimation(reduceMotion ? nil : .easeIn(duration: 0.18)) {
                 step = target
             }
         }
@@ -894,6 +1210,9 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         selectedCountry = .russia
         nationalNumber = ""
         code = ""
+        password = ""
+        passwordChallenge = nil
+        revealsPassword = false
         displayName = ""
         bio = ""
         username = ""
@@ -902,7 +1221,9 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         challenge = nil
         registration = nil
         retryAvailableAt = nil
+        beginRetryAvailableAt = nil
         localMessage = nil
+        clearFailure()
     }
 
     private static func isSuggestedUsernameValid(_ candidate: String) -> Bool {
@@ -910,6 +1231,20 @@ public struct LuxoraPhoneAuthenticationScreen: View {
             && candidate.first?.isLetter == true
             && candidate.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }
     }
+
+    #if DEBUG
+    private var uiTestSecureAutofillEnabled: Bool {
+        ProcessInfo.processInfo.environment["LUXORA_UI_TEST_SECURE_AUTOFILL"] == "1"
+    }
+
+    private func uiTestFragmentedValue(prefixKey: String, suffixKey: String) -> String? {
+        guard uiTestSecureAutofillEnabled,
+              let prefix = ProcessInfo.processInfo.environment[prefixKey], !prefix.isEmpty,
+              let suffix = ProcessInfo.processInfo.environment[suffixKey], !suffix.isEmpty
+        else { return nil }
+        return prefix + suffix
+    }
+    #endif
 }
 
 private struct PhoneAuthScrollableScreen<Content: View>: View {
@@ -947,11 +1282,13 @@ private struct PhoneAuthHeading: View {
         VStack(spacing: 10) {
             Text(title)
                 .font(.title2.weight(.semibold))
+                .accessibilityHeading(.h1)
             Text(detail)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, 22)
     }
@@ -992,16 +1329,58 @@ private struct PhoneAuthBackButton: View {
 
 private struct PhoneAuthMessage: View {
     let message: String?
+    let failure: PhoneAuthenticationFailure?
+
+    init(message: String?, failure: PhoneAuthenticationFailure? = nil) {
+        self.message = message
+        self.failure = failure
+    }
 
     var body: some View {
         if let message, !message.isEmpty {
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 4)
                 .padding(.top, 12)
-                .accessibilityIdentifier("auth-error")
+                .accessibilityIdentifier(failure?.accessibilityIdentifier ?? "auth-error")
+        }
+    }
+}
+
+private extension PhoneAuthenticationFailure {
+    var accessibilityIdentifier: String {
+        switch self {
+        case .invalidCode:
+            "auth-error-invalid-code"
+        case .attemptsExhausted:
+            "auth-error-attempts-exhausted"
+        case .invalidPassword:
+            "auth-error-password-invalid"
+        case .passwordAttemptsExhausted:
+            "auth-error-password-attempts-exhausted"
+        case .passwordTokenExpired:
+            "auth-error-password-token-expired"
+        case .challengeExpired:
+            "auth-error-challenge-expired"
+        case .challengeInvalid:
+            "auth-error-challenge-invalid"
+        case .resendCooldown:
+            "auth-error-resend-cooldown"
+        case .networkUnavailable:
+            "auth-error-network"
+        case .deliveryUnavailable:
+            "auth-error-delivery"
+        case .credentialPersistenceFailed:
+            "auth-error-keychain"
+        case .registrationExpired:
+            "auth-error-registration-expired"
+        case .temporarilyUnavailable:
+            "auth-error-temporary"
+        case .unexpected:
+            "auth-error"
         }
     }
 }
@@ -1020,11 +1399,14 @@ private struct PhoneAuthPrimaryButton: View {
                 }
                 Text(title).fontWeight(.semibold)
             }
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
+            .frame(minHeight: 52)
         }
         .buttonStyle(PhoneAuthPrimaryButtonStyle(enabled: enabled))
         .disabled(!enabled)
+        .accessibilityLabel(isWorking ? "\(title), выполняется" : title)
+        .accessibilityValue(isWorking ? "Выполняется" : "")
     }
 }
 

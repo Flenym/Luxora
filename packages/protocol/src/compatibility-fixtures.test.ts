@@ -46,7 +46,15 @@ describe("versioned capability and realtime golden fixtures", () => {
     const current = CapabilitiesResponseV1Schema.parse(
       readFixture("capabilities/v1/current.json")
     );
+    const oneVersionBack = CapabilitiesResponseV1Schema.parse(
+      readFixture("capabilities/v1/one-version-back-before-sync-invalidation.json")
+    );
     expect(createCapabilitiesResponseV1(defaultRuntimeState)).toEqual(current);
+    expect(oneVersionBack.features.syncInvalidation).toBe(false);
+    expect({
+      ...oneVersionBack,
+      features: { ...oneVersionBack.features, syncInvalidation: true }
+    }).toEqual(current);
 
     const additive = readFixture("capabilities/v1/additive-response.json");
     expect(CapabilitiesResponseV1Schema.parse(additive)).toEqual(current);
@@ -59,6 +67,10 @@ describe("versioned capability and realtime golden fixtures", () => {
       ...defaultRuntimeState,
       phoneAuthenticationAvailable: true
     }).features.phoneAuthentication).toBe(true);
+    expect(createCapabilitiesResponseV1(defaultRuntimeState, false)
+      .features.syncInvalidation).toBe(false);
+    expect(createCapabilitiesResponseV1(defaultRuntimeState)
+      .features.syncInvalidation).toBe(true);
     expect(current.features.serverSearchConfigured).toBe(false);
 
     expect(SendMessageRequestSchema.safeParse({

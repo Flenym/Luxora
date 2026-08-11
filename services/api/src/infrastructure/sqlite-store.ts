@@ -26,6 +26,7 @@ import type {
   Attachment,
   Chat,
   ChatKind,
+  ChatPreferences,
   ChatRole,
   DurableRealtimeEvent,
   Message,
@@ -39,7 +40,12 @@ import type {
   UploadSession,
   User
 } from "@luxora/protocol";
-import { AttachmentSchema, DurableRealtimeEventSchema, IdSchema } from "@luxora/protocol";
+import {
+  AttachmentSchema,
+  CHAT_FOLDER_IDEMPOTENCY_TTL_SECONDS,
+  DurableRealtimeEventSchema,
+  IdSchema
+} from "@luxora/protocol";
 import { badRequest, conflict } from "../errors.js";
 import type {
   NewAttachment,
@@ -60,10 +66,14 @@ import type {
   PersistPasskeyAuthenticatorRevoke,
   PasskeySignupMutationRecord,
   CommitPhoneAuthAuthenticated,
+  CommitPhoneAuthPasswordAuthenticated,
+  CommitPhoneAuthPasswordRejected,
+  CommitPhoneAuthPasswordRequired,
   CommitPhoneAuthProfileRequired,
   CommitPhoneAuthRegistration,
   CommitPhoneAuthRejected,
   PhoneAuthReceiptInput,
+  PhoneAuthPasswordReceiptInput,
   PersistPasskeyLoginBegin,
   PersistPasskeyLoginRejectedAttempt,
   PersistPasskeyLoginTerminal,
@@ -78,6 +88,9 @@ import type {
   AttachmentRecord,
   BlockRecord,
   ClaimedRealtimeOutboxEvent,
+  ChatFolderCommandReceiptRecord,
+  ChatFolderOverrideRecord,
+  ChatFolderRecord,
   ChatMemberRecord,
   ChatMembershipCommandReceiptRecord,
   ChatRecord,
@@ -85,6 +98,8 @@ import type {
   MessageRecord,
   MessageRequestRecord,
   MessageRequestState,
+  NewPushRegistration,
+  NotificationSettingsRecord,
   PasskeyAuthenticatorCommandReceiptRecord,
   PasskeyAuthenticatorRecord,
   PasskeyAuthenticatorRevokeClaimsProjection,
@@ -104,8 +119,10 @@ import type {
   PhoneAuthChallengeRecord,
   PhoneAuthChallengeState,
   PhoneAuthCommandReceiptRecord,
+  PhoneAuthPasswordReceiptRecord,
   PhoneIdentityRecord,
   PrivacySettingsRecord,
+  PushRegistrationRecord,
   RefreshTokenRecord,
   RealtimeOutboxFailureCode,
   SafetyEvidenceSnapshot,
@@ -127,6 +144,7 @@ import {
 } from "../passkeys/authenticator-management-binding.js";
 
 const INITIAL_OUTBOX_AVAILABLE_AT = "1970-01-01T00:00:00.000Z";
+const PUSH_TOKEN_ENCRYPTED_ENVELOPE_PREFIX = "luxora:v1.";
 
 interface UserRow {
   id: string;
@@ -135,8 +153,11 @@ interface UserRow {
   display_name: string;
   bio: string;
   avatar_url: string | null;
+  avatar_attachment_id: string | null;
   password_hash: string;
   password_auth_enabled: number;
+  phone_password_hash: string | null;
+  phone_password_enabled: number;
   created_at: string;
   last_seen_at: string | null;
 }
@@ -203,10 +224,45 @@ interface PhoneAuthCommandReceiptRow {
   expires_at: string;
 }
 
+interface PhoneAuthPasswordReceiptRow {
+  scope: string;
+  fingerprint: string;
+  challenge_id: string;
+  result_kind: PhoneAuthPasswordReceiptRecord["resultKind"];
+  response_ciphertext: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
 interface PrivacySettingsRow {
   user_id: string;
   username_discoverable: number;
   message_requests: "everyone" | "nobody";
+  updated_at: string;
+}
+
+interface PushRegistrationRow {
+  id: string;
+  user_id: string;
+  session_id: string;
+  platform: "apns";
+  environment: "development" | "production";
+  topic: "app.luxora.mobile";
+  token_digest: string;
+  token_ciphertext: string;
+  created_at: string;
+  updated_at: string;
+  revoked_at: string | null;
+}
+
+interface NotificationSettingsRow {
+  user_id: string;
+  message_alerts: number;
+  message_request_alerts: number;
+  mention_alerts: number;
+  sound: number;
+  badge: number;
+  preview_mode: NotificationSettingsRecord["previewMode"];
   updated_at: string;
 }
 
@@ -270,6 +326,11 @@ interface ChatMemberRow {
   membership_updated_at: string;
 }
 
+interface ChatMembershipRevisionLedgerRow {
+  last_revision: number;
+  last_removed_at: string;
+}
+
 interface ChatMembershipCommandReceiptRow {
   actor_user_id: string;
   client_nonce: string;
@@ -282,6 +343,39 @@ interface ChatMembershipCommandReceiptRow {
   result_joined_at: string;
   result_updated_at: string;
   created_at: string;
+}
+
+interface ChatFolderRow {
+  id: string;
+  user_id: string;
+  title: string;
+  position: number;
+  revision: number;
+  include_direct: number;
+  include_group: number;
+  include_channel: number;
+  unread_only: number;
+  exclude_muted: number;
+  include_archived: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ChatFolderOverrideRow {
+  chat_id: string;
+  mode: ChatFolderOverrideRecord["mode"];
+  pinned_position: number | null;
+}
+
+interface ChatFolderCommandReceiptRow {
+  user_id: string;
+  client_nonce: string;
+  operation: ChatFolderCommandReceiptRecord["operation"];
+  fingerprint: string;
+  response_ciphertext: string;
+  created_at: string;
+  expires_at: string | null;
+  effective_expires_at: string;
 }
 
 interface MessageRow {
@@ -319,6 +413,8 @@ interface AttachmentRow {
   metadata_ciphertext: string;
   storage_provider: "local" | "s3";
   storage_key: string;
+  safety_status: "unscanned" | "reencoded";
+  metadata_trust: "client_declared" | "server_verified";
   created_at: string;
   linked_at: string | null;
   deleting_at: string | null;
@@ -661,6 +757,17 @@ function encodeCursor(cursor: PageCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
+function timestampAfterFloor(wallNow: string, floor: string): string {
+  const wallNowMs = Date.parse(wallNow);
+  const floorMs = Date.parse(floor);
+  if (!Number.isFinite(wallNowMs) || !Number.isFinite(floorMs)) {
+    throw new Error("A membership timestamp is invalid");
+  }
+  return wallNowMs > floorMs
+    ? new Date(wallNowMs).toISOString()
+    : new Date(floorMs + 1).toISOString();
+}
+
 function decodeCursor(cursor: string | undefined): PageCursor | null {
   if (cursor === undefined) return null;
   try {
@@ -689,8 +796,14 @@ function mapUser(row: UserRow): UserRecord {
     displayName: row.display_name,
     bio: row.bio,
     avatarUrl: row.avatar_url,
+    avatarPath: row.avatar_attachment_id === null
+      ? null
+      : `/v1/attachments/${row.avatar_attachment_id}/content`,
+    avatarAttachmentId: row.avatar_attachment_id,
     passwordHash: row.password_hash,
     passwordAuthEnabled: row.password_auth_enabled === 1,
+    phonePasswordHash: row.phone_password_hash,
+    phonePasswordEnabled: row.phone_password_enabled === 1,
     createdAt: row.created_at,
     lastSeenAt: row.last_seen_at
   };
@@ -703,6 +816,7 @@ function publicUser(record: UserRecord): User {
     displayName: record.displayName,
     bio: record.bio,
     avatarUrl: record.avatarUrl,
+    avatarPath: record.avatarPath ?? null,
     createdAt: record.createdAt
   };
 }
@@ -714,6 +828,7 @@ function directoryUser(record: UserRecord): User {
     displayName: record.displayName,
     bio: record.bio,
     avatarUrl: record.avatarUrl,
+    avatarPath: record.avatarPath ?? null,
     createdAt: record.createdAt
   };
 }
@@ -735,6 +850,33 @@ function mapPrivacySettings(row: PrivacySettingsRow): PrivacySettingsRecord {
     userId: row.user_id,
     usernameDiscoverable: row.username_discoverable === 1,
     messageRequests: row.message_requests,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapPushRegistration(row: PushRegistrationRow): PushRegistrationRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    sessionId: row.session_id,
+    platform: row.platform,
+    environment: row.environment,
+    topic: row.topic,
+    tokenDigest: row.token_digest,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapNotificationSettings(row: NotificationSettingsRow): NotificationSettingsRecord {
+  return {
+    userId: row.user_id,
+    messageAlerts: row.message_alerts === 1,
+    messageRequestAlerts: row.message_request_alerts === 1,
+    mentionAlerts: row.mention_alerts === 1,
+    sound: row.sound === 1,
+    badge: row.badge === 1,
+    previewMode: row.preview_mode,
     updatedAt: row.updated_at
   };
 }
@@ -2608,7 +2750,8 @@ export class SqliteStore implements Store {
   constructor(
     databasePath: string,
     private readonly contentCipher: ContentCipher = new PlaintextContentCipher(),
-    private readonly passkeyNowMs: () => number = Date.now
+    private readonly passkeyNowMs: () => number = Date.now,
+    private readonly syncInvalidationEnabled = true
   ) {
     if (databasePath !== ":memory:") {
       mkdirSync(dirname(resolve(databasePath)), { recursive: true });
@@ -5671,6 +5814,44 @@ export class SqliteStore implements Store {
     });
   }
 
+  #insertPhoneAuthPasswordReceipt(receipt: PhoneAuthPasswordReceiptInput): void {
+    this.#db.prepare(`
+      INSERT INTO phone_auth_password_receipts (
+        scope, fingerprint, challenge_id, result_kind,
+        response_ciphertext, created_at, expires_at
+      ) VALUES (
+        @scope, @fingerprint, @challengeId, @resultKind,
+        @responseCiphertext, @createdAt, @expiresAt
+      )
+    `).run({
+      ...receipt,
+      responseCiphertext: receipt.responseJson === null
+        ? null
+        : this.contentCipher.encrypt(
+            receipt.responseJson,
+            `phone-auth-password-receipt:${receipt.scope}`
+          )
+    });
+  }
+
+  #insertPhoneAuthPasswordEvent(input: {
+    challengeId: string;
+    observedRevision: number;
+    eventType:
+      | "phone.challenge.password_required"
+      | "phone.challenge.password_rejected"
+      | "phone.challenge.password_locked"
+      | "phone.challenge.password_authenticated";
+    commandScope: string;
+    occurredAt: string;
+  }): void {
+    this.#db.prepare(`
+      INSERT INTO phone_auth_password_events (
+        event_id, challenge_id, observed_revision, event_type, command_scope, occurred_at
+      ) VALUES (@eventId, @challengeId, @observedRevision, @eventType, @commandScope, @occurredAt)
+    `).run({ ...input, eventId: randomUUID() });
+  }
+
   createPhoneAuthChallenge(challenge: NewPhoneAuthChallenge): PhoneAuthChallengeRecord | null {
     const created = this.#db.transaction(() => {
       const result = this.#db.prepare(`
@@ -5805,6 +5986,21 @@ export class SqliteStore implements Store {
     };
   }
 
+  findPhoneIdentityByUserId(userId: string): PhoneIdentityRecord | null {
+    const row = this.#db.prepare(`
+      SELECT phone_digest, user_id, verified_at FROM phone_identities WHERE user_id = ?
+    `).get(userId) as {
+      phone_digest: string;
+      user_id: string;
+      verified_at: string;
+    } | undefined;
+    return row === undefined ? null : {
+      phoneDigest: row.phone_digest,
+      userId: row.user_id,
+      verifiedAt: row.verified_at
+    };
+  }
+
   findPhoneAuthCommandReceipt(scope: string): PhoneAuthCommandReceiptRecord | null {
     const row = this.#db.prepare(
       "SELECT * FROM phone_auth_command_receipts WHERE scope = ?"
@@ -5821,6 +6017,27 @@ export class SqliteStore implements Store {
         : this.contentCipher.decrypt(
             row.response_ciphertext,
             `phone-auth-receipt:${row.scope}`
+          ),
+      createdAt: row.created_at,
+      expiresAt: row.expires_at
+    };
+  }
+
+  findPhoneAuthPasswordReceipt(scope: string): PhoneAuthPasswordReceiptRecord | null {
+    const row = this.#db.prepare(
+      "SELECT * FROM phone_auth_password_receipts WHERE scope = ?"
+    ).get(scope) as PhoneAuthPasswordReceiptRow | undefined;
+    if (row === undefined) return null;
+    return {
+      scope: row.scope,
+      fingerprint: row.fingerprint,
+      challengeId: row.challenge_id,
+      resultKind: row.result_kind,
+      responseJson: row.response_ciphertext === null
+        ? null
+        : this.contentCipher.decrypt(
+            row.response_ciphertext,
+            `phone-auth-password-receipt:${row.scope}`
           ),
       createdAt: row.created_at,
       expiresAt: row.expires_at
@@ -5994,6 +6211,174 @@ export class SqliteStore implements Store {
     }).immediate();
   }
 
+  commitPhoneAuthPasswordRequired(input: CommitPhoneAuthPasswordRequired): boolean {
+    return this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        UPDATE phone_auth_challenges
+        SET state = 'verified', revision = revision + 1,
+            verified_at = @createdAt, updated_at = @createdAt,
+            registration_token_hash = @passwordTokenHash,
+            registration_expires_at = @passwordExpiresAt
+        WHERE id = @challengeId
+          AND revision = @expectedRevision
+          AND state = 'pending'
+          AND expires_at > @createdAt
+          AND EXISTS (
+            SELECT 1
+            FROM phone_identities identities
+            JOIN users accounts ON accounts.id = identities.user_id
+            WHERE identities.phone_digest = phone_auth_challenges.phone_digest
+              AND identities.user_id = @userId
+              AND accounts.phone_password_enabled = 1
+              AND accounts.phone_password_hash IS NOT NULL
+          )
+      `).run({ ...input, ...input.receipt });
+      if (result.changes !== 1) return false;
+      this.#insertPhoneAuthPasswordReceipt(input.receipt);
+      this.#insertPhoneAuthPasswordEvent({
+        challengeId: input.challengeId,
+        observedRevision: input.expectedRevision + 1,
+        eventType: "phone.challenge.password_required",
+        commandScope: input.receipt.scope,
+        occurredAt: input.receipt.createdAt
+      });
+      return true;
+    }).immediate();
+  }
+
+  commitPhoneAuthPasswordRejected(
+    input: CommitPhoneAuthPasswordRejected
+  ): "password_invalid" | "attempts_exhausted" | null {
+    return this.#db.transaction(() => {
+      const replay = this.findPhoneAuthPasswordReceipt(input.receipt.scope);
+      if (replay !== null) {
+        if (replay.fingerprint !== input.receipt.fingerprint) {
+          throw conflict("Idempotency key was already used with different input");
+        }
+        return replay.resultKind === "password_invalid"
+          || replay.resultKind === "attempts_exhausted"
+          ? replay.resultKind
+          : null;
+      }
+      const eligible = this.#db.prepare(`
+        SELECT 1 AS found
+        FROM phone_auth_challenges challenges
+        JOIN phone_identities identities ON identities.phone_digest = challenges.phone_digest
+        JOIN users accounts ON accounts.id = identities.user_id
+        WHERE challenges.id = @challengeId
+          AND challenges.revision = @expectedRevision
+          AND challenges.state = 'verified'
+          AND challenges.registration_token_hash = @passwordTokenHash
+          AND challenges.registration_expires_at > @createdAt
+          AND identities.user_id = @userId
+          AND accounts.phone_password_enabled = 1
+          AND accounts.phone_password_hash IS NOT NULL
+      `).get({ ...input, ...input.receipt }) as { found: number } | undefined;
+      if (eligible === undefined) return null;
+      const previous = this.#db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM phone_auth_password_receipts
+        WHERE challenge_id = ?
+          AND result_kind IN ('password_invalid', 'attempts_exhausted')
+      `).get(input.challengeId) as { count: number };
+      const resultKind = previous.count + 1 >= input.maxAttempts
+        ? "attempts_exhausted" as const
+        : "password_invalid" as const;
+      const receipt: PhoneAuthPasswordReceiptInput = {
+        ...input.receipt,
+        resultKind,
+        responseJson: null
+      };
+      this.#insertPhoneAuthPasswordReceipt(receipt);
+
+      let observedRevision = input.expectedRevision;
+      if (resultKind === "attempts_exhausted") {
+        const locked = this.#db.prepare(`
+          UPDATE phone_auth_challenges
+          SET state = 'expired', revision = revision + 1, updated_at = @createdAt
+          WHERE id = @challengeId
+            AND revision = @expectedRevision
+            AND state = 'verified'
+            AND registration_token_hash = @passwordTokenHash
+        `).run({ ...input, ...input.receipt });
+        if (locked.changes !== 1) throw new Error("Phone password challenge changed during lock");
+        observedRevision += 1;
+      }
+      this.#insertPhoneAuthPasswordEvent({
+        challengeId: input.challengeId,
+        observedRevision,
+        eventType: resultKind === "attempts_exhausted"
+          ? "phone.challenge.password_locked"
+          : "phone.challenge.password_rejected",
+        commandScope: input.receipt.scope,
+        occurredAt: input.receipt.createdAt
+      });
+      return resultKind;
+    }).immediate();
+  }
+
+  commitPhoneAuthPasswordAuthenticated(input: CommitPhoneAuthPasswordAuthenticated): boolean {
+    return this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        UPDATE phone_auth_challenges
+        SET state = 'consumed', revision = revision + 1,
+            consumed_at = @createdAt, matched_user_id = @userId, updated_at = @createdAt
+        WHERE id = @challengeId
+          AND revision = @expectedRevision
+          AND state = 'verified'
+          AND registration_token_hash = @passwordTokenHash
+          AND registration_expires_at > @createdAt
+          AND EXISTS (
+            SELECT 1
+            FROM phone_identities identities
+            JOIN users accounts ON accounts.id = identities.user_id
+            WHERE identities.phone_digest = phone_auth_challenges.phone_digest
+              AND identities.user_id = @userId
+              AND accounts.phone_password_enabled = 1
+              AND accounts.phone_password_hash IS NOT NULL
+          )
+      `).run({ ...input, ...input.receipt });
+      if (result.changes !== 1) return false;
+      this.createSession(input.session, input.refreshToken);
+      this.#insertPhoneAuthPasswordReceipt(input.receipt);
+      this.#insertPhoneAuthPasswordEvent({
+        challengeId: input.challengeId,
+        observedRevision: input.expectedRevision + 1,
+        eventType: "phone.challenge.password_authenticated",
+        commandScope: input.receipt.scope,
+        occurredAt: input.receipt.createdAt
+      });
+      return true;
+    }).immediate();
+  }
+
+  compareAndSetPhonePassword(input: {
+    userId: string;
+    expectedPhonePasswordHash: string | null;
+    expectedEnabled: boolean;
+    nextPhonePasswordHash: string;
+    nextEnabled: boolean;
+    at: string;
+  }): boolean {
+    const result = this.#db.prepare(`
+      UPDATE users
+      SET phone_password_hash = @nextPhonePasswordHash,
+          phone_password_enabled = @nextEnabled,
+          updated_at = CASE WHEN updated_at > @at THEN updated_at ELSE @at END
+      WHERE id = @userId
+        AND phone_password_hash IS @expectedPhonePasswordHash
+        AND phone_password_enabled = @expectedEnabled
+        AND EXISTS (
+          SELECT 1 FROM phone_identities identities WHERE identities.user_id = users.id
+        )
+    `).run({
+      ...input,
+      expectedEnabled: input.expectedEnabled ? 1 : 0,
+      nextEnabled: input.nextEnabled ? 1 : 0
+    });
+    return result.changes === 1;
+  }
+
   createUser(user: NewUser): UserRecord {
     this.#db.transaction(() => {
       this.#db.prepare(`
@@ -6011,6 +6396,113 @@ export class SqliteStore implements Store {
   findUserById(id: string): UserRecord | null {
     const row = this.#db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
     return row === undefined ? null : mapUser(row);
+  }
+
+  updateUserProfile(
+    userId: string,
+    update: { displayName?: string | undefined; bio?: string | undefined },
+    at: string
+  ): UserRecord | null {
+    return this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        UPDATE users
+        SET display_name = COALESCE(@displayName, display_name),
+            bio = COALESCE(@bio, bio),
+            updated_at = CASE WHEN updated_at > @at THEN updated_at ELSE @at END
+        WHERE id = @userId
+      `).run({
+        userId,
+        displayName: update.displayName ?? null,
+        bio: update.bio ?? null,
+        at
+      });
+      return result.changes === 1 ? this.findUserById(userId) : null;
+    }).immediate();
+  }
+
+  setUserAvatarAttachment(userId: string, attachmentId: string | null, at: string): UserRecord | null {
+    return this.#db.transaction(() => {
+      const current = this.#db.prepare(`
+        SELECT avatar_attachment_id FROM users WHERE id = ?
+      `).get(userId) as { avatar_attachment_id: string | null } | undefined;
+      if (current === undefined) return null;
+
+      const updated = this.#db.prepare(`
+        UPDATE users
+        SET avatar_attachment_id = @attachmentId,
+            avatar_url = NULL,
+            updated_at = CASE WHEN updated_at > @at THEN updated_at ELSE @at END
+        WHERE id = @userId
+          AND (
+            @attachmentId IS NULL OR EXISTS (
+              SELECT 1 FROM attachments a
+              WHERE a.id = @attachmentId
+                AND a.owner_user_id = @userId
+                AND a.kind = 'image'
+                AND a.safety_status = 'reencoded'
+                AND a.metadata_trust = 'server_verified'
+                AND a.deleting_at IS NULL
+                AND a.deleted_at IS NULL
+            )
+          )
+      `).run({ userId, attachmentId, at });
+      if (updated.changes !== 1) return null;
+
+      if (attachmentId !== null) {
+        this.#db.prepare(`
+          UPDATE attachments SET linked_at = COALESCE(linked_at, @at)
+          WHERE id = @attachmentId
+        `).run({ attachmentId, at });
+      }
+      if (current.avatar_attachment_id !== null && current.avatar_attachment_id !== attachmentId) {
+        this.#db.prepare(`
+          UPDATE attachments SET linked_at = NULL
+          WHERE id = @previousAttachmentId
+            AND NOT EXISTS (
+              SELECT 1 FROM message_attachments ma
+              WHERE ma.attachment_id = @previousAttachmentId
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM users u
+              WHERE u.avatar_attachment_id = @previousAttachmentId
+            )
+        `).run({ previousAttachmentId: current.avatar_attachment_id });
+      }
+      return this.findUserById(userId);
+    }).immediate();
+  }
+
+  listProfileProjectionAudienceUserIds(userId: string): string[] {
+    const rows = this.#db.prepare(`
+      WITH affected_accounts(account_id) AS (
+        SELECT @userId
+        UNION
+        SELECT observers.user_id
+        FROM chat_members subject_membership
+        JOIN chat_members observers ON observers.chat_id = subject_membership.chat_id
+        WHERE subject_membership.user_id = @userId
+        UNION
+        SELECT observers.user_id
+        FROM messages authored_message
+        JOIN chat_members observers ON observers.chat_id = authored_message.chat_id
+        WHERE authored_message.sender_id = @userId
+        UNION
+        SELECT observers.user_id
+        FROM chat_topics authored_topic
+        JOIN chat_members observers ON observers.chat_id = authored_topic.chat_id
+        WHERE authored_topic.created_by = @userId
+        UNION
+        SELECT observers.user_id
+        FROM chat_pins authored_pin
+        JOIN chat_members observers ON observers.chat_id = authored_pin.chat_id
+        WHERE authored_pin.pinned_by = @userId
+      )
+      SELECT affected_accounts.account_id
+      FROM affected_accounts
+      JOIN users ON users.id = affected_accounts.account_id
+      ORDER BY affected_accounts.account_id
+    `).all({ userId }) as Array<{ account_id: string }>;
+    return rows.map(({ account_id }) => account_id);
   }
 
   findUserByUsername(normalizedUsername: string): UserRecord | null {
@@ -6105,6 +6597,153 @@ export class SqliteStore implements Store {
       updatedAt: at
     });
     return this.getPrivacySettings(userId);
+  }
+
+  findCurrentPushRegistration(userId: string, sessionId: string): PushRegistrationRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM push_registrations
+      WHERE user_id = ? AND session_id = ? AND revoked_at IS NULL
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `).get(userId, sessionId) as PushRegistrationRow | undefined;
+    return row === undefined ? null : mapPushRegistration(row);
+  }
+
+  upsertPushRegistration(input: NewPushRegistration): PushRegistrationRecord {
+    const expectedDigest = createHash("sha256").update(input.token, "utf8").digest("hex");
+    if (expectedDigest !== input.tokenDigest) {
+      throw new Error("Push token digest mismatch");
+    }
+    return this.#db.transaction(() => {
+      const existing = this.#db.prepare(`
+        SELECT * FROM push_registrations
+        WHERE platform = @platform
+          AND environment = @environment
+          AND topic = @topic
+          AND token_digest = @tokenDigest
+      `).get(input) as PushRegistrationRow | undefined;
+      const id = existing?.id ?? input.id;
+      const updatedAt = existing === undefined
+        ? input.at
+        : latestTimestamp(existing.updated_at, input.at);
+      const ciphertext = this.contentCipher.encrypt(
+        input.token,
+        `push-token:${id}:${input.userId}:${input.sessionId}:${input.environment}:${input.topic}`
+      );
+      if (!ciphertext.startsWith(PUSH_TOKEN_ENCRYPTED_ENVELOPE_PREFIX)) {
+        throw new Error("Push token storage requires authenticated encryption");
+      }
+
+      this.#db.prepare(`
+        UPDATE push_registrations
+        SET revoked_at = COALESCE(revoked_at, @updatedAt),
+            updated_at = CASE WHEN updated_at < @updatedAt THEN @updatedAt ELSE updated_at END
+        WHERE session_id = @sessionId
+          AND platform = @platform
+          AND topic = @topic
+          AND revoked_at IS NULL
+          AND id <> @id
+      `).run({ ...input, id, updatedAt });
+
+      if (existing === undefined) {
+        this.#db.prepare(`
+          INSERT INTO push_registrations (
+            id, user_id, session_id, platform, environment, topic,
+            token_digest, token_ciphertext, created_at, updated_at
+          ) VALUES (
+            @id, @userId, @sessionId, @platform, @environment, @topic,
+            @tokenDigest, @ciphertext, @updatedAt, @updatedAt
+          )
+        `).run({ ...input, id, ciphertext, updatedAt });
+      } else {
+        this.#db.prepare(`
+          UPDATE push_registrations
+          SET user_id = @userId,
+              session_id = @sessionId,
+              token_ciphertext = @ciphertext,
+              updated_at = @updatedAt,
+              revoked_at = NULL
+          WHERE id = @id
+        `).run({ ...input, id, ciphertext, updatedAt });
+      }
+
+      const row = this.#db.prepare("SELECT * FROM push_registrations WHERE id = ?")
+        .get(id) as PushRegistrationRow | undefined;
+      if (row === undefined || row.revoked_at !== null) {
+        throw new Error("Push registration commit was not readable");
+      }
+      return mapPushRegistration(row);
+    }).immediate();
+  }
+
+  revokeCurrentPushRegistration(userId: string, sessionId: string, at: string): boolean {
+    return this.#db.prepare(`
+      UPDATE push_registrations
+      SET revoked_at = COALESCE(revoked_at, @at),
+          updated_at = CASE WHEN updated_at < @at THEN @at ELSE updated_at END
+      WHERE user_id = @userId AND session_id = @sessionId AND revoked_at IS NULL
+    `).run({ userId, sessionId, at }).changes > 0;
+  }
+
+  getNotificationSettings(userId: string): NotificationSettingsRecord {
+    let row = this.#db.prepare("SELECT * FROM notification_settings WHERE user_id = ?")
+      .get(userId) as NotificationSettingsRow | undefined;
+    if (row === undefined) {
+      const user = this.#db.prepare("SELECT created_at FROM users WHERE id = ?")
+        .get(userId) as { created_at: string } | undefined;
+      if (user === undefined) throw new Error("Notification account is missing");
+      this.#db.prepare(`
+        INSERT INTO notification_settings (user_id, updated_at)
+        VALUES (?, ?)
+        ON CONFLICT(user_id) DO NOTHING
+      `).run(userId, user.created_at);
+      row = this.#db.prepare("SELECT * FROM notification_settings WHERE user_id = ?")
+        .get(userId) as NotificationSettingsRow | undefined;
+    }
+    if (row === undefined) throw new Error("Notification settings are missing for the account");
+    return mapNotificationSettings(row);
+  }
+
+  updateNotificationSettings(
+    userId: string,
+    update: Partial<Pick<
+      NotificationSettingsRecord,
+      | "messageAlerts"
+      | "messageRequestAlerts"
+      | "mentionAlerts"
+      | "sound"
+      | "badge"
+      | "previewMode"
+    >>,
+    at: string
+  ): NotificationSettingsRecord {
+    // Materialize defaults first, then apply only the caller's fields in one
+    // SQLite statement. A read/merge/write sequence can lose an unrelated
+    // preference changed by another device between the read and the update.
+    this.getNotificationSettings(userId);
+    this.#db.prepare(`
+      UPDATE notification_settings
+      SET message_alerts = COALESCE(@messageAlerts, message_alerts),
+          message_request_alerts = COALESCE(@messageRequestAlerts, message_request_alerts),
+          mention_alerts = COALESCE(@mentionAlerts, mention_alerts),
+          sound = COALESCE(@sound, sound),
+          badge = COALESCE(@badge, badge),
+          preview_mode = COALESCE(@previewMode, preview_mode),
+          updated_at = CASE WHEN updated_at > @at THEN updated_at ELSE @at END
+      WHERE user_id = @userId
+    `).run({
+      userId,
+      messageAlerts: update.messageAlerts === undefined ? null : update.messageAlerts ? 1 : 0,
+      messageRequestAlerts: update.messageRequestAlerts === undefined
+        ? null
+        : update.messageRequestAlerts ? 1 : 0,
+      mentionAlerts: update.mentionAlerts === undefined ? null : update.mentionAlerts ? 1 : 0,
+      sound: update.sound === undefined ? null : update.sound ? 1 : 0,
+      badge: update.badge === undefined ? null : update.badge ? 1 : 0,
+      previewMode: update.previewMode ?? null,
+      at
+    });
+    return this.getNotificationSettings(userId);
   }
 
   hasAcceptedRelationship(leftUserId: string, rightUserId: string): boolean {
@@ -6562,8 +7201,16 @@ export class SqliteStore implements Store {
   }
 
   revokeSession(sessionId: string, at: string): void {
-    this.#db.prepare("UPDATE device_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
-      .run(at, sessionId);
+    this.#db.transaction(() => {
+      this.#db.prepare("UPDATE device_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
+        .run(at, sessionId);
+      this.#db.prepare(`
+        UPDATE push_registrations
+        SET revoked_at = COALESCE(revoked_at, @at),
+            updated_at = CASE WHEN updated_at < @at THEN @at ELSE updated_at END
+        WHERE session_id = @sessionId AND revoked_at IS NULL
+      `).run({ sessionId, at });
+    }).immediate();
   }
 
   isSessionActive(sessionId: string, userId: string, now: string): boolean {
@@ -6618,11 +7265,20 @@ export class SqliteStore implements Store {
   }
 
   addChatMember(chatId: string, userId: string, role: ChatRole, joinedAt: string): void {
+    const ledger = this.#db.prepare(`
+      SELECT last_revision, last_removed_at
+      FROM chat_membership_revision_ledger
+      WHERE chat_id = ? AND user_id = ?
+    `).get(chatId, userId) as ChatMembershipRevisionLedgerRow | undefined;
+    const effectiveJoinedAt = ledger === undefined
+      ? joinedAt
+      : timestampAfterFloor(joinedAt, ledger.last_removed_at);
+    const revision = ledger === undefined ? 1 : ledger.last_revision + 1;
     this.#db.prepare(`
       INSERT OR IGNORE INTO chat_members (
         chat_id, user_id, role, membership_revision, joined_at, membership_updated_at
-      ) VALUES (?, ?, ?, 1, ?, ?)
-    `).run(chatId, userId, role, joinedAt, joinedAt);
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(chatId, userId, role, revision, effectiveJoinedAt, effectiveJoinedAt);
   }
 
   getChatMember(chatId: string, userId: string): ChatMemberRecord | null {
@@ -6664,12 +7320,21 @@ export class SqliteStore implements Store {
     role: Exclude<ChatRole, "owner">,
     at: string
   ): ChatMemberRecord | null {
+    const ledger = this.#db.prepare(`
+      SELECT last_revision, last_removed_at
+      FROM chat_membership_revision_ledger
+      WHERE chat_id = ? AND user_id = ?
+    `).get(chatId, userId) as ChatMembershipRevisionLedgerRow | undefined;
+    const effectiveAt = ledger === undefined
+      ? at
+      : timestampAfterFloor(at, ledger.last_removed_at);
+    const revision = ledger === undefined ? 1 : ledger.last_revision + 1;
     const result = this.#db.prepare(`
       INSERT INTO chat_members (
         chat_id, user_id, role, membership_revision, joined_at, membership_updated_at
-      ) VALUES (?, ?, ?, 1, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(chat_id, user_id) DO NOTHING
-    `).run(chatId, userId, role, at, at);
+    `).run(chatId, userId, role, revision, effectiveAt, effectiveAt);
     return result.changes === 1 ? this.getChatMember(chatId, userId) : null;
   }
 
@@ -6694,14 +7359,39 @@ export class SqliteStore implements Store {
     expectedRevision: number,
     at: string
   ): ChatMemberRecord | null {
-    const current = this.getChatMember(chatId, userId);
-    if (current === null || current.revision !== expectedRevision) return null;
-    const result = this.#db.prepare(`
-      DELETE FROM chat_members
-      WHERE chat_id = ? AND user_id = ? AND membership_revision = ?
-    `).run(chatId, userId, expectedRevision);
-    if (result.changes !== 1) return null;
-    return { ...current, revision: current.revision + 1, updatedAt: at };
+    return this.#db.transaction(() => {
+      const current = this.getChatMember(chatId, userId);
+      if (current === null || current.revision !== expectedRevision) return null;
+      const ledger = this.#db.prepare(`
+        SELECT last_revision, last_removed_at
+        FROM chat_membership_revision_ledger
+        WHERE chat_id = ? AND user_id = ?
+      `).get(chatId, userId) as ChatMembershipRevisionLedgerRow | undefined;
+      const revision = current.revision + 1;
+      if (ledger !== undefined && revision <= ledger.last_revision) return null;
+      const removedAt = timestampAfterFloor(
+        timestampAfterFloor(at, current.updatedAt),
+        ledger?.last_removed_at ?? current.updatedAt
+      );
+      const ledgerResult = this.#db.prepare(`
+        INSERT INTO chat_membership_revision_ledger (
+          chat_id, user_id, last_revision, last_removed_at
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(chat_id, user_id) DO UPDATE SET
+          last_revision = excluded.last_revision,
+          last_removed_at = excluded.last_removed_at
+        WHERE excluded.last_revision > chat_membership_revision_ledger.last_revision
+          AND julianday(excluded.last_removed_at) >
+            julianday(chat_membership_revision_ledger.last_removed_at)
+      `).run(chatId, userId, revision, removedAt);
+      if (ledgerResult.changes !== 1) return null;
+      const result = this.#db.prepare(`
+        DELETE FROM chat_members
+        WHERE chat_id = ? AND user_id = ? AND membership_revision = ?
+      `).run(chatId, userId, expectedRevision);
+      if (result.changes !== 1) return null;
+      return { ...current, revision, updatedAt: removedAt };
+    }).immediate();
   }
 
   findChatMembershipCommandReceipt(
@@ -6775,12 +7465,17 @@ export class SqliteStore implements Store {
 
   getChatForUser(chatId: string, userId: string): Chat | null {
     const row = this.#db.prepare(`
-      SELECT c.*, cm.role,
+      SELECT c.*, cm.role, cm.archived_at, cm.muted_until,
         (SELECT count(*) FROM chat_members members WHERE members.chat_id = c.id) AS member_count
       FROM chats c
       JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = ?
       WHERE c.id = ?
-    `).get(userId, chatId) as (ChatRow & { role: ChatRole; member_count: number }) | undefined;
+    `).get(userId, chatId) as (ChatRow & {
+      role: ChatRole;
+      member_count: number;
+      archived_at: string | null;
+      muted_until: string | null;
+    }) | undefined;
     if (row === undefined) return null;
 
     let title = row.title ?? "";
@@ -6790,7 +7485,7 @@ export class SqliteStore implements Store {
         JOIN users u ON u.id = cm.user_id
         WHERE cm.chat_id = ? AND cm.user_id <> ? LIMIT 1
       `).get(chatId, userId) as { display_name: string } | undefined;
-      title = other?.display_name ?? "Saved Messages";
+      title = other?.display_name ?? "Избранное";
     }
 
     const unread = this.#db.prepare(`
@@ -6814,8 +7509,332 @@ export class SqliteStore implements Store {
       lastMessage: row.last_message_id === null ? null : this.getMessage(row.last_message_id),
       lastActivityAt: row.updated_at,
       createdAt: row.created_at,
-      unreadCount: unread.count
+      unreadCount: unread.count,
+      archivedAt: row.archived_at,
+      mutedUntil: row.muted_until
     };
+  }
+
+  getChatPreferences(chatId: string, userId: string): ChatPreferences | null {
+    const row = this.#db.prepare(`
+      SELECT archived_at, muted_until
+      FROM chat_members
+      WHERE chat_id = ? AND user_id = ?
+    `).get(chatId, userId) as {
+      archived_at: string | null;
+      muted_until: string | null;
+    } | undefined;
+    return row === undefined ? null : {
+      archivedAt: row.archived_at,
+      mutedUntil: row.muted_until
+    };
+  }
+
+  updateChatPreferences(
+    chatId: string,
+    userId: string,
+    input: { archived?: boolean; mutedUntil?: string | null; changedAt: string }
+  ): ChatPreferences | null {
+    const result = this.#db.prepare(`
+      UPDATE chat_members
+      SET archived_at = CASE
+            WHEN @writeArchived = 0 THEN archived_at
+            WHEN @archived = 1 THEN COALESCE(archived_at, @changedAt)
+            ELSE NULL
+          END,
+          muted_until = CASE
+            WHEN @writeMutedUntil = 0 THEN muted_until
+            ELSE @mutedUntil
+          END
+      WHERE chat_id = @chatId AND user_id = @userId
+    `).run({
+      chatId,
+      userId,
+      writeArchived: input.archived === undefined ? 0 : 1,
+      archived: input.archived === true ? 1 : 0,
+      changedAt: input.changedAt,
+      writeMutedUntil: input.mutedUntil === undefined ? 0 : 1,
+      mutedUntil: input.mutedUntil ?? null
+    });
+    return result.changes === 1 ? this.getChatPreferences(chatId, userId) : null;
+  }
+
+  getChatFolderStateRevision(userId: string): number {
+    const row = this.#db.prepare(`
+      SELECT revision FROM chat_folder_states WHERE user_id = ?
+    `).get(userId) as { revision: number } | undefined;
+    return row?.revision ?? 0;
+  }
+
+  advanceChatFolderStateRevision(userId: string, at: string): number {
+    this.#db.prepare(`
+      INSERT INTO chat_folder_states (user_id, revision, updated_at)
+      VALUES (?, 0, ?)
+      ON CONFLICT(user_id) DO NOTHING
+    `).run(userId, at);
+    const row = this.#db.prepare(`
+      UPDATE chat_folder_states
+      SET revision = revision + 1,
+          updated_at = CASE WHEN updated_at > @at THEN updated_at ELSE @at END
+      WHERE user_id = @userId
+      RETURNING revision
+    `).get({ userId, at }) as { revision: number } | undefined;
+    if (row === undefined) throw new Error("Could not advance chat folder state revision");
+    return row.revision;
+  }
+
+  countChatFolders(userId: string): number {
+    return (this.#db.prepare(`
+      SELECT count(*) AS count FROM chat_folders WHERE user_id = ?
+    `).get(userId) as { count: number }).count;
+  }
+
+  listChatFolders(userId: string): ChatFolderRecord[] {
+    const rows = this.#db.prepare(`
+      SELECT * FROM chat_folders
+      WHERE user_id = ?
+      ORDER BY position, id
+    `).all(userId) as ChatFolderRow[];
+    return rows.map((row) => this.#mapChatFolder(row));
+  }
+
+  getChatFolderSnapshot(userId: string): {
+    items: ChatFolderRecord[];
+    stateRevision: number;
+  } {
+    return this.transaction(() => ({
+      items: this.listChatFolders(userId),
+      stateRevision: this.getChatFolderStateRevision(userId)
+    }));
+  }
+
+  findChatFolder(userId: string, folderId: string): ChatFolderRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM chat_folders
+      WHERE user_id = ? AND id = ?
+    `).get(userId, folderId) as ChatFolderRow | undefined;
+    return row === undefined ? null : this.#mapChatFolder(row);
+  }
+
+  createChatFolder(folder: ChatFolderRecord): ChatFolderRecord {
+    this.#db.prepare(`
+      INSERT INTO chat_folders (
+        id, user_id, title, position, revision,
+        include_direct, include_group, include_channel,
+        unread_only, exclude_muted, include_archived,
+        created_at, updated_at
+      ) VALUES (
+        @id, @userId, @title, @position, @revision,
+        @includeDirect, @includeGroup, @includeChannel,
+        @unreadOnly, @excludeMuted, @includeArchived,
+        @createdAt, @updatedAt
+      )
+    `).run({
+      id: folder.id,
+      userId: folder.userId,
+      title: folder.title,
+      position: folder.position,
+      revision: folder.revision,
+      includeDirect: folder.rules.includeKinds.includes("direct") ? 1 : 0,
+      includeGroup: folder.rules.includeKinds.includes("group") ? 1 : 0,
+      includeChannel: folder.rules.includeKinds.includes("channel") ? 1 : 0,
+      unreadOnly: folder.rules.unreadOnly ? 1 : 0,
+      excludeMuted: folder.rules.excludeMuted ? 1 : 0,
+      includeArchived: folder.rules.includeArchived ? 1 : 0,
+      createdAt: folder.createdAt,
+      updatedAt: folder.updatedAt
+    });
+    this.#replaceChatFolderOverrides(folder.id, folder.userId, folder.overrides, folder.createdAt);
+    return this.findChatFolder(folder.userId, folder.id) as ChatFolderRecord;
+  }
+
+  updateChatFolder(
+    userId: string,
+    folderId: string,
+    input: {
+      title: string;
+      rules: ChatFolderRecord["rules"];
+      overrides: ChatFolderOverrideRecord[];
+      expectedRevision: number;
+      updatedAt: string;
+    }
+  ): ChatFolderRecord | null {
+    const result = this.#db.prepare(`
+      UPDATE chat_folders
+      SET title = @title,
+          revision = revision + 1,
+          include_direct = @includeDirect,
+          include_group = @includeGroup,
+          include_channel = @includeChannel,
+          unread_only = @unreadOnly,
+          exclude_muted = @excludeMuted,
+          include_archived = @includeArchived,
+          updated_at = @updatedAt
+      WHERE id = @folderId AND user_id = @userId AND revision = @expectedRevision
+    `).run({
+      userId,
+      folderId,
+      title: input.title,
+      expectedRevision: input.expectedRevision,
+      includeDirect: input.rules.includeKinds.includes("direct") ? 1 : 0,
+      includeGroup: input.rules.includeKinds.includes("group") ? 1 : 0,
+      includeChannel: input.rules.includeKinds.includes("channel") ? 1 : 0,
+      unreadOnly: input.rules.unreadOnly ? 1 : 0,
+      excludeMuted: input.rules.excludeMuted ? 1 : 0,
+      includeArchived: input.rules.includeArchived ? 1 : 0,
+      updatedAt: input.updatedAt
+    });
+    if (result.changes !== 1) return null;
+    this.#replaceChatFolderOverrides(folderId, userId, input.overrides, input.updatedAt);
+    return this.findChatFolder(userId, folderId);
+  }
+
+  deleteChatFolder(userId: string, folderId: string, expectedRevision: number): boolean {
+    return this.#db.prepare(`
+      DELETE FROM chat_folders
+      WHERE id = ? AND user_id = ? AND revision = ?
+    `).run(folderId, userId, expectedRevision).changes === 1;
+  }
+
+  reorderChatFolders(userId: string, orderedFolderIds: string[], at: string): ChatFolderRecord[] {
+    const update = this.#db.prepare(`
+      UPDATE chat_folders
+      SET position = @position,
+          revision = revision + 1,
+          updated_at = @updatedAt
+      WHERE id = @folderId AND user_id = @userId AND position <> @position
+    `);
+    for (const [position, folderId] of orderedFolderIds.entries()) {
+      update.run({ position, folderId, userId, updatedAt: at });
+    }
+    return this.listChatFolders(userId);
+  }
+
+  findChatFolderCommandReceipt(
+    userId: string,
+    clientNonce: string,
+    at: string
+  ): ChatFolderCommandReceiptRecord | null {
+    const row = this.#db.prepare(`
+      SELECT *, COALESCE(
+        expires_at,
+        strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+1 day')
+      ) AS effective_expires_at
+      FROM chat_folder_command_receipts
+      WHERE user_id = ? AND client_nonce = ?
+        AND julianday(COALESCE(
+          expires_at,
+          strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+1 day')
+        )) > julianday(?)
+    `).get(userId, clientNonce, at) as ChatFolderCommandReceiptRow | undefined;
+    if (row === undefined) return null;
+    return {
+      userId: row.user_id,
+      clientNonce: row.client_nonce,
+      operation: row.operation,
+      fingerprint: row.fingerprint,
+      responseJson: this.contentCipher.decrypt(
+        row.response_ciphertext,
+        `chat-folder-receipt:${row.user_id}:${row.client_nonce}`
+      ),
+      createdAt: row.created_at,
+      expiresAt: row.effective_expires_at
+    };
+  }
+
+  createChatFolderCommandReceipt(receipt: ChatFolderCommandReceiptRecord): void {
+    this.#db.prepare(`
+      INSERT INTO chat_folder_command_receipts (
+        user_id, client_nonce, operation, fingerprint,
+        response_ciphertext, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      receipt.userId,
+      receipt.clientNonce,
+      receipt.operation,
+      receipt.fingerprint,
+      this.contentCipher.encrypt(
+        receipt.responseJson,
+        `chat-folder-receipt:${receipt.userId}:${receipt.clientNonce}`
+      ),
+      receipt.createdAt,
+      receipt.expiresAt
+    );
+  }
+
+  countActiveChatFolderCommandReceipts(userId: string, at: string): number {
+    return (this.#db.prepare(`
+      SELECT count(*) AS count
+      FROM chat_folder_command_receipts
+      WHERE user_id = ?
+        AND julianday(COALESCE(
+          expires_at,
+          strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+1 day')
+        )) > julianday(?)
+    `).get(userId, at) as { count: number }).count;
+  }
+
+  getOldestChatFolderCommandReceiptExpiry(userId: string, at: string): string | null {
+    const row = this.#db.prepare(`
+      SELECT COALESCE(
+        expires_at,
+        strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+1 day')
+      ) AS effective_expires_at
+      FROM chat_folder_command_receipts
+      WHERE user_id = ?
+        AND julianday(COALESCE(
+          expires_at,
+          strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+1 day')
+        )) > julianday(?)
+      ORDER BY julianday(effective_expires_at), client_nonce
+      LIMIT 1
+    `).get(userId, at) as { effective_expires_at: string } | undefined;
+    return row?.effective_expires_at ?? null;
+  }
+
+  deleteExpiredChatFolderCommandReceipt(
+    userId: string,
+    clientNonce: string,
+    at: string
+  ): boolean {
+    return this.#db.prepare(`
+      DELETE FROM chat_folder_command_receipts
+      WHERE user_id = ? AND client_nonce = ?
+        AND julianday(COALESCE(
+          expires_at,
+          strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+1 day')
+        )) <= julianday(?)
+    `).run(userId, clientNonce, at).changes === 1;
+  }
+
+  purgeExpiredChatFolderCommandReceipts(at: string, limit: number): number {
+    const current = this.#db.prepare(`
+      DELETE FROM chat_folder_command_receipts
+      WHERE rowid IN (
+        SELECT rowid
+        FROM chat_folder_command_receipts INDEXED BY idx_chat_folder_receipts_expiry
+        WHERE expires_at IS NOT NULL AND expires_at <= @at
+        ORDER BY expires_at, user_id, client_nonce
+        LIMIT @limit
+      )
+    `).run({ at, limit }).changes;
+    const remaining = limit - current;
+    if (remaining <= 0) return current;
+
+    const legacyCutoff = new Date(
+      Date.parse(at) - CHAT_FOLDER_IDEMPOTENCY_TTL_SECONDS * 1_000
+    ).toISOString();
+    const legacy = this.#db.prepare(`
+      DELETE FROM chat_folder_command_receipts
+      WHERE rowid IN (
+        SELECT rowid
+        FROM chat_folder_command_receipts INDEXED BY idx_chat_folder_receipts_legacy_expiry
+        WHERE expires_at IS NULL AND created_at <= @legacyCutoff
+        ORDER BY created_at, user_id, client_nonce
+        LIMIT @limit
+      )
+    `).run({ legacyCutoff, limit: remaining }).changes;
+    return current + legacy;
   }
 
   listChats(userId: string, limit: number, cursor?: string): { items: Chat[]; nextCursor: string | null } {
@@ -7324,12 +8343,14 @@ export class SqliteStore implements Store {
       INSERT INTO attachments (
         id, owner_user_id, kind, file_name_ciphertext, declared_mime_type,
         detected_mime_type, size_bytes, sha256, metadata_ciphertext,
-        storage_provider, storage_key, created_at
+        storage_provider, storage_key, safety_status, metadata_trust, created_at
       ) VALUES (@id, @ownerUserId, @kind, @fileName, @declaredMimeType,
         @detectedMimeType, @sizeBytes, @sha256, @metadata,
-        @storageProvider, @storageKey, @createdAt)
+        @storageProvider, @storageKey, @safetyStatus, @metadataTrust, @createdAt)
     `).run({
       ...attachment,
+      safetyStatus: attachment.safetyStatus ?? "unscanned",
+      metadataTrust: attachment.metadataTrust ?? "client_declared",
       fileName: this.contentCipher.encrypt(attachment.fileName, `attachment:${attachment.id}:filename`),
       metadata: this.contentCipher.encrypt(JSON.stringify(attachment.metadata), `attachment:${attachment.id}:metadata`)
     });
@@ -7356,8 +8377,8 @@ export class SqliteStore implements Store {
       sha256: record.sha256,
       metadata: record.metadata,
       downloadPath: `/v1/attachments/${record.id}/content`,
-      safetyStatus: "unscanned",
-      metadataTrust: "client_declared",
+      safetyStatus: record.safetyStatus,
+      metadataTrust: record.metadataTrust,
       createdAt: record.createdAt
     });
   }
@@ -7431,6 +8452,26 @@ export class SqliteStore implements Store {
                   )
               )
             )
+        ) OR EXISTS (
+          SELECT 1
+          FROM users avatar_owner
+          JOIN account_privacy_settings privacy ON privacy.user_id = avatar_owner.id
+          WHERE avatar_owner.avatar_attachment_id = a.id
+            AND NOT EXISTS (
+              SELECT 1 FROM account_blocks blocks
+              WHERE (blocks.blocker_user_id = @userId AND blocks.blocked_user_id = avatar_owner.id)
+                 OR (blocks.blocker_user_id = avatar_owner.id AND blocks.blocked_user_id = @userId)
+            )
+            AND (
+              privacy.username_discoverable = 1 OR EXISTS (
+                SELECT 1
+                FROM chat_members viewer_membership
+                JOIN chat_members owner_membership
+                  ON owner_membership.chat_id = viewer_membership.chat_id
+                WHERE viewer_membership.user_id = @userId
+                  AND owner_membership.user_id = avatar_owner.id
+              )
+            )
         )
       )
     `).get({ userId, attachmentId }) as { allowed: number } | undefined;
@@ -7443,17 +8484,21 @@ export class SqliteStore implements Store {
     staleClaimBefore: string,
     at: string,
     limit: number
-  ): AttachmentRecord[] {
-    return this.transaction(() => {
+  ): { attachments: AttachmentRecord[]; invalidations: StoredEvent[] } {
+    return this.immediateTransaction(() => {
       const candidates = this.#db.prepare(`
-        SELECT a.id FROM attachments a
+        SELECT a.id, a.deleting_at FROM attachments a
         WHERE a.deleted_at IS NULL AND a.linked_at IS NULL AND a.created_at <= @before
           AND a.storage_provider = @provider
           AND (a.deleting_at IS NULL OR a.deleting_at <= @staleClaimBefore)
           AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = a.id)
+          AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_attachment_id = a.id)
         ORDER BY a.created_at ASC LIMIT @limit
-      `).all({ provider, before, staleClaimBefore, limit }) as Array<{ id: string }>;
-      if (candidates.length === 0) return [];
+      `).all({ provider, before, staleClaimBefore, limit }) as Array<{
+        id: string;
+        deleting_at: string | null;
+      }>;
+      if (candidates.length === 0) return { attachments: [], invalidations: [] };
       const ids = candidates.map((candidate) => candidate.id);
       const idBindings = Object.fromEntries(ids.map((id, index) => [`id${index}`, id]));
       const idPlaceholders = ids.map((_id, index) => `@id${index}`).join(",");
@@ -7463,23 +8508,51 @@ export class SqliteStore implements Store {
           AND deleted_at IS NULL AND linked_at IS NULL
           AND (deleting_at IS NULL OR deleting_at <= @staleClaimBefore)
           AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachments.id)
+          AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_attachment_id = attachments.id)
       `).run({ at, staleClaimBefore, ...idBindings });
       const rows = this.#db.prepare(`
         SELECT * FROM attachments WHERE deleting_at = @at AND id IN (${idPlaceholders})
       `).all({ at, ...idBindings }) as AttachmentRow[];
-      return rows.map((row) => this.#mapAttachment(row));
+      const invalidations = this.syncInvalidationEnabled
+        ? rows.map((row) => this.appendEvent(row.owner_user_id, {
+          type: "sync.invalidated",
+          audience: "account_projection",
+          accountId: row.owner_user_id,
+          reason: "attachment_removed",
+          changedAt: at
+        }, at))
+        : [];
+      return {
+        attachments: rows.map((row) => this.#mapAttachment(row)),
+        invalidations
+      };
     });
   }
 
-  deleteAttachmentRecord(id: string, at: string): void {
-    this.transaction(() => {
-      this.#db.prepare(`
+  deleteAttachmentRecord(id: string, at: string): StoredEvent[] {
+    return this.immediateTransaction(() => {
+      const current = this.#db.prepare(`
+        SELECT * FROM attachments WHERE id = ? AND deleted_at IS NULL
+      `).get(id) as AttachmentRow | undefined;
+      if (current === undefined) return [];
+      const wasVisible = current.deleting_at === null;
+      const removed = this.#db.prepare(`
         UPDATE attachments SET deleted_at = ?, deleting_at = NULL WHERE id = ? AND deleted_at IS NULL
       `).run(at, id);
+      if (removed.changes !== 1) return [];
       this.#db.prepare("DELETE FROM attachment_search_tokens WHERE attachment_id = ?").run(id);
       this.#db.prepare(`
         DELETE FROM realtime_events WHERE entity_id = ? AND event_type = 'attachment.stored'
       `).run(id);
+      return wasVisible && this.syncInvalidationEnabled
+        ? [this.appendEvent(current.owner_user_id, {
+            type: "sync.invalidated",
+            audience: "account_projection",
+            accountId: current.owner_user_id,
+            reason: "attachment_removed",
+            changedAt: at
+          }, at)]
+        : [];
     });
   }
 
@@ -7762,6 +8835,9 @@ export class SqliteStore implements Store {
 
   appendEvent(audienceUserId: string, event: DurableRealtimeEvent, at: string): StoredEvent {
     const validated = DurableRealtimeEventSchema.parse(event);
+    if (!this.syncInvalidationEnabled && validated.type === "sync.invalidated") {
+      throw new Error("sync.invalidated emission is disabled by configuration");
+    }
     const entityId = this.#eventEntityId(validated);
     const result = this.#db.transaction(() => {
       const inserted = this.#db.prepare(`
@@ -7794,17 +8870,29 @@ export class SqliteStore implements Store {
   }
 
   getLatestSequence(): number {
-    const row = this.#db.prepare("SELECT COALESCE(max(sequence), 0) AS sequence FROM realtime_events")
+    const row = this.#db.prepare(`
+      SELECT COALESCE(
+        (SELECT seq FROM sqlite_sequence WHERE name = 'realtime_events'),
+        0
+      ) AS sequence
+    `)
       .get() as { sequence: number };
     return row.sequence;
   }
 
-  replayEvents(userId: string, afterSequence: number, throughSequence: number, limit: number): StoredEvent[] {
+  replayEvents(
+    userId: string,
+    afterSequence: number,
+    throughSequence: number,
+    limit: number,
+    includeSyncInvalidations = true
+  ): StoredEvent[] {
     const rows = this.#db.prepare(`
       SELECT * FROM realtime_events
       WHERE audience_user_id = ? AND sequence > ? AND sequence <= ?
+        AND (? = 1 OR COALESCE(event_type, '') <> 'sync.invalidated')
       ORDER BY sequence ASC LIMIT ?
-    `).all(userId, afterSequence, throughSequence, limit) as EventRow[];
+    `).all(userId, afterSequence, throughSequence, includeSyncInvalidations ? 1 : 0, limit) as EventRow[];
     return rows.map((row) => this.#mapStoredEvent(row));
   }
 
@@ -7909,6 +8997,67 @@ export class SqliteStore implements Store {
         AND published_at IS NULL AND failed_at IS NULL
     `).run(at, failureCode, sequence, workerId);
     return result.changes === 1;
+  }
+
+  #mapChatFolder(row: ChatFolderRow): ChatFolderRecord {
+    const includeKinds: ChatKind[] = [];
+    if (row.include_direct === 1) includeKinds.push("direct");
+    if (row.include_group === 1) includeKinds.push("group");
+    if (row.include_channel === 1) includeKinds.push("channel");
+    const overrides = this.#db.prepare(`
+      SELECT chat_id, mode, pinned_position
+      FROM chat_folder_overrides
+      WHERE folder_id = ? AND user_id = ?
+      ORDER BY pinned_position IS NULL, pinned_position, chat_id
+    `).all(row.id, row.user_id) as ChatFolderOverrideRow[];
+    return {
+      id: row.id,
+      userId: row.user_id,
+      title: row.title,
+      position: row.position,
+      revision: row.revision,
+      rules: {
+        includeKinds,
+        unreadOnly: row.unread_only === 1,
+        excludeMuted: row.exclude_muted === 1,
+        includeArchived: row.include_archived === 1
+      },
+      overrides: overrides.map((override) => ({
+        chatId: override.chat_id,
+        mode: override.mode,
+        pinnedPosition: override.pinned_position
+      })),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  #replaceChatFolderOverrides(
+    folderId: string,
+    userId: string,
+    overrides: ChatFolderOverrideRecord[],
+    at: string
+  ): void {
+    this.#db.prepare(`
+      DELETE FROM chat_folder_overrides
+      WHERE folder_id = ? AND user_id = ?
+    `).run(folderId, userId);
+    const insert = this.#db.prepare(`
+      INSERT INTO chat_folder_overrides (
+        folder_id, user_id, chat_id, mode, pinned_position, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const override of overrides) {
+      insert.run(
+        folderId,
+        userId,
+        override.chatId,
+        override.mode,
+        override.pinnedPosition,
+        at,
+        at
+      );
+    }
   }
 
   #mapStoredEvent(row: EventRow): StoredEvent {
@@ -8018,6 +9167,8 @@ export class SqliteStore implements Store {
       ) as Record<string, unknown>,
       storageProvider: row.storage_provider,
       storageKey: row.storage_key,
+      safetyStatus: row.safety_status,
+      metadataTrust: row.metadata_trust,
       createdAt: row.created_at,
       linkedAt: row.linked_at,
       deletingAt: row.deleting_at,
@@ -8104,6 +9255,9 @@ export class SqliteStore implements Store {
       case "relationship.block.changed": return event.accountId;
       case "safety.report.submitted": return event.report.id;
       case "chat.member.changed": return `${event.membership.chatId}:${event.membership.userId}`;
+      case "chat.preferences.updated": return `${event.chatId}:${event.accountId}`;
+      case "chat.folders.updated": return event.accountId;
+      case "sync.invalidated": return event.accountId;
     }
   }
 }

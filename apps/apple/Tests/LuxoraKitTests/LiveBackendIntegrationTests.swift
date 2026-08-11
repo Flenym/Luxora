@@ -3,6 +3,124 @@ import XCTest
 @testable import LuxoraKit
 
 final class LiveBackendIntegrationTests: XCTestCase {
+    func testScopedRealtimeV2PreferencesCursorAndAuthoritativeRecoveryAgainstLiveDocker() async throws {
+        guard ProcessInfo.processInfo.environment["LUXORA_LIVE_TEST"] == "1" else {
+            throw XCTSkip("Set LUXORA_LIVE_TEST=1 while the local API is running")
+        }
+
+        let configuration = LuxoraClientConfiguration.development
+        let api = LuxoraAPIClient(configuration: configuration)
+        let realtime = LuxoraRealtimeClient(configuration: configuration)
+        let suffix = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
+        let authentication = try await api.register(
+            username: "swift_v2_\(suffix)",
+            displayName: "Swift v2 Integration",
+            password: "LuxoraIntegration!2026",
+            deviceName: "Swift v2 test"
+        )
+        let token = authentication.tokens.accessToken
+        defer { Task { try? await api.revokeCurrentSession(token: token) } }
+
+        let capabilities = try await api.capabilities()
+        XCTAssertEqual(capabilities.realtimeProtocolVersion, .scopedV2)
+        XCTAssertTrue(capabilities.features.reconciliation)
+
+        let savedChat = try await api.createDirectChat(userID: authentication.user.id, token: token)
+        let sent = try await api.sendMessage(
+            chatID: savedChat.id,
+            clientNonce: .clientNonceV4(),
+            body: "Live v2 reconciliation contract",
+            token: token
+        )
+
+        let initialBundle = try await api.reconciliationBundle(
+            token: token,
+            expectedUserID: authentication.user.id
+        )
+        XCTAssertEqual(initialBundle.chats.map { $0.chat.id }, [savedChat.id])
+        XCTAssertEqual(initialBundle.chats.first?.messages.map { $0.message.id }, [sent.id])
+        XCTAssertTrue(RealtimeCursorValidator.isValid(initialBundle.boundary.cursor))
+
+        let probe = LiveScopedRealtimeProbe()
+        let ready = expectation(description: "Scoped v2 ready")
+        let checkpoint = expectation(description: "Scoped v2 checkpoint")
+        let preference = expectation(description: "Scoped preference dispatch")
+        let streamTask = Task {
+            do {
+                for try await signal in realtime.scopedSignals(token: token, resumeCursor: nil) {
+                    switch signal {
+                    case .ready:
+                        ready.fulfill()
+                    case let .checkpoint(sequence, cursor):
+                        await probe.recordCheckpoint(sequence: sequence, cursor: cursor)
+                        checkpoint.fulfill()
+                    case let .chatPreferences(dispatch):
+                        await probe.recordPreference(dispatch)
+                        preference.fulfill()
+                    default:
+                        break
+                    }
+                }
+            } catch {
+                // Expectations below remain the source of deterministic failure.
+            }
+        }
+        await fulfillment(of: [ready, checkpoint], timeout: 5)
+
+        let muteUntil = Date().addingTimeInterval(3_600)
+        let updated = try await api.updateChatPreferences(
+            chatID: savedChat.id,
+            patch: ChatPreferencesPatch(archived: true, mutedUntil: .until(muteUntil)),
+            token: token
+        )
+        XCTAssertNotNil(updated.archivedAt)
+        XCTAssertNotNil(updated.mutedUntil)
+        await fulfillment(of: [preference], timeout: 5)
+        streamTask.cancel()
+
+        let observedPreference = await probe.preference
+        let dispatch = try XCTUnwrap(observedPreference)
+        XCTAssertEqual(dispatch.accountID, authentication.user.id)
+        XCTAssertEqual(dispatch.chatID, savedChat.id)
+        XCTAssertTrue(dispatch.preferences.isArchived)
+        XCTAssertTrue(dispatch.preferences.isMuted(at: Date()))
+        XCTAssertTrue(RealtimeCursorValidator.isValid(dispatch.cursor))
+
+        let replacement = dispatch.cursor.last == "a" ? "b" : "a"
+        let tamperedCursor = String(dispatch.cursor.dropLast()) + replacement
+        let syncRequired = expectation(description: "Invalid cursor requires authoritative sync")
+        let recoveryTask = Task {
+            do {
+                for try await signal in realtime.scopedSignals(token: token, resumeCursor: tamperedCursor) {
+                    if case let .syncRequired(reason, _, recoveryPath) = signal {
+                        await probe.recordSyncRequired(reason: reason, path: recoveryPath)
+                        syncRequired.fulfill()
+                        return
+                    }
+                }
+            } catch {
+                // The expectation reports a deterministic failure if recovery
+                // is not announced before the server closes the socket.
+            }
+        }
+        await fulfillment(of: [syncRequired], timeout: 5)
+        recoveryTask.cancel()
+        let observedSyncReason = await probe.syncReason
+        let observedRecoveryPath = await probe.recoveryPath
+        XCTAssertEqual(observedSyncReason, .cursorInvalid)
+        XCTAssertEqual(observedRecoveryPath, "/v2/sync/snapshot")
+
+        let recovered = try await api.reconciliationBundle(
+            token: token,
+            expectedUserID: authentication.user.id
+        )
+        let recoveredChat = try XCTUnwrap(recovered.chats.first(where: { $0.chat.id == savedChat.id }))
+        XCTAssertNotNil(recoveredChat.chat.archivedAt)
+        XCTAssertNotNil(recoveredChat.chat.mutedUntil)
+        XCTAssertEqual(recoveredChat.messages.map { $0.message.id }, [sent.id])
+        XCTAssertGreaterThanOrEqual(recovered.boundary.sequence, dispatch.sequence)
+    }
+
     func testRegistrationSessionChatListAndRealtimeHandshake() async throws {
         guard ProcessInfo.processInfo.environment["LUXORA_LIVE_TEST"] == "1" else {
             throw XCTSkip("Set LUXORA_LIVE_TEST=1 while the local API is running")
@@ -44,6 +162,74 @@ final class LiveBackendIntegrationTests: XCTestCase {
         XCTAssertEqual(messages.map(\.id), [sent.id])
         XCTAssertEqual(messages.first?.body, "Live Swift chat contract")
 
+        let reply = try await api.sendMessage(
+            chatID: savedChat.id,
+            clientNonce: .clientNonceV4(),
+            body: "Live reply contract",
+            replyToMessageID: sent.id,
+            token: authentication.tokens.accessToken
+        )
+        XCTAssertEqual(reply.replyToMessageId, sent.id)
+
+        let editedReply = try await api.editMessage(
+            messageID: reply.id,
+            body: "Live edited reply contract",
+            expectedRevision: reply.revision,
+            token: authentication.tokens.accessToken
+        )
+        XCTAssertEqual(editedReply.body, "Live edited reply contract")
+        XCTAssertEqual(editedReply.revision, reply.revision + 1)
+
+        let pinned = try await api.setMessagePinned(
+            chatID: savedChat.id,
+            messageID: sent.id,
+            active: true,
+            token: authentication.tokens.accessToken
+        )
+        XCTAssertTrue(pinned)
+        let pinnedPage = try await api.messages(
+            chatID: savedChat.id,
+            token: authentication.tokens.accessToken
+        )
+        XCTAssertTrue(pinnedPage.first(where: { $0.id == sent.id })?.isPinned == true)
+        let unpinned = try await api.setMessagePinned(
+            chatID: savedChat.id,
+            messageID: sent.id,
+            active: false,
+            token: authentication.tokens.accessToken
+        )
+        XCTAssertFalse(unpinned)
+
+        let forwardNonce = UUID.clientNonceV4()
+        let forwarded = try await api.forwardMessage(
+            messageID: sent.id,
+            to: savedChat.id,
+            clientNonce: forwardNonce,
+            token: authentication.tokens.accessToken
+        )
+        let duplicateForward = try await api.forwardMessage(
+            messageID: sent.id,
+            to: savedChat.id,
+            clientNonce: forwardNonce,
+            token: authentication.tokens.accessToken
+        )
+        XCTAssertEqual(duplicateForward.id, forwarded.id)
+        XCTAssertEqual(forwarded.forwardedFrom?.senderDisplayName, authentication.user.displayName)
+
+        let deletedReply = try await api.deleteMessage(
+            messageID: editedReply.id,
+            token: authentication.tokens.accessToken
+        )
+        XCTAssertNotNil(deletedReply.deletedAt)
+        XCTAssertNil(deletedReply.body)
+
+        let mutationPage = try await api.messages(
+            chatID: savedChat.id,
+            token: authentication.tokens.accessToken
+        )
+        XCTAssertEqual(mutationPage.first(where: { $0.id == forwarded.id })?.clientNonce, forwardNonce)
+        XCTAssertNotNil(mutationPage.first(where: { $0.id == editedReply.id })?.deletedAt)
+
         try await api.markRead(
             chatID: savedChat.id,
             messageID: sent.id,
@@ -82,5 +268,169 @@ final class LiveBackendIntegrationTests: XCTestCase {
         await fulfillment(of: [ready], timeout: 5)
         task.cancel()
         try await api.revokeCurrentSession(token: authentication.tokens.accessToken)
+    }
+
+    func testMessageRequestsPrivacyDismissAndAcceptanceAgainstLiveDocker() async throws {
+        guard ProcessInfo.processInfo.environment["LUXORA_LIVE_TEST"] == "1" else {
+            throw XCTSkip("Set LUXORA_LIVE_TEST=1 while the local API is running")
+        }
+
+        let api = LuxoraAPIClient(configuration: .development)
+        let suffix = UUID().uuidString
+            .replacingOccurrences(of: "-", with: "")
+            .prefix(10)
+            .lowercased()
+        let password = "LuxoraRequests!2026"
+        let sender = try await api.register(
+            username: "mr_sender_\(suffix)",
+            displayName: "Отправитель Swift",
+            password: password,
+            deviceName: "Swift request sender"
+        )
+        let quietSender = try await api.register(
+            username: "mr_quiet_\(suffix)",
+            displayName: "Тихий отправитель Swift",
+            password: password,
+            deviceName: "Swift quiet sender"
+        )
+        let recipient = try await api.register(
+            username: "mr_recipient_\(suffix)",
+            displayName: "Получатель Swift",
+            password: password,
+            deviceName: "Swift request recipient"
+        )
+
+        let hidden = try await api.updatePrivacySettings(
+            usernameDiscoverable: false,
+            messageRequests: .nobody,
+            token: recipient.tokens.accessToken
+        )
+        XCTAssertFalse(hidden.usernameDiscoverable)
+        XCTAssertEqual(hidden.messageRequests, .nobody)
+        let hiddenLookup = try await api.lookupUser(
+            username: recipient.user.username,
+            token: sender.tokens.accessToken
+        )
+        XCTAssertNil(hiddenLookup)
+        do {
+            _ = try await api.createMessageRequest(
+                recipientUserID: recipient.user.id,
+                body: "Этот запрос должен быть закрыт политикой",
+                clientNonce: .clientNonceV4(),
+                token: sender.tokens.accessToken
+            )
+            XCTFail("The live server accepted a request while recipient policy was nobody")
+        } catch {
+            XCTAssertFalse(error is CancellationError)
+        }
+
+        let visible = try await api.updatePrivacySettings(
+            usernameDiscoverable: true,
+            messageRequests: .everyone,
+            token: recipient.tokens.accessToken
+        )
+        XCTAssertTrue(visible.usernameDiscoverable)
+        XCTAssertEqual(visible.messageRequests, .everyone)
+        let confirmedSettings = try await api.privacySettings(token: recipient.tokens.accessToken)
+        XCTAssertEqual(confirmedSettings.snapshot, visible.snapshot)
+        let visibleLookup = try await api.lookupUser(
+            username: recipient.user.username.uppercased(),
+            token: sender.tokens.accessToken
+        )
+        XCTAssertEqual(visibleLookup?.id, recipient.user.id)
+
+        let acceptanceNonce = UUID.clientNonceV4()
+        let acceptanceCandidate = try await api.createMessageRequest(
+            recipientUserID: recipient.user.id,
+            body: "Первое сообщение войдёт в подтверждённый чат",
+            clientNonce: acceptanceNonce,
+            token: sender.tokens.accessToken
+        )
+        let acceptanceReplay = try await api.createMessageRequest(
+            recipientUserID: recipient.user.id,
+            body: "Первое сообщение войдёт в подтверждённый чат",
+            clientNonce: acceptanceNonce,
+            token: sender.tokens.accessToken
+        )
+        XCTAssertEqual(acceptanceReplay.id, acceptanceCandidate.id)
+        XCTAssertEqual(acceptanceCandidate.direction, .outgoing)
+
+        let quietCandidate = try await api.createMessageRequest(
+            recipientUserID: recipient.user.id,
+            body: "Этот запрос будет удалён приватно",
+            clientNonce: .clientNonceV4(),
+            token: quietSender.tokens.accessToken
+        )
+        let recipientInbox = try await api.allMessageRequests(
+            direction: .incoming,
+            token: recipient.tokens.accessToken
+        )
+        XCTAssertEqual(
+            Set(recipientInbox.map(\.id)),
+            Set([acceptanceCandidate.id, quietCandidate.id])
+        )
+        XCTAssertTrue(recipientInbox.allSatisfy { $0.sender != nil && $0.recipient == nil })
+
+        try await api.dismissMessageRequest(
+            id: quietCandidate.id,
+            token: recipient.tokens.accessToken
+        )
+        let inboxAfterDismiss = try await api.allMessageRequests(
+            direction: .incoming,
+            token: recipient.tokens.accessToken
+        )
+        XCTAssertFalse(inboxAfterDismiss.contains(where: { $0.id == quietCandidate.id }))
+        let quietOutbox = try await api.allMessageRequests(
+            direction: .outgoing,
+            token: quietSender.tokens.accessToken
+        )
+        let privateProjection = try XCTUnwrap(
+            quietOutbox.first(where: { $0.id == quietCandidate.id })
+        )
+        XCTAssertEqual(privateProjection.state, .pending)
+        XCTAssertNotNil(privateProjection.recipient)
+        XCTAssertNil(privateProjection.sender)
+
+        let accepted = try await api.acceptMessageRequest(
+            id: acceptanceCandidate.id,
+            token: recipient.tokens.accessToken
+        )
+        XCTAssertEqual(accepted.request.id, acceptanceCandidate.id)
+        XCTAssertEqual(accepted.request.state, .accepted)
+        let acceptedMessages = try await api.messages(
+            chatID: accepted.chat.id,
+            token: recipient.tokens.accessToken
+        )
+        XCTAssertEqual(acceptedMessages.map(\.body), ["Первое сообщение войдёт в подтверждённый чат"])
+        let senderChats = try await api.chats(token: sender.tokens.accessToken)
+        let recipientChats = try await api.chats(token: recipient.tokens.accessToken)
+        XCTAssertTrue(senderChats.contains(where: { $0.id == accepted.chat.id }))
+        XCTAssertTrue(recipientChats.contains(where: { $0.id == accepted.chat.id }))
+
+        try? await api.revokeCurrentSession(token: sender.tokens.accessToken)
+        try? await api.revokeCurrentSession(token: quietSender.tokens.accessToken)
+        try? await api.revokeCurrentSession(token: recipient.tokens.accessToken)
+    }
+}
+
+private actor LiveScopedRealtimeProbe {
+    private(set) var checkpointSequence: Int?
+    private(set) var checkpointCursor: String?
+    private(set) var preference: ChatPreferencesRealtimeDispatch?
+    private(set) var syncReason: RealtimeV2SyncRequiredReason?
+    private(set) var recoveryPath: String?
+
+    func recordCheckpoint(sequence: Int, cursor: String) {
+        checkpointSequence = sequence
+        checkpointCursor = cursor
+    }
+
+    func recordPreference(_ dispatch: ChatPreferencesRealtimeDispatch) {
+        preference = dispatch
+    }
+
+    func recordSyncRequired(reason: RealtimeV2SyncRequiredReason, path: String) {
+        syncReason = reason
+        recoveryPath = path
     }
 }

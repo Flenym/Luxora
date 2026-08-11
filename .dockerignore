@@ -28,4 +28,9 @@
 !packages/passkey-domain/src/**
 
 !services/api/Dockerfile
+
+!tools/
+!tools/otp-console/
+!tools/otp-console/Dockerfile
+!tools/otp-console/server.mjs
 !.dockerignore

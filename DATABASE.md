@@ -57,6 +57,11 @@ Current migrations:
 | `016_passkey_authenticator_revoke_intent_delete_guard` | blocks direct deletion of a live revoke intent while its ceremony remains durable |
 | `017_chat_membership_lifecycle` | membership revision/time CAS, owner/direct/size guards and immutable actor-scoped mutation receipts |
 | `018_phone_authentication` | encrypted/digested phone challenge and identity lifecycle, immutable command receipts/audit and atomic phone registration/session commit |
+| `019_phone_password_challenge` | separate phone-password verifier/enable state, bounded post-OTP continuation receipts and append-only audit without enabling legacy password login |
+| `020_processed_profile_avatar` | owned server-verified avatar attachment binding, trust metadata and database triggers that reject foreign/raw/deleting avatar rows |
+| `021_push_registration_preferences` | session-bound encrypted APNs token registrations plus account-scoped notification preferences with hidden previews by default |
+| `022_chat_folders` | account folder-state revision, synchronized rule folders/overrides, hard limits, monotonic revision guards and encrypted immutable command receipts |
+| `023_chat_folder_receipt_retention` | adds the advertised 24-hour expiry boundary and global expiry index to folder-command receipts while preserving databases that already applied `022` |
 
 Never edit an applied migration. New changes append a new ID. Before production rolling deploys, adopt expand/backfill/contract compatibility and prove old/new server coexistence.
 
@@ -68,7 +73,8 @@ Never edit an applied migration. New changes append a new ID. Before production 
 | --- | --- |
 | `id` | immutable internal UUID |
 | `username`, `username_normalized` | public/lookup identity; normalized value unique |
-| `display_name`, `bio`, `avatar_url` | profile data; visibility policy incomplete |
+| `display_name`, `bio`, legacy `avatar_url` | profile data; arbitrary URL mutation is rejected |
+| `avatar_attachment_id` | nullable FK to an owned `image` attachment whose trust columns prove server re-encoding; binding is guarded by insert/update triggers |
 | `password_hash` | secret-equivalent verifier; Argon2id, never returned/logged |
 | `password_auth_enabled` | explicit boolean authorization state; passkey-only signup stores `0` plus a per-account discarded-secret Argon2id placeholder |
 | `created_at`, `updated_at`, `last_seen_at` | account/presence metadata; sensitive |
@@ -106,13 +112,48 @@ Never edit an applied migration. New changes append a new ID. Before production 
 These rows currently have no production retention worker, change-number or
 account-deletion ceremony; those remain release gates.
 
+### Phone password continuation (`019`)
+
+`users.phone_password_hash` and `users.phone_password_enabled` are separate
+from the legacy password verifier/enable flag. Database triggers reject an
+enabled phone password without its Argon2id hash. Short-lived continuation
+receipts contain encrypted exact success responses; failure rows contain no
+password or bearer response. `phone_auth_password_events` is append-only and
+records only challenge/revision/command-scope lifecycle metadata.
+
+### Processed profile avatars (`020`)
+
+`attachments.safety_status` and `metadata_trust` default existing and ordinary
+uploads to `unscanned`/`client_declared`. Only a server-created derivative may
+use `reencoded`/`server_verified`. `users.avatar_attachment_id` references that
+derivative, and ownership/kind/trust/deletion triggers reject foreign or raw
+bindings. Bound rows are excluded from orphan claims; replace/clear releases a
+previous derivative only when neither a message nor another current profile
+references it.
+
+### Push registration and notification preferences (`021`)
+
+`push_registrations` stores only a SHA-256 equality index and an authenticated,
+context-bound encryption envelope for the opaque APNs token. The public
+projection never contains the token. Every active row is bound to one owned,
+unexpired device session; database triggers reject cross-account or revoked
+session bindings, token rotation leaves at most one active row per session, and
+session revocation invalidates its push row in the same SQLite transaction.
+`notification_settings` is account-scoped and defaults lock-screen previews to
+`hidden`; message/request/mention, sound and badge choices are synchronized.
+Partial changes use one column-selective SQLite update with a monotonic
+`updated_at`, so a device changing one preference cannot overwrite unrelated
+fields from an earlier read/merge/write snapshot.
+Actual APNs provider credentials, delivery jobs, 410-token feedback handling and
+real-device delivery evidence remain separate release gates.
+
 ### `chats`
 
 `id`, checked `kind` (`direct`, `group`, `channel`), title/avatar, nullable unique `direct_key`, creator, timestamps and nullable `last_message_id`. A direct key is deterministic for the unordered pair, including `self:<user>`.
 
 ### `chat_members`
 
-Composite PK `(chat_id,user_id)`, checked role (`owner`, `admin`, `member`), positive `membership_revision`, immutable join time, monotonic membership update time plus archive/mute placeholders. Membership is the current authorization source. Migration `017` enforces member limit 200, direct-role/delete immutability, a single immutable owner and exact revision increments for role changes. Legacy rows project join time as their initial update time without rewriting old domain data.
+Composite PK `(chat_id,user_id)`, checked role (`owner`, `admin`, `member`), positive `membership_revision`, immutable join time, monotonic membership update time plus account-scoped `archived_at` and `muted_until`. Membership is the current authorization source. Migration `017` enforces member limit 200, direct-role/delete immutability, a single immutable owner and exact revision increments for role changes. Legacy rows project join time as their initial update time without rewriting old domain data. Archive/mute desired-state writes are column-selective, so concurrent changes to different preference fields cannot overwrite one another; repeated archive preserves the first server timestamp. These fields are now exposed only to the owning membership through strict chat-preference GET/PATCH routes. Realtime preference events and synchronized custom folders are separate account-scoped projections over this membership source.
 
 ### `chat_membership_command_receipts`
 
@@ -122,6 +163,49 @@ written in the same immediate transaction as membership CAS and per-account
 realtime outbox rows. A removal snapshot uses the terminal revision and removal
 time even though the current authorization row is already gone. Ownership
 transfer is deliberately not represented by this table yet.
+
+### Chat folders (`022`–`023`)
+
+- `chat_folder_states` has one optional row per `user_id`, a nonnegative
+  account-wide revision and monotonic update time. Absence projects revision
+  `0`; every real folder-state command increments exactly once. Its trigger
+  rejects account changes, skipped/repeated revisions and backwards time.
+- `chat_folders` stores account FK, a 1–48-Unicode-code-point title, server position
+  `0...9999`, positive per-folder revision, three checked include-kind booleans,
+  `unread_only`, `exclude_muted`, `include_archived` and ordered timestamps.
+  `(id,user_id)` is unique for the composite override FK. A trigger caps each
+  account at 10 folders; another trigger permits only immutable identity/create
+  time plus an exact `revision + 1` and nondecreasing update time.
+- `chat_folder_overrides` is keyed by `(folder_id,chat_id)` and also carries the
+  same `user_id`. Composite FKs require both an account-owned folder and a
+  current `(chat_id,user_id)` membership. `mode` is `include|exclude`; nullable
+  pin position is `0...99`, unique within the folder, and only `include` rows
+  may be pinned. The insert trigger caps a folder at 100 overrides. Folder
+  deletion and membership removal cascade the corresponding rows.
+- `chat_folder_command_receipts` is keyed by `(user_id,client_nonce)` across
+  `create|update|delete|reorder`. The canonical operation fingerprint is a
+  plaintext SHA-256 digest; the exact response is stored only as a `luxora:v1.*`
+  authenticated-encryption envelope bound to AAD
+  `chat-folder-receipt:<user-id>:<client-nonce>`. Migration `022`
+  made rows immutable; forward migration `023` preserves already-written rows,
+  removes only the delete guard, adds the indexed expiry column and requires it
+  on every new row. Updates remain forbidden. Exact active retries decrypt the
+  original response; a changed operation or fingerprint conflicts. The public
+  window is 24 hours with at most 64 active rows per account. Logical reads and
+  quota counts ignore expiry immediately; targeted nonce cleanup prevents a
+  stale primary-key collision, while global bounded startup/periodic/command
+  sweeps provide physical retention cleanup.
+
+Folder service commands use one immediate transaction for folder/override
+changes, account state revision, encrypted receipt and the account-audience
+event/outbox row. Semantic PATCH/reorder no-ops persist only their replay
+receipt: neither folder revision nor state revision advances and no event is
+written. Reorder also performs account-state CAS, and GET projects folders,
+overrides and state revision under one deferred SQLite read transaction. A
+membership removal finds every affected folder before deleting the
+membership, then removes the departed chat override, advances each affected
+folder once, advances the removed account's state once and appends its exact
+account event in the same membership transaction.
 
 ### `messages`
 
@@ -310,6 +394,9 @@ security notification/recovery delivery remains absent.
 ```text
 users ──< device_sessions ──< refresh_tokens
 users ──< chat_members >── chats ──< messages
+users ── chat_folder_states
+users ──< chat_folders ──< chat_folder_overrides >── chat_members
+users ──< chat_folder_command_receipts
 messages ──< message_reactions
 messages ──< message_receipts
 chat_members/users ──< chat_reads >── messages
@@ -345,6 +432,9 @@ Operations that mutate domain state and create durable events run in one SQLite 
   by revoking the session;
 - request creation/acceptance, relationship state, first Direct message and audience-specific events;
 - block/report mutations and actor-account audit/realtime rows.
+- chat-folder create/update/delete/reorder, account state revision, encrypted
+  exact receipt and `actor_account` event; membership removal also reconciles
+  the removed account's affected folder overrides in its membership transaction.
 
 Message-request and safety-report creation use an immediate writer transaction and recheck the actor-scoped nonce plus operation fingerprint after the reservation, before events/audit/block effects. Tests exercise two independent connections contending on an uncommitted writer: identical retries return the first row and changed nonce reuse returns `CONFLICT`. This is SQLite checkpoint evidence, not a production multi-process/database guarantee.
 
@@ -401,7 +491,9 @@ When a valid keyring and active key ID are configured, AES-256-GCM envelopes pro
 
 - `messages.body`, bound with AAD context `message:<message-id>`;
 - `messages.request_fingerprint_ciphertext`, bound with AAD context `message:<message-id>:request-fingerprint`;
-- `realtime_events.event_json`, bound with AAD context `event:<audience-user-id>`.
+- `realtime_events.event_json`, bound with AAD context `event:<audience-user-id>`;
+- `chat_folder_command_receipts.response_ciphertext`, bound with AAD context
+  `chat-folder-receipt:<user-id>:<client-nonce>`;
 - message-request body/link/profile snapshots, block profile snapshots and safety-report evidence/comment, each bound to resource-specific AAD.
 - passkey challenge, user handle, credential ID and credential material, each
   with a distinct reference/record-bound AAD context.
@@ -418,6 +510,14 @@ membership, chat title, timestamps, IDs, receipt/reaction metadata, sequence and
 indexes. The app possesses keys and returns plaintext; this is storage defense,
 **not E2EE**. Other dev/test content may use the plaintext cipher unless
 configured; production config requires a keyring.
+
+Migration/storage checkpoint evidence is scoped, not a full merged API claim:
+the shared protocol suite passed 10 files / 83 tests; the chat-folder HTTP plus
+direct SQLite storage suites passed 2 files / 11 tests; and the complete
+HTTP/realtime authorization matrices passed 2 files / 14 tests in Docker Node
+22. The storage suite also scans the database and WAL for plaintext receipt
+canaries. The current full API suite still requires its separate
+post-merge run.
 
 ## 7. Pagination and search
 

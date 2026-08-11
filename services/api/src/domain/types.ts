@@ -7,6 +7,10 @@ import type {
   Message,
   MessagePin,
   MessageVersion,
+  NotificationPreviewMode,
+  PushEnvironment,
+  PushPlatform,
+  PushRegistration,
   PublicProfile,
   Session,
   Topic,
@@ -17,8 +21,11 @@ import type { CredentialDiscoveryMode } from "@luxora/passkey-domain";
 
 export interface UserRecord extends User {
   usernameNormalized: string;
+  avatarAttachmentId?: string | null;
   passwordHash: string;
   passwordAuthEnabled: boolean;
+  phonePasswordHash: string | null;
+  phonePasswordEnabled: boolean;
   lastSeenAt: string | null;
 }
 
@@ -92,11 +99,54 @@ export interface PhoneAuthCommandReceiptRecord {
   expiresAt: string;
 }
 
+export interface PhoneAuthPasswordReceiptRecord {
+  scope: string;
+  fingerprint: string;
+  challengeId: string;
+  resultKind:
+    | "password_required"
+    | "password_invalid"
+    | "attempts_exhausted"
+    | "authenticated";
+  responseJson: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface PrivacySettingsRecord {
   userId: string;
   usernameDiscoverable: boolean;
   messageRequests: "everyone" | "nobody";
   updatedAt: string;
+}
+
+export interface PushRegistrationRecord extends PushRegistration {
+  userId: string;
+  sessionId: string;
+  tokenDigest: string;
+}
+
+export interface NotificationSettingsRecord {
+  userId: string;
+  messageAlerts: boolean;
+  messageRequestAlerts: boolean;
+  mentionAlerts: boolean;
+  sound: boolean;
+  badge: boolean;
+  previewMode: NotificationPreviewMode;
+  updatedAt: string;
+}
+
+export interface NewPushRegistration {
+  id: string;
+  userId: string;
+  sessionId: string;
+  platform: PushPlatform;
+  environment: PushEnvironment;
+  topic: "app.luxora.mobile";
+  token: string;
+  tokenDigest: string;
+  at: string;
 }
 
 export type MessageRequestState = "pending" | "accepted" | "recipient_dismissed" | "expired";
@@ -192,6 +242,41 @@ export interface ChatMembershipCommandReceiptRecord {
   createdAt: string;
 }
 
+export interface ChatFolderRulesRecord {
+  includeKinds: ChatKind[];
+  unreadOnly: boolean;
+  excludeMuted: boolean;
+  includeArchived: boolean;
+}
+
+export interface ChatFolderOverrideRecord {
+  chatId: string;
+  mode: "include" | "exclude";
+  pinnedPosition: number | null;
+}
+
+export interface ChatFolderRecord {
+  id: string;
+  userId: string;
+  title: string;
+  position: number;
+  revision: number;
+  rules: ChatFolderRulesRecord;
+  overrides: ChatFolderOverrideRecord[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatFolderCommandReceiptRecord {
+  userId: string;
+  clientNonce: string;
+  operation: "create" | "update" | "delete" | "reorder";
+  fingerprint: string;
+  responseJson: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface MessageRecord {
   id: string;
   chatId: string;
@@ -227,6 +312,8 @@ export interface AttachmentRecord {
   metadata: Record<string, unknown>;
   storageProvider: "local" | "s3";
   storageKey: string;
+  safetyStatus: "unscanned" | "reencoded";
+  metadataTrust: "client_declared" | "server_verified";
   createdAt: string;
   linkedAt: string | null;
   deletingAt: string | null;

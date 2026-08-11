@@ -79,9 +79,21 @@ The backend implements a testable account/messaging/media/realtime contract, the
 | `PHONE_AUTH_REGISTRATION_TTL_SECONDS` | `600` | New-profile completion/replay window, 300–1,800 seconds |
 | `PHONE_AUTH_RETRY_AFTER_SECONDS` | `60` | Durable same-phone resend cooldown, 30–300 seconds |
 | `PHONE_AUTH_MAX_ATTEMPTS` | `5` | Failed-code attempt bound, 3–10 attempts |
+| `SYNC_INVALIDATION_ENABLED` | `true` | Emergency-only rollback seam. `false` suppresses only `sync.invalidated` creation, replay and live/outbox delivery; ordinary domain events and schema migrations remain active, and capabilities advertise the degradation |
 | `METRICS_TOKEN` | optional | Bearer protection for `/metrics`; otherwise isolate at network layer |
 
 Production startup fails if the encryption keyring/active ID is absent or invalid. That check proves configuration intent only; deployment evidence must still verify storage, backups and key access.
+
+`SYNC_INVALIDATION_ENABLED` is deliberately default-on and strict: only
+`true`, `false`, `1` and `0` are accepted. Set it to `false` only as a bounded
+incident fallback when `sync.invalidated` itself is the suspected fault. The
+fallback keeps the migration chain and membership-revision ledger intact,
+acknowledges suppressed historical invalidation outbox rows without delivering
+them, filters invalidations before applying replay limits, and continues all
+ordinary domain events. Operators must verify
+`features.syncInvalidation:false` from `/v1/capabilities`; restoring the primary
+mode requires a fresh reconciliation/snapshot check before returning the flag
+to `true`.
 
 Phone authentication is disabled by default. Enabling it without an active
 data-encryption key, independent HMAC material or a usable delivery provider

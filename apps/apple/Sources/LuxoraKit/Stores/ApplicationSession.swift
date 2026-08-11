@@ -1,6 +1,44 @@
 import Foundation
 import Observation
 
+#if DEBUG
+private actor DebugChatPreferencesBackend {
+    private var confirmed: [UUID: ChatPreferences]
+
+    init(confirmed: [UUID: ChatPreferences]) {
+        self.confirmed = confirmed
+    }
+
+    func load(chatID: UUID) -> ChatPreferences {
+        confirmed[chatID] ?? ChatPreferences(archivedAt: nil, mutedUntil: nil)
+    }
+
+    func update(chatID: UUID, patch: ChatPreferencesPatch) -> ChatPreferences {
+        let current = load(chatID: chatID)
+        let archivedAt: Date?
+        if let archived = patch.archived {
+            archivedAt = archived ? Date() : nil
+        } else {
+            archivedAt = current.archivedAt
+        }
+
+        let mutedUntil: Date?
+        switch patch.mutedUntil {
+        case .unchanged:
+            mutedUntil = current.mutedUntil
+        case let .until(date):
+            mutedUntil = date
+        case .unmuted:
+            mutedUntil = nil
+        }
+
+        let updated = ChatPreferences(archivedAt: archivedAt, mutedUntil: mutedUntil)
+        confirmed[chatID] = updated
+        return updated
+    }
+}
+#endif
+
 public enum ApplicationPhase: Equatable, Sendable {
     case restoring
     case restorationFailed
@@ -45,14 +83,203 @@ public enum ApplicationPresentationState: Equatable, Sendable {
     }
 }
 
+public enum PhoneAuthenticationFailure: Equatable, Sendable {
+    case invalidCode
+    case attemptsExhausted
+    case invalidPassword
+    case passwordAttemptsExhausted
+    case passwordTokenExpired
+    case challengeExpired
+    case challengeInvalid
+    case resendCooldown(seconds: Int)
+    case networkUnavailable
+    case deliveryUnavailable
+    case credentialPersistenceFailed
+    case registrationExpired
+    case temporarilyUnavailable
+    case unexpected(String)
+
+    public var message: String {
+        switch self {
+        case .invalidCode:
+            "Неверный код. Проверьте шесть цифр и попробуйте ещё раз."
+        case .attemptsExhausted:
+            "Попытки закончились. Дождитесь повторной отправки и получите новый код."
+        case .invalidPassword:
+            "Неверный пароль. Проверьте ввод и попробуйте ещё раз."
+        case .passwordAttemptsExhausted:
+            "Попытки ввода пароля закончились. Подтвердите номер новым кодом."
+        case .passwordTokenExpired:
+            "Срок проверки пароля истёк. Подтвердите номер новым кодом."
+        case .challengeExpired:
+            "Срок действия кода истёк. Получите новый код."
+        case .challengeInvalid:
+            "Этот код уже недействителен. Получите новый код."
+        case let .resendCooldown(seconds):
+            "Новый код можно запросить через \(seconds) с."
+        case .networkUnavailable:
+            "Нет связи с сервером. Проверьте сеть и нажмите «Повторить»."
+        case .deliveryUnavailable:
+            "Не удалось доставить код. Повторите запрос: Luxora безопасно повторит ту же команду."
+        case .credentialPersistenceFailed:
+            "Не удалось безопасно сохранить сеанс на iPhone. Нажмите «Повторить»."
+        case .registrationExpired:
+            "Время регистрации истекло. Подтвердите номер заново."
+        case .temporarilyUnavailable:
+            "Сервис входа временно недоступен. Нажмите «Повторить»."
+        case let .unexpected(message):
+            message
+        }
+    }
+
+    var retainsIdempotencyCommand: Bool {
+        switch self {
+        case .resendCooldown, .networkUnavailable, .deliveryUnavailable,
+             .credentialPersistenceFailed, .temporarilyUnavailable:
+            true
+        case .invalidPassword:
+            // The server durably records this exact password attempt by nonce.
+            // Retain it until the user changes the password, so a response-loss
+            // retry replays rather than consuming another bounded attempt.
+            true
+        case .invalidCode, .attemptsExhausted, .passwordAttemptsExhausted,
+             .passwordTokenExpired, .challengeExpired, .challengeInvalid,
+             .registrationExpired, .unexpected:
+            false
+        }
+    }
+
+    var blocksCodeVerification: Bool {
+        switch self {
+        case .attemptsExhausted, .passwordAttemptsExhausted, .passwordTokenExpired,
+             .challengeExpired, .challengeInvalid, .registrationExpired:
+            true
+        case .invalidCode, .invalidPassword, .resendCooldown, .networkUnavailable, .deliveryUnavailable,
+             .credentialPersistenceFailed, .temporarilyUnavailable, .unexpected:
+            false
+        }
+    }
+
+    var blocksPasswordVerification: Bool {
+        switch self {
+        case .passwordAttemptsExhausted, .passwordTokenExpired:
+            true
+        case .invalidCode, .attemptsExhausted, .invalidPassword, .challengeExpired,
+             .challengeInvalid, .resendCooldown, .networkUnavailable, .deliveryUnavailable,
+             .credentialPersistenceFailed, .registrationExpired, .temporarilyUnavailable,
+             .unexpected:
+            false
+        }
+    }
+
+    var isRetryable: Bool {
+        switch self {
+        case .networkUnavailable, .deliveryUnavailable, .credentialPersistenceFailed,
+             .temporarilyUnavailable:
+            true
+        case .invalidCode, .attemptsExhausted, .invalidPassword, .passwordAttemptsExhausted,
+             .passwordTokenExpired, .challengeExpired, .challengeInvalid,
+             .resendCooldown, .registrationExpired, .unexpected:
+            false
+        }
+    }
+
+    static func classify(_ error: Error) -> PhoneAuthenticationFailure {
+        guard let apiError = error as? LuxoraAPIError else {
+            return .unexpected(error.localizedDescription)
+        }
+        switch apiError {
+        case .transport:
+            return .networkUnavailable
+        case .invalidResponse, .syncUnstable:
+            return .temporarilyUnavailable
+        case let .server(status, code, message):
+            switch code {
+            case "PHONE_AUTH_CODE_INVALID":
+                return .invalidCode
+            case "PHONE_AUTH_ATTEMPTS_EXHAUSTED":
+                return .attemptsExhausted
+            case "PHONE_AUTH_PASSWORD_INVALID":
+                return .invalidPassword
+            case "PHONE_AUTH_PASSWORD_ATTEMPTS_EXHAUSTED":
+                return .passwordAttemptsExhausted
+            case "PHONE_AUTH_PASSWORD_TOKEN_INVALID", "PHONE_AUTH_PASSWORD_TOKEN_EXPIRED":
+                return .passwordTokenExpired
+            case "PHONE_AUTH_CHALLENGE_EXPIRED":
+                return .challengeExpired
+            case "PHONE_AUTH_CHALLENGE_INVALID":
+                return .challengeInvalid
+            case "PHONE_AUTH_RESEND_COOLDOWN", "RATE_LIMITED":
+                return .resendCooldown(seconds: Self.retrySeconds(from: message) ?? 60)
+            case "PHONE_AUTH_DELIVERY_UNAVAILABLE":
+                return .deliveryUnavailable
+            case "PHONE_AUTH_TEMPORARILY_UNAVAILABLE", "SERVICE_UNAVAILABLE":
+                return .temporarilyUnavailable
+            case "PHONE_AUTH_REGISTRATION_EXPIRED":
+                return .registrationExpired
+            default:
+                return .unexpected("\(LuxoraL10n.text("error.server_rejected")) \(code) (\(status)).")
+            }
+        case .incompatibleServer, .missingSession:
+            return .unexpected(apiError.localizedDescription)
+        }
+    }
+
+    private static func retrySeconds(from message: String) -> Int? {
+        let digits = message.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        return digits.first(where: { (1...3_600).contains($0) })
+    }
+}
+
+struct PhoneAuthenticationCommandNonce<Key: Equatable> {
+    private(set) var key: Key?
+    private(set) var nonce: UUID?
+
+    mutating func acquire(for key: Key) -> UUID {
+        if self.key == key, let nonce {
+            return nonce
+        }
+        let nonce = UUID.clientNonceV4()
+        self.key = key
+        self.nonce = nonce
+        return nonce
+    }
+
+    mutating func finish() {
+        key = nil
+        nonce = nil
+    }
+
+    mutating func fail(retainingCommand: Bool) {
+        if !retainingCommand {
+            finish()
+        }
+    }
+
+    mutating func settleAfterClientAcceptance(_ accepted: Bool) {
+        if accepted {
+            finish()
+        }
+    }
+}
+
 @MainActor
 @Observable
 public final class ApplicationSession {
     public private(set) var phase: ApplicationPhase = .restoring
     public private(set) var messengerStore: MessengerStore?
+    public private(set) var deviceSessionsStore: DeviceSessionsStore?
+    public private(set) var phonePasswordSettingsStore: PhonePasswordSettingsStore?
+    public private(set) var notificationSettingsStore: NotificationSettingsStore?
+    public private(set) var pushRegistrationStore: PushRegistrationStore?
+    public private(set) var chatPreferencesStore: ChatPreferencesStore?
+    public private(set) var chatFoldersStore: ChatFoldersStore?
+    public private(set) var communityStore: CommunityStore?
+    public let avatarImageCache = AuthenticatedAvatarImageCache()
     public private(set) var capabilityState: CapabilityLoadState = .loading
     public private(set) var isWorking = false
     public private(set) var isAuthenticationSyncing = false
+    public private(set) var phoneAuthenticationFailure: PhoneAuthenticationFailure?
     public var errorMessage: String?
 
     public let configuration: LuxoraClientConfiguration
@@ -70,16 +297,46 @@ public final class ApplicationSession {
     }
 
     private let api: LuxoraAPIClient
+    private let communityAPI: LuxoraCommunityAPIClient
+    private let chatFoldersAPI: LuxoraChatFoldersAPIClient
     private let realtime: LuxoraRealtimeClient
     private let keychain: KeychainSessionStore
     private var credentialCoordinator: SessionCredentialCoordinator?
     private var currentUserID: UUID?
+    private let pushNotificationLifecycle = PushNotificationSessionLifecycle()
+    private var chatPreferencesBinding: ChatPreferencesSessionBinding?
+    private var chatFoldersBinding: ChatFoldersSessionBinding?
     private var realtimeSequence: Int?
+    private var realtimeV2Sequence: Int?
     private var realtimeTask: Task<Void, Never>?
+    private struct PhoneBeginKey: Equatable {
+        let countryCode: String
+        let nationalNumber: String
+    }
+    private struct PhoneVerificationKey: Equatable {
+        let challengeID: String
+        let code: String
+    }
+    private struct PhoneRegistrationKey: Equatable {
+        let registrationToken: String
+        let displayName: String
+        let username: String
+        let bio: String
+    }
+    private struct PhonePasswordKey: Equatable {
+        let passwordToken: String
+        let password: String
+    }
+    private var phoneBeginCommand = PhoneAuthenticationCommandNonce<PhoneBeginKey>()
+    private var phoneVerificationCommand = PhoneAuthenticationCommandNonce<PhoneVerificationKey>()
+    private var phoneRegistrationCommand = PhoneAuthenticationCommandNonce<PhoneRegistrationKey>()
+    private var phonePasswordCommand = PhoneAuthenticationCommandNonce<PhonePasswordKey>()
 
     public init(configuration: LuxoraClientConfiguration = .development) {
         self.configuration = configuration
         api = LuxoraAPIClient(configuration: configuration)
+        communityAPI = LuxoraCommunityAPIClient(configuration: configuration)
+        chatFoldersAPI = LuxoraChatFoldersAPIClient(configuration: configuration)
         realtime = LuxoraRealtimeClient(configuration: configuration)
         keychain = KeychainSessionStore()
     }
@@ -101,6 +358,7 @@ public final class ApplicationSession {
                 return
             }
             try await bootstrap(credentials: stored)
+            resetPhoneAuthenticationCommands()
         } catch is CancellationError {
             // SwiftUI owns the restoration task. If its view disappears, leave
             // the phase restartable and never discard a valid saved session.
@@ -137,13 +395,34 @@ public final class ApplicationSession {
         await restore()
     }
 
-    public func discardRestoredSession() {
+    public func discardRestoredSession() async {
         messengerStore?.cancelRemoteOperations()
+        deviceSessionsStore?.cancelRemoteOperations()
+        phonePasswordSettingsStore?.cancelRemoteOperations()
+        notificationSettingsStore?.cancelRemoteOperations()
+        chatPreferencesStore?.resetForSessionReplacement()
+        chatFoldersStore?.resetForSessionReplacement()
+        communityStore?.cancelRemoteOperations()
+        pushNotificationLifecycle.detach()
         cancelRealtime(resetSequence: true)
+        await avatarImageCache.clear()
+        if let credentialCoordinator {
+            await credentialCoordinator.invalidate()
+        }
         try? keychain.clear()
         credentialCoordinator = nil
         currentUserID = nil
         messengerStore = nil
+        deviceSessionsStore = nil
+        phonePasswordSettingsStore = nil
+        notificationSettingsStore = nil
+        pushRegistrationStore = nil
+        chatPreferencesStore = nil
+        chatPreferencesBinding = nil
+        chatFoldersStore = nil
+        chatFoldersBinding = nil
+        communityStore = nil
+        resetPhoneAuthenticationCommands()
         errorMessage = nil
         phase = .unauthenticated
     }
@@ -183,7 +462,13 @@ public final class ApplicationSession {
             return nil
         }
 
+        let commandKey = PhoneBeginKey(
+            countryCode: normalizedCountryCode,
+            nationalNumber: normalizedNationalNumber
+        )
+        let clientNonce = phoneBeginCommand.acquire(for: commandKey)
         isWorking = true
+        phoneAuthenticationFailure = nil
         errorMessage = nil
         defer { isWorking = false }
         do {
@@ -191,13 +476,18 @@ public final class ApplicationSession {
                 countryCode: normalizedCountryCode,
                 nationalNumber: normalizedNationalNumber,
                 deviceName: ProcessInfo.processInfo.hostName,
-                clientNonce: .clientNonceV4()
+                clientNonce: clientNonce
             )
+            phoneBeginCommand.finish()
+            phonePasswordCommand.finish()
             return PhoneCodeChallenge(response: response)
         } catch is CancellationError {
             return nil
         } catch {
-            errorMessage = error.localizedDescription
+            let failure = PhoneAuthenticationFailure.classify(error)
+            phoneBeginCommand.fail(retainingCommand: failure.retainsIdempotencyCommand)
+            phoneAuthenticationFailure = failure
+            errorMessage = failure.message
             phase = .unauthenticated
             return nil
         }
@@ -211,27 +501,85 @@ public final class ApplicationSession {
             return nil
         }
 
+        let commandKey = PhoneVerificationKey(challengeID: challengeID, code: normalizedCode)
+        let clientNonce = phoneVerificationCommand.acquire(for: commandKey)
         isWorking = true
+        phoneAuthenticationFailure = nil
         errorMessage = nil
         defer { isWorking = false }
         do {
-            switch try await api.verifyPhoneCode(
+            let result = try await api.verifyPhoneCode(
                 challengeID: challengeID,
                 code: normalizedCode,
                 deviceName: ProcessInfo.processInfo.hostName,
-                clientNonce: .clientNonceV4()
-            ) {
+                clientNonce: clientNonce
+            )
+            switch result {
             case let .authenticated(response):
-                return await finishAuthentication(response) ? .authenticated : nil
+                let accepted = await finishAuthentication(response)
+                phoneVerificationCommand.settleAfterClientAcceptance(accepted)
+                if accepted { return .authenticated }
+                // The server may already have committed and returned the token
+                // response. Until Keychain persistence plus bootstrap succeeds,
+                // retain the nonce so retry replays that exact durable outcome.
+                return nil
             case let .profileRequired(response):
+                // The registration grant is now held by the live UI state. A
+                // process-death grant restoration mechanism is a separate gate.
+                phoneVerificationCommand.finish()
                 return .profileRequired(PhoneRegistrationChallenge(response: response))
+            case let .passwordRequired(response):
+                // The short-lived continuation grant is now held by the live
+                // password screen. Replaying the OTP command is unnecessary;
+                // its own password command below owns exact retry semantics.
+                phoneVerificationCommand.finish()
+                return .passwordRequired(PhonePasswordChallenge(response: response))
             }
         } catch is CancellationError {
             return nil
         } catch {
-            errorMessage = error.localizedDescription
+            let failure = PhoneAuthenticationFailure.classify(error)
+            phoneVerificationCommand.fail(retainingCommand: failure.retainsIdempotencyCommand)
+            phoneAuthenticationFailure = failure
+            errorMessage = failure.message
             phase = .unauthenticated
             return nil
+        }
+    }
+
+    public func completePhonePassword(passwordToken: String, password: String) async -> Bool {
+        guard phase == .unauthenticated, !isWorking else { return false }
+        guard !passwordToken.isEmpty, (1...128).contains(password.count) else {
+            errorMessage = "Введите пароль учётной записи."
+            return false
+        }
+
+        let commandKey = PhonePasswordKey(passwordToken: passwordToken, password: password)
+        let clientNonce = phonePasswordCommand.acquire(for: commandKey)
+        isWorking = true
+        phoneAuthenticationFailure = nil
+        errorMessage = nil
+        defer { isWorking = false }
+
+        do {
+            let response = try await api.completePhonePassword(
+                passwordToken: passwordToken,
+                password: password,
+                deviceName: ProcessInfo.processInfo.hostName,
+                clientNonce: clientNonce
+            )
+            let accepted = await finishAuthentication(response)
+            phonePasswordCommand.settleAfterClientAcceptance(accepted)
+            return accepted
+        } catch is CancellationError {
+            return false
+        } catch {
+            let failure = PhoneAuthenticationFailure.classify(error)
+            phonePasswordCommand.fail(retainingCommand: failure.retainsIdempotencyCommand)
+            phoneAuthenticationFailure = failure
+            errorMessage = failure.message
+            phase = .unauthenticated
+            return false
         }
     }
 
@@ -253,7 +601,15 @@ public final class ApplicationSession {
             return false
         }
 
+        let commandKey = PhoneRegistrationKey(
+            registrationToken: registrationToken,
+            displayName: normalizedDisplayName,
+            username: normalizedUsername,
+            bio: normalizedBio
+        )
+        let clientNonce = phoneRegistrationCommand.acquire(for: commandKey)
         isWorking = true
+        phoneAuthenticationFailure = nil
         errorMessage = nil
         defer { isWorking = false }
         do {
@@ -263,13 +619,21 @@ public final class ApplicationSession {
                 username: normalizedUsername,
                 bio: normalizedBio,
                 deviceName: ProcessInfo.processInfo.hostName,
-                clientNonce: .clientNonceV4()
+                clientNonce: clientNonce
             )
-            return await finishAuthentication(response)
+            let accepted = await finishAuthentication(response)
+            // Registration may already be consumed server-side. On a failed
+            // Keychain/bootstrap acceptance the unchanged nonce is the only
+            // safe way to recover that committed response.
+            phoneRegistrationCommand.settleAfterClientAcceptance(accepted)
+            return accepted
         } catch is CancellationError {
             return false
         } catch {
-            errorMessage = error.localizedDescription
+            let failure = PhoneAuthenticationFailure.classify(error)
+            phoneRegistrationCommand.fail(retainingCommand: failure.retainsIdempotencyCommand)
+            phoneAuthenticationFailure = failure
+            errorMessage = failure.message
             phase = .unauthenticated
             return false
         }
@@ -292,7 +656,9 @@ public final class ApplicationSession {
         } catch is CancellationError {
             return nil
         } catch {
-            errorMessage = error.localizedDescription
+            let failure = PhoneAuthenticationFailure.classify(error)
+            phoneAuthenticationFailure = failure
+            errorMessage = failure.message
             return nil
         }
     }
@@ -307,18 +673,69 @@ public final class ApplicationSession {
 
     public func signOut() async {
         messengerStore?.cancelRemoteOperations()
+        deviceSessionsStore?.cancelRemoteOperations()
+        phonePasswordSettingsStore?.cancelRemoteOperations()
+        notificationSettingsStore?.cancelRemoteOperations()
+        chatPreferencesStore?.resetForSessionReplacement()
+        chatFoldersStore?.resetForSessionReplacement()
+        communityStore?.cancelRemoteOperations()
+        pushNotificationLifecycle.detach()
         cancelRealtime(resetSequence: true)
+        await avatarImageCache.clear()
         if let credentialCoordinator {
             try? await credentialCoordinator.withAccessToken { [api] token in
                 try await api.revokeCurrentSession(token: token)
             }
+            // The server revoke is best-effort, but local teardown is an exact
+            // fence: after invalidate returns no late refresh may repopulate
+            // Keychain after the clear below.
+            await credentialCoordinator.invalidate()
         }
         try? keychain.clear()
         credentialCoordinator = nil
         currentUserID = nil
         messengerStore = nil
+        deviceSessionsStore = nil
+        phonePasswordSettingsStore = nil
+        notificationSettingsStore = nil
+        pushRegistrationStore = nil
+        chatPreferencesStore = nil
+        chatPreferencesBinding = nil
+        chatFoldersStore = nil
+        chatFoldersBinding = nil
+        communityStore = nil
+        resetPhoneAuthenticationCommands()
         errorMessage = nil
         phase = .unauthenticated
+    }
+
+    /// Receives Apple's opaque token bytes without logging or persisting them
+    /// locally. If authentication is still being restored, the bytes remain
+    /// only in this process and are transferred to the session-bound server
+    /// registration immediately after bootstrap succeeds.
+    public func receiveAPNSDeviceToken(
+        _ deviceToken: Data,
+        environment: APNSPushEnvironment
+    ) async {
+        await pushNotificationLifecycle.receive(
+            deviceToken: deviceToken,
+            environment: environment
+        )
+    }
+
+    /// Keeps the server registration aligned with the current iOS permission.
+    /// Revocation is idempotent and scoped to the authenticated session.
+    public func synchronizePushAuthorization(isAuthorized: Bool) async {
+        await pushNotificationLifecycle.synchronizeAuthorization(isAuthorized: isAuthorized)
+    }
+
+    public func recordAPNSRegistrationFailure() {
+        pushNotificationLifecycle.recordSystemRegistrationFailure()
+    }
+
+    public func clearPhoneAuthenticationFailure() {
+        phoneAuthenticationFailure = nil
+        errorMessage = nil
     }
 
     private func authenticate(operation: () async throws -> APIAuthResponse) async {
@@ -341,6 +758,7 @@ public final class ApplicationSession {
     }
 
     private func finishAuthentication(_ response: APIAuthResponse) async -> Bool {
+        phoneAuthenticationFailure = nil
         isAuthenticationSyncing = true
         defer { isAuthenticationSyncing = false }
         do {
@@ -374,7 +792,9 @@ public final class ApplicationSession {
             }
         } catch {
             try? keychain.clear()
-            errorMessage = error.localizedDescription
+            let failure = PhoneAuthenticationFailure.credentialPersistenceFailed
+            phoneAuthenticationFailure = failure
+            errorMessage = failure.message
             phase = .unauthenticated
         }
         return false
@@ -393,22 +813,45 @@ public final class ApplicationSession {
             }
         )
 
-        let user: APIUser
+        let initialUser: APIUser
         if let authenticatedUser {
-            user = authenticatedUser
+            initialUser = authenticatedUser
         } else {
-            user = try await coordinator.withAccessToken { token in
+            initialUser = try await coordinator.withAccessToken { token in
                 try await api.currentUser(token: token)
             }
         }
-        let remoteChats = try await coordinator.withAccessToken { token in
-            try await api.chats(token: token)
+        let chatFoldersAPI = self.chatFoldersAPI
+        let user: APIUser
+        let bootstrapReconciliation: LuxoraReconciliationBundle?
+        let remoteChats: [APIChat]
+        let remoteChatFolders: ChatFolderListSnapshot
+        if capabilityState.capabilities?.realtimeProtocolVersion == .scopedV2 {
+            let bundle = try await coordinator.withAccessToken { token in
+                try await api.reconciliationBundle(
+                    token: token,
+                    expectedUserID: initialUser.id
+                )
+            }
+            user = bundle.currentUser
+            bootstrapReconciliation = bundle
+            remoteChats = bundle.chats.map(\.chat)
+            remoteChatFolders = bundle.chatFolders
+        } else {
+            user = initialUser
+            bootstrapReconciliation = nil
+            remoteChats = try await coordinator.withAccessToken { token in
+                try await api.chats(token: token)
+            }
+            remoteChatFolders = try await coordinator.withAccessToken { token in
+                try await chatFoldersAPI.folders(token: token)
+            }
         }
         let conversations = remoteChats.map { $0.conversation(currentUserID: user.id) }
         let selectedID = conversations.first?.id
         var initialMessages: [UUID: [ChatMessage]] = [:]
         var loadedIDs: Set<UUID> = []
-        if let selectedID {
+        if bootstrapReconciliation == nil, let selectedID {
             let messages = try await coordinator.withAccessToken { token in
                 try await api.messages(chatID: selectedID, token: token)
             }
@@ -420,7 +863,8 @@ public final class ApplicationSession {
             conversations: conversations,
             messagesByConversation: initialMessages,
             currentUser: user.participant,
-            selectedConversationID: selectedID,
+            currentUserBio: user.bio,
+            selectedConversationID: bootstrapReconciliation == nil ? selectedID : nil,
             loadedConversationIDs: loadedIDs
         )
         let userID = user.id
@@ -465,16 +909,482 @@ public final class ApplicationSession {
                 try await coordinator.withAccessToken { token in
                     try await api.setReaction(messageID: messageID, emoji: emoji, active: active, token: token)
                 }.map(\.reaction)
+            },
+            messageSender: { conversationID, clientID, body, replyToMessageID in
+                try await coordinator.withAccessToken { token in
+                    try await api.sendMessage(
+                        chatID: conversationID,
+                        clientNonce: clientID,
+                        body: body,
+                        replyToMessageID: replyToMessageID,
+                        token: token
+                    )
+                }.snapshot(currentUserID: userID)
+            },
+            messageSnapshotLoader: { conversationID in
+                try await coordinator.withAccessToken { token in
+                    try await api.messages(chatID: conversationID, token: token)
+                }.map { $0.snapshot(currentUserID: userID) }
+            },
+            messageEditor: { messageID, body, expectedRevision in
+                try await coordinator.withAccessToken { token in
+                    try await api.editMessage(
+                        messageID: messageID,
+                        body: body,
+                        expectedRevision: expectedRevision,
+                        token: token
+                    )
+                }.snapshot(currentUserID: userID)
+            },
+            messageDeleter: { messageID in
+                try await coordinator.withAccessToken { token in
+                    try await api.deleteMessage(messageID: messageID, token: token)
+                }.snapshot(currentUserID: userID)
+            },
+            messageForwarder: { messageID, targetConversationID, clientNonce in
+                try await coordinator.withAccessToken { token in
+                    try await api.forwardMessage(
+                        messageID: messageID,
+                        to: targetConversationID,
+                        clientNonce: clientNonce,
+                        token: token
+                    )
+                }.snapshot(currentUserID: userID)
+            },
+            messagePinSetter: { conversationID, messageID, active in
+                try await coordinator.withAccessToken { token in
+                    try await api.setMessagePinned(
+                        chatID: conversationID,
+                        messageID: messageID,
+                        active: active,
+                        token: token
+                    )
+                }
+            },
+            profileUpdater: { displayName, bio in
+                let updated = try await coordinator.withAccessToken { token in
+                    try await api.updateCurrentUser(
+                        displayName: displayName,
+                        bio: bio,
+                        token: token
+                    )
+                }
+                return CurrentUserProfileSnapshot(
+                    participant: updated.participant,
+                    bio: updated.bio
+                )
+            },
+            avatarUploader: { pngData in
+                let updated = try await coordinator.withAccessToken { token in
+                    try await api.uploadProfileAvatar(pngData: pngData, token: token)
+                }
+                return CurrentUserProfileSnapshot(
+                    participant: updated.participant,
+                    bio: updated.bio
+                )
+            },
+            avatarClearer: {
+                let updated = try await coordinator.withAccessToken { token in
+                    try await api.clearProfileAvatar(token: token)
+                }
+                return CurrentUserProfileSnapshot(
+                    participant: updated.participant,
+                    bio: updated.bio
+                )
+            },
+            messageRequestLoader: { direction in
+                let requests = try await coordinator.withAccessToken { token in
+                    try await api.allMessageRequests(direction: direction, token: token)
+                }
+                return try requests.map { try $0.item() }
+            },
+            exactUserLookup: { username in
+                try await coordinator.withAccessToken { token in
+                    try await api.lookupUser(username: username, token: token)
+                }?.participant
+            },
+            messageRequestCreator: { recipientID, body, clientNonce in
+                let request = try await coordinator.withAccessToken { token in
+                    try await api.createMessageRequest(
+                        recipientUserID: recipientID,
+                        body: body,
+                        clientNonce: clientNonce,
+                        token: token
+                    )
+                }
+                return try request.item()
+            },
+            messageRequestAccepter: { requestID in
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.acceptMessageRequest(id: requestID, token: token)
+                }
+                guard let firstMessage = response.chat.lastMessage else {
+                    throw LuxoraAPIError.invalidResponse
+                }
+                return MessageRequestAcceptResult(
+                    request: try response.request.item(),
+                    conversation: response.chat.conversation(currentUserID: userID),
+                    firstMessage: firstMessage.snapshot(currentUserID: userID)
+                )
+            },
+            messageRequestDismisser: { requestID in
+                try await coordinator.withAccessToken { token in
+                    try await api.dismissMessageRequest(id: requestID, token: token)
+                }
+            },
+            privacySettingsLoader: {
+                try await coordinator.withAccessToken { token in
+                    try await api.privacySettings(token: token)
+                }.snapshot
+            },
+            privacySettingsUpdater: { usernameDiscoverable, messageRequests in
+                try await coordinator.withAccessToken { token in
+                    try await api.updatePrivacySettings(
+                        usernameDiscoverable: usernameDiscoverable,
+                        messageRequests: messageRequests,
+                        token: token
+                    )
+                }.snapshot
+            }
+        )
+        let sessionsStore = DeviceSessionsStore()
+        sessionsStore.configureRemote(
+            loader: {
+                try await coordinator.withAccessToken { token in
+                    try await api.deviceSessions(token: token)
+                }.map(\.deviceSession)
+            },
+            revoker: { sessionID in
+                try await coordinator.withAccessToken { token in
+                    try await api.revokeDeviceSession(id: sessionID, token: token)
+                }
             }
         )
 
+        let passwordSettingsStore = PhonePasswordSettingsStore()
+        passwordSettingsStore.configureRemote(
+            loader: {
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.phonePasswordStatus(token: token)
+                }
+                return PhonePasswordStatus(response: response)
+            },
+            configurator: { newPassword, currentPassword in
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.configurePhonePassword(
+                        password: newPassword,
+                        currentPassword: currentPassword,
+                        token: token
+                    )
+                }
+                return PhonePasswordStatus(response: response)
+            },
+            disabler: { currentPassword in
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.disablePhonePassword(
+                        currentPassword: currentPassword,
+                        token: token
+                    )
+                }
+                return PhonePasswordStatus(response: response)
+            }
+        )
+
+        let notificationStore = NotificationSettingsStore()
+        notificationStore.configureRemote(
+            loader: {
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.notificationSettings(token: token)
+                }
+                return NotificationSettings(response: response)
+            },
+            updater: { patch in
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.updateNotificationSettings(patch, token: token)
+                }
+                return NotificationSettings(response: response)
+            }
+        )
+
+        let pushStore = PushRegistrationStore()
+        pushStore.configureRemote(
+            loader: {
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.currentPushRegistration(token: token)
+                }
+                return response.map { PushRegistration(response: $0) }
+            },
+            registrar: { deviceTokenHex, environment in
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.upsertPushRegistration(
+                        deviceTokenHex: deviceTokenHex,
+                        environment: environment,
+                        token: token
+                    )
+                }
+                return PushRegistration(response: response)
+            },
+            unregistrar: {
+                try await coordinator.withAccessToken { token in
+                    try await api.unregisterCurrentPushRegistration(token: token)
+                }
+            }
+        )
+
+        let preferencesStore = ChatPreferencesStore()
+        let preferencesBinding = preferencesStore.configureRemote(
+            accountID: userID,
+            loader: { chatID in
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.chatPreferences(chatID: chatID, token: token)
+                }
+                return ChatPreferences(response: response)
+            },
+            updater: { chatID, patch in
+                let response = try await coordinator.withAccessToken { token in
+                    try await api.updateChatPreferences(chatID: chatID, patch: patch, token: token)
+                }
+                return ChatPreferences(response: response)
+            }
+        )
+        preferencesStore.replaceConfirmed(
+            Dictionary(uniqueKeysWithValues: remoteChats.map { ($0.id, $0.preferences) })
+        )
+
+        let foldersStore = ChatFoldersStore()
+        let foldersBinding = foldersStore.configureRemote(
+            accountID: userID,
+            loader: {
+                try await coordinator.withAccessToken { token in
+                    try await chatFoldersAPI.folders(token: token)
+                }
+            },
+            creator: { command in
+                try await coordinator.withAccessToken { token in
+                    try await chatFoldersAPI.create(command, token: token)
+                }
+            },
+            updater: { folderID, command in
+                try await coordinator.withAccessToken { token in
+                    try await chatFoldersAPI.patch(
+                        folderID: folderID,
+                        command: command,
+                        token: token
+                    )
+                }
+            },
+            deleter: { folderID, command in
+                try await coordinator.withAccessToken { token in
+                    try await chatFoldersAPI.delete(
+                        folderID: folderID,
+                        command: command,
+                        token: token
+                    )
+                }
+            },
+            reorderer: { command in
+                try await coordinator.withAccessToken { token in
+                    try await chatFoldersAPI.reorder(command, token: token)
+                }
+            }
+        )
+        try foldersStore.replaceConfirmed(remoteChatFolders, binding: foldersBinding)
+
+        let communityAPI = self.communityAPI
+        let communitiesStore = CommunityStore(
+            currentUserID: userID,
+            communities: store.conversations
+        )
+        communitiesStore.configureRemote(
+            creator: { kind, title, memberIDs in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.createCommunity(
+                        kind: kind,
+                        title: title,
+                        memberIDs: memberIDs,
+                        token: token
+                    )
+                }.conversation(currentUserID: userID)
+            },
+            communityLoader: { chatID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.community(chatID: chatID, token: token)
+                }.conversation(currentUserID: userID)
+            },
+            memberLoader: { chatID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.communityMembers(chatID: chatID, token: token)
+                }
+            },
+            exactUserLookup: { username in
+                try await coordinator.withAccessToken { token in
+                    try await api.lookupUser(username: username, token: token)
+                }?.participant
+            },
+            memberAdder: { chatID, memberID, role, nonce in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.addCommunityMember(
+                        chatID: chatID,
+                        userID: memberID,
+                        role: role,
+                        clientNonce: nonce,
+                        token: token
+                    )
+                }
+            },
+            memberRoleUpdater: { chatID, memberID, role, revision, nonce in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.updateCommunityMemberRole(
+                        chatID: chatID,
+                        userID: memberID,
+                        role: role,
+                        expectedRevision: revision,
+                        clientNonce: nonce,
+                        token: token
+                    )
+                }
+            },
+            memberRemover: { chatID, memberID, revision, nonce in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.removeCommunityMember(
+                        chatID: chatID,
+                        userID: memberID,
+                        expectedRevision: revision,
+                        clientNonce: nonce,
+                        token: token
+                    )
+                }
+            }
+        )
+        communitiesStore.configureProjectionObservers(
+            communityUpdated: { [weak store] conversation in
+                store?.applyConfirmedCommunityIdentity(conversation)
+            },
+            communityRemoved: { [weak store] chatID in
+                store?.applyConfirmedConversationRemoval(chatID)
+            },
+            communityMetadataUpdated: { [weak store] chatID, memberCount, serverRole in
+                store?.applyConfirmedCommunityMetadata(
+                    chatID: chatID,
+                    memberCount: memberCount,
+                    serverRole: serverRole
+                )
+            }
+        )
+        if let bootstrapReconciliation {
+            try ScopedReconciliationPublisher.publish(
+                bootstrapReconciliation,
+                currentUserID: userID,
+                messengerStore: store,
+                communityStore: communitiesStore,
+                preferencesStore: preferencesStore,
+                foldersStore: foldersStore,
+                foldersBinding: foldersBinding
+            )
+        }
+
         messengerStore?.cancelRemoteOperations()
+        deviceSessionsStore?.cancelRemoteOperations()
+        phonePasswordSettingsStore?.cancelRemoteOperations()
+        notificationSettingsStore?.cancelRemoteOperations()
+        chatPreferencesStore?.resetForSessionReplacement()
+        chatFoldersStore?.resetForSessionReplacement()
+        communityStore?.cancelRemoteOperations()
+        pushNotificationLifecycle.detach()
+        if let previousCoordinator = credentialCoordinator {
+            await previousCoordinator.invalidate()
+        }
+        let avatarCacheNamespace = [
+            configuration.apiBaseURL.absoluteURL.absoluteString,
+            credentials.sessionID.uuidString.lowercased()
+        ].joined(separator: "|")
+        await avatarImageCache.configure(namespace: avatarCacheNamespace) { path in
+            try await coordinator.withAccessToken { token in
+                try await api.avatarImageData(path: path, token: token)
+            }
+        }
+        if let bootstrapReconciliation {
+            try await coordinator.commitRealtimeV2Cursor(
+                bootstrapReconciliation.boundary.cursor
+            )
+            realtimeV2Sequence = bootstrapReconciliation.boundary.sequence
+        } else {
+            realtimeV2Sequence = nil
+        }
         credentialCoordinator = coordinator
         currentUserID = user.id
         messengerStore = store
+        deviceSessionsStore = sessionsStore
+        phonePasswordSettingsStore = passwordSettingsStore
+        notificationSettingsStore = notificationStore
+        pushRegistrationStore = pushStore
+        chatPreferencesStore = preferencesStore
+        chatPreferencesBinding = preferencesBinding
+        chatFoldersStore = foldersStore
+        chatFoldersBinding = foldersBinding
+        communityStore = communitiesStore
+        pushNotificationLifecycle.attach(pushStore)
         store.connectionState = .connecting
         phase = .authenticated
         startRealtime(userID: user.id, store: store)
+
+        Task { @MainActor [weak self] in
+            await self?.synchronizeNotificationFoundation(
+                notificationStore: notificationStore,
+                pushStore: pushStore
+            )
+        }
+
+        #if os(iOS)
+        if let pendingAvatar = try? PendingProfileAvatarStore.load(username: user.username) {
+            Task { @MainActor [weak store] in
+                guard let store else { return }
+                if await store.updateCurrentUserAvatar(pngData: pendingAvatar) {
+                    try? PendingProfileAvatarStore.remove(username: user.username)
+                }
+            }
+        }
+        #endif
+    }
+
+    private func synchronizeNotificationFoundation(
+        notificationStore: NotificationSettingsStore,
+        pushStore: PushRegistrationStore
+    ) async {
+        guard phase == .authenticated,
+              notificationSettingsStore === notificationStore,
+              pushRegistrationStore === pushStore
+        else { return }
+
+        await notificationStore.refresh()
+        guard phase == .authenticated,
+              notificationSettingsStore === notificationStore,
+              pushRegistrationStore === pushStore
+        else { return }
+
+        await pushNotificationLifecycle.synchronizeAttachedStore()
+    }
+
+    /// Applies archive/mute only from the server-confirmed account projection.
+    /// A failed or cancelled request leaves the inbox unchanged.
+    @discardableResult
+    public func updateChatPreferences(
+        chatID: UUID,
+        patch: ChatPreferencesPatch
+    ) async -> Bool {
+        guard phase == .authenticated,
+              let preferencesStore = chatPreferencesStore,
+              let store = messengerStore
+        else { return false }
+        let updated = await preferencesStore.update(chatID, patch: patch)
+        guard updated,
+              phase == .authenticated,
+              chatPreferencesStore === preferencesStore,
+              messengerStore === store,
+              let confirmed = preferencesStore.preferences(for: chatID)
+        else { return false }
+        store.applyConfirmedChatPreferences(confirmed, chatID: chatID)
+        return true
     }
 
     public func refreshCapabilities() async {
@@ -496,27 +1406,157 @@ public final class ApplicationSession {
     }
 
     #if DEBUG
+    /// Clears persisted UI-test state before SwiftUI starts its restoration
+    /// task. A newly-created ApplicationSession has no credential coordinator,
+    /// so this synchronous launch hook cannot race an in-flight refresh.
+    public func resetPersistedSessionForUITestLaunch() {
+        precondition(credentialCoordinator == nil)
+        messengerStore?.cancelRemoteOperations()
+        deviceSessionsStore?.cancelRemoteOperations()
+        phonePasswordSettingsStore?.cancelRemoteOperations()
+        notificationSettingsStore?.cancelRemoteOperations()
+        chatPreferencesStore?.resetForSessionReplacement()
+        chatFoldersStore?.resetForSessionReplacement()
+        communityStore?.cancelRemoteOperations()
+        pushNotificationLifecycle.detach()
+        cancelRealtime(resetSequence: true)
+        try? keychain.clear()
+        currentUserID = nil
+        messengerStore = nil
+        deviceSessionsStore = nil
+        phonePasswordSettingsStore = nil
+        notificationSettingsStore = nil
+        pushRegistrationStore = nil
+        chatPreferencesStore = nil
+        chatPreferencesBinding = nil
+        chatFoldersStore = nil
+        chatFoldersBinding = nil
+        communityStore = nil
+        resetPhoneAuthenticationCommands()
+        errorMessage = nil
+        phase = .unauthenticated
+    }
+
     /// Installs an in-memory, deterministic server-shaped state exclusively for
     /// XCTest and Simulator screenshot review of the production SwiftUI shell.
     /// Release builds do not contain this method or its data.
     public func installDebugUITestMessengerScenario() {
         messengerStore?.cancelRemoteOperations()
+        deviceSessionsStore?.cancelRemoteOperations()
+        phonePasswordSettingsStore?.cancelRemoteOperations()
+        notificationSettingsStore?.cancelRemoteOperations()
+        chatPreferencesStore?.resetForSessionReplacement()
+        chatFoldersStore?.resetForSessionReplacement()
+        communityStore?.cancelRemoteOperations()
+        pushNotificationLifecycle.detach()
         cancelRealtime(resetSequence: true)
-        let scenario = DebugMobileScenario.make()
+        let environment = ProcessInfo.processInfo.environment
+        let scenario = DebugMobileScenario.make(
+            accessibilityMessageIndex: environment[
+                "LUXORA_UI_TEST_ACCESSIBILITY_MESSAGE_INDEX"
+            ].flatMap(Int.init),
+            accessibilityConversationLimit: environment[
+                "LUXORA_UI_TEST_ACCESSIBILITY_CONVERSATION_LIMIT"
+            ].flatMap(Int.init)
+        )
         credentialCoordinator = nil
         currentUserID = scenario.store.currentUser.id
         messengerStore = scenario.store
+        let debugCommunityStore = DebugCommunityScenario.make(messengerStore: scenario.store)
+        debugCommunityStore.configureProjectionObservers(
+            communityUpdated: { [weak store = scenario.store] conversation in
+                store?.applyRealtimeConversation(conversation)
+            },
+            communityRemoved: { [weak store = scenario.store] chatID in
+                store?.applyConfirmedConversationRemoval(chatID)
+            },
+            communityMetadataUpdated: { [weak store = scenario.store] chatID, memberCount, serverRole in
+                store?.applyConfirmedCommunityMetadata(
+                    chatID: chatID,
+                    memberCount: memberCount,
+                    serverRole: serverRole
+                )
+            }
+        )
+        for conversation in debugCommunityStore.communities {
+            scenario.store.applyRealtimeConversation(conversation)
+        }
+        communityStore = debugCommunityStore
+        let debugChatFoldersStore = DebugChatFoldersScenario.make(
+            conversations: scenario.store.conversations,
+            accountID: scenario.store.currentUser.id
+        )
+        DebugChatFoldersScenario.selectInitialFolder(
+            environment["LUXORA_UI_TEST_INITIAL_FOLDER"],
+            in: debugChatFoldersStore
+        )
+        chatFoldersStore = debugChatFoldersStore
+        chatFoldersBinding = nil
+        let initialPreferences = Dictionary(uniqueKeysWithValues: scenario.store.conversations.map {
+            conversation in
+            (
+                conversation.id,
+                ChatPreferences(
+                    archivedAt: conversation.isArchived ? Date() : nil,
+                    mutedUntil: conversation.isMuted ? .distantFuture : nil
+                )
+            )
+        })
+        let debugPreferencesBackend = DebugChatPreferencesBackend(confirmed: initialPreferences)
+        let debugPreferencesStore = ChatPreferencesStore()
+        chatPreferencesBinding = debugPreferencesStore.configureRemote(
+            accountID: scenario.store.currentUser.id,
+            loader: { chatID in
+                await debugPreferencesBackend.load(chatID: chatID)
+            },
+            updater: { chatID, patch in
+                await debugPreferencesBackend.update(chatID: chatID, patch: patch)
+            }
+        )
+        debugPreferencesStore.replaceConfirmed(initialPreferences)
+        chatPreferencesStore = debugPreferencesStore
+        deviceSessionsStore = nil
+        phonePasswordSettingsStore = nil
+        notificationSettingsStore = nil
+        pushRegistrationStore = nil
+        resetPhoneAuthenticationCommands()
         capabilityState = .available(scenario.capabilities)
         errorMessage = nil
         phase = .authenticated
     }
     #endif
 
+    private func resetPhoneAuthenticationCommands() {
+        phoneBeginCommand.finish()
+        phoneVerificationCommand.finish()
+        phoneRegistrationCommand.finish()
+        phonePasswordCommand.finish()
+        phoneAuthenticationFailure = nil
+    }
+
     private func startRealtime(userID: UUID, store: MessengerStore) {
         realtimeTask?.cancel()
+        guard let capabilities = capabilityState.capabilities,
+              capabilities.features.realtime
+        else {
+            let message = "Сервер не подтвердил совместимый realtime-контракт."
+            store.connectionState = .degraded(message)
+            errorMessage = message
+            return
+        }
+        switch capabilities.realtimeProtocolVersion {
+        case .legacyV1:
+            startLegacyRealtime(userID: userID, store: store)
+        case .scopedV2:
+            startScopedRealtime(userID: userID, store: store)
+        }
+    }
+
+    private func startLegacyRealtime(userID: UUID, store: MessengerStore) {
         let realtime = self.realtime
         let resumeFrom = realtimeSequence
         let coordinator = credentialCoordinator
+        let expectedCommunityStore = communityStore
         realtimeTask = Task { [weak self] in
             do {
                 guard let coordinator else { throw LuxoraAPIError.missingSession }
@@ -530,9 +1570,87 @@ public final class ApplicationSession {
                     case let .ready(sequence):
                         advanceRealtimeSequence(sequence)
                         store.connectionState = .online
+                    case let .chat(chat, sequence):
+                        let conversation = chat.conversation(currentUserID: userID)
+                        if conversation.kind == .group || conversation.kind == .channel {
+                            try expectedCommunityStore?.validateConfirmedCommunity(conversation)
+                        }
+                        advanceRealtimeSequence(sequence)
+                        store.applyRealtimeConversation(conversation)
+                        if conversation.kind == .group || conversation.kind == .channel {
+                            try expectedCommunityStore?.acceptConfirmedCommunity(conversation)
+                        }
                     case let .message(message, sequence):
                         advanceRealtimeSequence(sequence)
-                        store.applyRealtimeMessage(message.message(currentUserID: userID))
+                        store.applyRealtimeMessageSnapshot(message.snapshot(currentUserID: userID))
+                    case let .messagePin(chatID, messageID, active, sequence):
+                        advanceRealtimeSequence(sequence)
+                        store.applyRealtimePin(chatID: chatID, messageID: messageID, active: active)
+                    case let .messageReceipt(chatID, messageID, isRead, sequence):
+                        advanceRealtimeSequence(sequence)
+                        store.applyRealtimeMessageReceipt(
+                            chatID: chatID,
+                            messageID: messageID,
+                            isRead: isRead
+                        )
+                    case let .messageReactions(chatID, messageID, reactions, sequence):
+                        advanceRealtimeSequence(sequence)
+                        store.applyRealtimeMessageReactions(
+                            chatID: chatID,
+                            messageID: messageID,
+                            reactions: reactions.map(\.reaction)
+                        )
+                    case let .chatMembership(event, sequence):
+                        let communityProjection = try communityMembershipProjection(event)
+                        try expectedCommunityStore?.validateConfirmedMembershipSignal(
+                            communityProjection.membership,
+                            change: communityProjection.change,
+                            causalSequence: sequence
+                        )
+                        advanceRealtimeSequence(sequence)
+                        let requiresReconciliation = store.applyRealtimeMembership(
+                            event,
+                            currentUserID: userID,
+                            causalSequence: sequence
+                        )
+                        try expectedCommunityStore?.acceptConfirmedMembershipSignal(
+                            communityProjection.membership,
+                            change: communityProjection.change,
+                            causalSequence: sequence
+                        )
+                        if requiresReconciliation {
+                            Task { @MainActor [weak self, weak store, weak expectedCommunityStore] in
+                                guard let self,
+                                      let store,
+                                      let expectedCommunityStore,
+                                      ownsRealtime(store: store, userID: userID),
+                                      communityStore === expectedCommunityStore
+                                else { return }
+                                await store.refreshConversations()
+                                guard ownsRealtime(store: store, userID: userID),
+                                      communityStore === expectedCommunityStore
+                                else { return }
+                                try? expectedCommunityStore.synchronizeConfirmedCommunities(
+                                    store.conversations
+                                )
+                            }
+                        }
+                    case let .messageRequestCreated(request, sequence):
+                        let item = try request.item()
+                        advanceRealtimeSequence(sequence)
+                        store.applyRealtimeMessageRequestCreated(item)
+                    case let .messageRequestRemoved(requestID, sequence):
+                        advanceRealtimeSequence(sequence)
+                        store.applyRealtimeMessageRequestRemoved(requestID)
+                    case let .messageRequestAccepted(requestID, chat, sequence):
+                        advanceRealtimeSequence(sequence)
+                        store.applyRealtimeMessageRequestAccepted(
+                            requestID,
+                            conversation: chat.conversation(currentUserID: userID)
+                        )
+                    case let .messageRequestExpired(requestID, sequence):
+                        advanceRealtimeSequence(sequence)
+                        store.applyRealtimeMessageRequestExpired(requestID)
                     case let .cursor(sequence):
                         advanceRealtimeSequence(sequence)
                     case let .typing(conversationID, isTyping):
@@ -562,10 +1680,423 @@ public final class ApplicationSession {
         }
     }
 
+    private func startScopedRealtime(userID: UUID, store: MessengerStore) {
+        guard let coordinator = credentialCoordinator,
+              let preferencesStore = chatPreferencesStore,
+              let preferencesBinding = chatPreferencesBinding,
+              let foldersStore = chatFoldersStore,
+              let foldersBinding = chatFoldersBinding,
+              let expectedCommunityStore = communityStore
+        else {
+            store.connectionState = .degraded(LuxoraAPIError.missingSession.localizedDescription)
+            return
+        }
+        let realtime = self.realtime
+        let api = self.api
+        realtimeTask = Task { [weak self] in
+            guard let self else { return }
+            var retryDelaySeconds = 1
+
+            while !Task.isCancelled, ownsRealtime(store: store, userID: userID) {
+                do {
+                    let token = await coordinator.accessToken()
+                    let resumeCursor = await coordinator.realtimeV2Cursor()
+                    let expectedSessionID = await coordinator.sessionID()
+                    var requiresReconciliation = false
+
+                    stream: for try await signal in realtime.scopedSignals(
+                        token: token,
+                        resumeCursor: resumeCursor
+                    ) {
+                        guard !Task.isCancelled,
+                              ownsRealtime(store: store, userID: userID),
+                              chatPreferencesStore === preferencesStore,
+                              chatPreferencesBinding == preferencesBinding,
+                              chatFoldersStore === foldersStore,
+                              chatFoldersBinding == foldersBinding,
+                              communityStore === expectedCommunityStore
+                        else { return }
+
+                        switch signal {
+                        case let .ready(readyUserID, readySessionID, sequence, _, _, _):
+                            guard readyUserID == userID,
+                                  readySessionID == expectedSessionID
+                            else { throw LuxoraAPIError.invalidResponse }
+                            realtimeV2Sequence = max(realtimeV2Sequence ?? 0, sequence)
+                            store.connectionState = .connecting
+
+                        case let .dispatch(durable, sequence, cursor):
+                            guard sequence > (realtimeV2Sequence ?? 0) else { continue }
+                            let durableRequiresReconciliation = try applyScopedDurable(
+                                durable,
+                                expectedSequence: sequence,
+                                userID: userID,
+                                store: store,
+                                communityStore: expectedCommunityStore
+                            )
+                            if durableRequiresReconciliation {
+                                requiresReconciliation = true
+                                break stream
+                            }
+                            realtimeV2Sequence = sequence
+                            try await coordinator.commitRealtimeV2Cursor(cursor)
+
+                        case let .chatPreferences(dispatch):
+                            guard dispatch.sequence > (realtimeV2Sequence ?? 0) else {
+                                continue
+                            }
+                            switch preferencesStore.applyRealtime(
+                                dispatch,
+                                binding: preferencesBinding
+                            ) {
+                            case .accepted:
+                                store.applyConfirmedChatPreferences(
+                                    dispatch.preferences,
+                                    chatID: dispatch.chatID
+                                )
+                            case .exactReplay:
+                                // The projection already won before cursor
+                                // persistence failed. Retry persistence only.
+                                break
+                            case .rejected:
+                                throw LuxoraAPIError.invalidResponse
+                            }
+                            let preferencesStillOwned = try await ScopedRealtimePostAwaitFence.run {
+                                try await coordinator.commitRealtimeV2Cursor(dispatch.cursor)
+                            } stillOwnsSession: {
+                                self.ownsScopedRealtime(
+                                    coordinator: coordinator,
+                                    store: store,
+                                    userID: userID,
+                                    preferencesStore: preferencesStore,
+                                    preferencesBinding: preferencesBinding,
+                                    foldersStore: foldersStore,
+                                    foldersBinding: foldersBinding,
+                                    communityStore: expectedCommunityStore
+                                )
+                            } publish: {
+                                self.realtimeV2Sequence = dispatch.sequence
+                            }
+                            guard preferencesStillOwned else { return }
+
+                        case let .chatFolders(dispatch):
+                            guard dispatch.sequence > (realtimeV2Sequence ?? 0),
+                                  dispatch.accountID == userID
+                            else {
+                                if dispatch.sequence <= (realtimeV2Sequence ?? 0) { continue }
+                                throw LuxoraAPIError.invalidResponse
+                            }
+                            let requiresFolderRefresh = foldersStore.applyRealtime(
+                                dispatch,
+                                binding: foldersBinding
+                            )
+                            if dispatch.stateRevision > foldersStore.stateRevision {
+                                guard requiresFolderRefresh else {
+                                    throw LuxoraAPIError.invalidResponse
+                                }
+                                let refreshed = await foldersStore.refreshForRealtime(
+                                    minimumStateRevision: dispatch.stateRevision
+                                )
+                                guard refreshed else {
+                                    requiresReconciliation = true
+                                    break stream
+                                }
+                            }
+                            guard ownsScopedRealtime(
+                                coordinator: coordinator,
+                                store: store,
+                                userID: userID,
+                                preferencesStore: preferencesStore,
+                                preferencesBinding: preferencesBinding,
+                                foldersStore: foldersStore,
+                                foldersBinding: foldersBinding,
+                                communityStore: expectedCommunityStore
+                            ) else { return }
+                            let foldersStillOwned = try await ScopedRealtimePostAwaitFence.run {
+                                try await coordinator.commitRealtimeV2Cursor(dispatch.cursor)
+                            } stillOwnsSession: {
+                                self.ownsScopedRealtime(
+                                    coordinator: coordinator,
+                                    store: store,
+                                    userID: userID,
+                                    preferencesStore: preferencesStore,
+                                    preferencesBinding: preferencesBinding,
+                                    foldersStore: foldersStore,
+                                    foldersBinding: foldersBinding,
+                                    communityStore: expectedCommunityStore
+                                )
+                            } publish: {
+                                try foldersStore.commitRealtime(
+                                    dispatch,
+                                    binding: foldersBinding
+                                )
+                                self.realtimeV2Sequence = dispatch.sequence
+                            }
+                            guard foldersStillOwned else { return }
+
+                        case let .syncInvalidated(dispatch):
+                            guard dispatch.sequence > (realtimeV2Sequence ?? 0),
+                                  dispatch.accountID == userID
+                            else {
+                                if dispatch.sequence <= (realtimeV2Sequence ?? 0) { continue }
+                                throw LuxoraAPIError.invalidResponse
+                            }
+                            // The payload is an account-scoped invalidation,
+                            // never a local patch. Do not commit its cursor: the
+                            // bounded B1/resources/B2 reset below commits only
+                            // the closing stable boundary.
+                            _ = dispatch.reason
+                            _ = dispatch.changedAt
+                            _ = dispatch.cursor
+                            requiresReconciliation = true
+                            break stream
+
+                        case let .checkpoint(sequence, cursor):
+                            guard sequence >= (realtimeV2Sequence ?? 0) else {
+                                throw LuxoraAPIError.invalidResponse
+                            }
+                            realtimeV2Sequence = sequence
+                            let checkpointStillOwned = try await ScopedRealtimePostAwaitFence.run {
+                                try await coordinator.commitRealtimeV2Cursor(cursor)
+                            } stillOwnsSession: {
+                                self.ownsScopedRealtime(
+                                    coordinator: coordinator,
+                                    store: store,
+                                    userID: userID,
+                                    preferencesStore: preferencesStore,
+                                    preferencesBinding: preferencesBinding,
+                                    foldersStore: foldersStore,
+                                    foldersBinding: foldersBinding,
+                                    communityStore: expectedCommunityStore
+                                )
+                            } publish: {
+                                retryDelaySeconds = 1
+                                self.errorMessage = nil
+                                store.connectionState = .online
+                            }
+                            guard checkpointStillOwned else { return }
+
+                        case let .typing(conversationID, isTyping):
+                            store.setTyping(isTyping, conversationID: conversationID)
+
+                        case .syncRequired:
+                            requiresReconciliation = true
+                            break stream
+
+                        case let .serverError(code, message):
+                            throw LuxoraAPIError.server(
+                                status: code == "UNAUTHENTICATED" ? 401 : 503,
+                                code: code,
+                                message: message
+                            )
+                        }
+                    }
+
+                    guard !Task.isCancelled,
+                          ownsRealtime(store: store, userID: userID),
+                          communityStore === expectedCommunityStore
+                    else {
+                        return
+                    }
+                    if requiresReconciliation {
+                        store.connectionState = .connecting
+                        let bundle = try await coordinator.withAccessToken { token in
+                            try await api.reconciliationBundle(
+                                token: token,
+                                expectedUserID: userID
+                            )
+                        }
+                        guard ownsRealtime(store: store, userID: userID),
+                              chatPreferencesStore === preferencesStore,
+                              chatPreferencesBinding == preferencesBinding,
+                              chatFoldersStore === foldersStore,
+                              chatFoldersBinding == foldersBinding,
+                              communityStore === expectedCommunityStore
+                        else { return }
+                        try ScopedReconciliationPublisher.publish(
+                            bundle,
+                            currentUserID: userID,
+                            messengerStore: store,
+                            communityStore: expectedCommunityStore,
+                            preferencesStore: preferencesStore,
+                            foldersStore: foldersStore,
+                            foldersBinding: foldersBinding
+                        )
+                        realtimeV2Sequence = bundle.boundary.sequence
+                        try await coordinator.commitRealtimeV2Cursor(bundle.boundary.cursor)
+                        retryDelaySeconds = 1
+                        continue
+                    }
+
+                    store.connectionState = .offline
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled,
+                          ownsRealtime(store: store, userID: userID),
+                          communityStore === expectedCommunityStore
+                    else {
+                        return
+                    }
+                    let message = error.localizedDescription
+                    store.connectionState = Self.isOffline(error) ? .offline : .degraded(message)
+                    errorMessage = String(
+                        format: LuxoraL10n.text("error.realtime_disconnected"),
+                        message
+                    )
+                    if case LuxoraAPIError.invalidResponse = error { return }
+                    if case let LuxoraAPIError.server(status, _, _) = error,
+                       status == 401 {
+                        // WebSockets cannot participate directly in the HTTP
+                        // single-flight refresh path. Probe one authenticated
+                        // endpoint so all concurrent stores share the same
+                        // rotation before the next socket is opened.
+                        _ = try? await coordinator.withAccessToken { token in
+                            try await api.currentUser(token: token)
+                        }
+                    }
+                    do {
+                        try await Task.sleep(for: .seconds(retryDelaySeconds))
+                    } catch {
+                        return
+                    }
+                    retryDelaySeconds = min(retryDelaySeconds * 2, 30)
+                }
+            }
+        }
+    }
+
+    func applyScopedDurable(
+        _ signal: RealtimeSignal,
+        expectedSequence: Int,
+        userID: UUID,
+        store: MessengerStore,
+        communityStore expectedCommunityStore: CommunityStore
+    ) throws -> Bool {
+        switch signal {
+        case let .chat(chat, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            let conversation = chat.conversation(currentUserID: userID)
+            if conversation.kind == .group || conversation.kind == .channel {
+                try expectedCommunityStore.validateConfirmedCommunity(conversation)
+            }
+            store.applyRealtimeConversation(conversation)
+            if conversation.kind == .group || conversation.kind == .channel {
+                try expectedCommunityStore.acceptConfirmedCommunity(conversation)
+            }
+            chatPreferencesStore?.mergeConfirmedProjection(chat.preferences, chatID: chat.id)
+        case let .message(message, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            store.applyRealtimeMessageSnapshot(message.snapshot(currentUserID: userID))
+        case let .messagePin(chatID, messageID, active, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            store.applyRealtimePin(chatID: chatID, messageID: messageID, active: active)
+        case let .messageReceipt(chatID, messageID, isRead, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            store.applyRealtimeMessageReceipt(chatID: chatID, messageID: messageID, isRead: isRead)
+        case let .messageReactions(chatID, messageID, reactions, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            store.applyRealtimeMessageReactions(
+                chatID: chatID,
+                messageID: messageID,
+                reactions: reactions.map(\.reaction)
+            )
+        case let .chatMembership(event, sequence):
+            guard sequence == expectedSequence,
+                  event.audience != .removedAccount || event.membership.userId == userID
+            else { throw LuxoraAPIError.invalidResponse }
+            let communityProjection = try communityMembershipProjection(event)
+            try expectedCommunityStore.validateConfirmedMembershipSignal(
+                communityProjection.membership,
+                change: communityProjection.change,
+                causalSequence: sequence
+            )
+            let requiresReconciliation = store.applyRealtimeMembership(
+                event,
+                currentUserID: userID,
+                causalSequence: sequence
+            )
+            try expectedCommunityStore.acceptConfirmedMembershipSignal(
+                communityProjection.membership,
+                change: communityProjection.change,
+                causalSequence: sequence,
+            )
+            if event.membership.userId == userID, event.change == .removed {
+                chatPreferencesStore?.removeConfirmedProjection(chatID: event.membership.chatId)
+            }
+            return requiresReconciliation
+        case let .messageRequestCreated(request, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            store.applyRealtimeMessageRequestCreated(try request.item())
+        case let .messageRequestRemoved(requestID, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            store.applyRealtimeMessageRequestRemoved(requestID)
+        case let .messageRequestAccepted(requestID, chat, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            store.applyRealtimeMessageRequestAccepted(
+                requestID,
+                conversation: chat.conversation(currentUserID: userID)
+            )
+        case let .messageRequestExpired(requestID, sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+            store.applyRealtimeMessageRequestExpired(requestID)
+        case let .cursor(sequence):
+            guard sequence == expectedSequence else { throw LuxoraAPIError.invalidResponse }
+        case .ready, .typing, .syncRequired:
+            throw LuxoraAPIError.invalidResponse
+        }
+        return false
+    }
+
+    private func communityMembershipProjection(
+        _ event: RealtimeChatMembershipEvent
+    ) throws -> (membership: ChatMembership, change: CommunityMembershipSignalChange) {
+        guard let role = ChatMembershipRole(rawValue: event.membership.role) else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        let change: CommunityMembershipSignalChange
+        switch event.change {
+        case .added: change = .added
+        case .roleUpdated: change = .roleUpdated
+        case .removed: change = .removed
+        }
+        return (
+            ChatMembership(
+                chatID: event.membership.chatId,
+                userID: event.membership.userId,
+                role: role,
+                revision: event.membership.revision,
+                joinedAt: event.membership.joinedAt,
+                updatedAt: event.membership.updatedAt
+            ),
+            change
+        )
+    }
+
     private func ownsRealtime(store: MessengerStore, userID: UUID) -> Bool {
         phase == .authenticated
             && currentUserID == userID
             && messengerStore === store
+    }
+
+    private func ownsScopedRealtime(
+        coordinator: SessionCredentialCoordinator,
+        store: MessengerStore,
+        userID: UUID,
+        preferencesStore: ChatPreferencesStore,
+        preferencesBinding: ChatPreferencesSessionBinding,
+        foldersStore: ChatFoldersStore,
+        foldersBinding: ChatFoldersSessionBinding,
+        communityStore: CommunityStore
+    ) -> Bool {
+        !Task.isCancelled
+            && ownsRealtime(store: store, userID: userID)
+            && credentialCoordinator === coordinator
+            && chatPreferencesStore === preferencesStore
+            && chatPreferencesBinding == preferencesBinding
+            && chatFoldersStore === foldersStore
+            && chatFoldersBinding == foldersBinding
+            && self.communityStore === communityStore
     }
 
     private func cancelRealtime(resetSequence: Bool) {
@@ -573,6 +2104,7 @@ public final class ApplicationSession {
         realtimeTask = nil
         if resetSequence {
             realtimeSequence = nil
+            realtimeV2Sequence = nil
         }
     }
 

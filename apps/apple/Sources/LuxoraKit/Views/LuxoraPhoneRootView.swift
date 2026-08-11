@@ -2,6 +2,19 @@
 import SwiftUI
 import UIKit
 
+#if DEBUG
+@MainActor
+private enum LuxoraPhoneDebugRouteGate {
+    private static var didConsumeRoute = false
+
+    static func consume() -> Bool {
+        guard !didConsumeRoute else { return false }
+        didConsumeRoute = true
+        return true
+    }
+}
+#endif
+
 @inline(__always)
 private func phoneString(_ key: String) -> String {
     LuxoraL10n.text(key)
@@ -24,22 +37,45 @@ public enum LuxoraPhoneInitialDestination: Equatable, Sendable {
 public struct LuxoraPhoneRootView: View {
     @Bindable private var store: MessengerStore
     private let featureMatrix: LuxoraFeatureMatrix
+    private let deviceSessionsStore: DeviceSessionsStore?
+    private let phonePasswordSettingsStore: PhonePasswordSettingsStore?
+    private let notificationSettingsStore: NotificationSettingsStore?
+    private let pushRegistrationStore: PushRegistrationStore?
+    private let chatFoldersStore: ChatFoldersStore?
+    private let communityStore: CommunityStore?
+    private let updateChatPreferences: (UUID, ChatPreferencesPatch) async -> Bool
+    private let synchronizePushAuthorization: (Bool) -> Void
     private let signOut: () -> Void
 
     @State private var selectedTab: PhoneTab
     @State private var contactsPath: [PhoneContactRoute]
     @State private var chatsPath: [PhoneChatRoute]
     @State private var settingsPath: [PhoneSettingsRoute]
-    @State private var didApplyDebugRoute = false
 
     public init(
         store: MessengerStore,
         featureMatrix: LuxoraFeatureMatrix,
         initialDestination: LuxoraPhoneInitialDestination = .inbox,
+        deviceSessionsStore: DeviceSessionsStore? = nil,
+        phonePasswordSettingsStore: PhonePasswordSettingsStore? = nil,
+        notificationSettingsStore: NotificationSettingsStore? = nil,
+        pushRegistrationStore: PushRegistrationStore? = nil,
+        chatFoldersStore: ChatFoldersStore? = nil,
+        communityStore: CommunityStore? = nil,
+        updateChatPreferences: @escaping (UUID, ChatPreferencesPatch) async -> Bool = { _, _ in false },
+        synchronizePushAuthorization: @escaping (Bool) -> Void = { _ in },
         signOut: @escaping () -> Void = {}
     ) {
         self.store = store
         self.featureMatrix = featureMatrix
+        self.deviceSessionsStore = deviceSessionsStore
+        self.phonePasswordSettingsStore = phonePasswordSettingsStore
+        self.notificationSettingsStore = notificationSettingsStore
+        self.pushRegistrationStore = pushRegistrationStore
+        self.chatFoldersStore = chatFoldersStore
+        self.communityStore = communityStore
+        self.updateChatPreferences = updateChatPreferences
+        self.synchronizePushAuthorization = synchronizePushAuthorization
         self.signOut = signOut
         _contactsPath = State(initialValue: [])
         _settingsPath = State(initialValue: [])
@@ -112,8 +148,11 @@ public struct LuxoraPhoneRootView: View {
                         storiesGate: featureMatrix.stories,
                         securityGate: featureMatrix.securityE2EE,
                         openConversation: openConversation,
+                        openRequests: { chatsPath.append(.requests) },
                         openSpaces: { chatsPath.append(.spaces) },
-                        openEdit: { chatsPath.append(.edit) }
+                        openEdit: { chatsPath.append(.edit) },
+                        chatFoldersStore: chatFoldersStore,
+                        updateChatPreferences: updateChatPreferences
                     )
                     .navigationDestination(for: PhoneChatRoute.self) { route in
                         switch route {
@@ -126,7 +165,11 @@ public struct LuxoraPhoneRootView: View {
                                     conversation: conversation,
                                     callsGate: featureMatrix.calls,
                                     mediaGate: featureMatrix.mediaFiles,
-                                    securityGate: featureMatrix.securityE2EE
+                                    securityGate: featureMatrix.securityE2EE,
+                                    communityStore: communityStore,
+                                    openCommunityProfile: {
+                                        chatsPath.append(.communityProfile(conversationID))
+                                    }
                                 )
                                 .toolbarVisibility(.hidden, for: .tabBar)
                             } else {
@@ -137,12 +180,53 @@ public struct LuxoraPhoneRootView: View {
                                 )
                             }
                         case .spaces:
-                            PhoneSpacesView(gate: featureMatrix.communities)
+                            if let communityStore {
+                                PhoneCommunitiesView(
+                                    communityStore: communityStore,
+                                    communityListState: store.conversationListState,
+                                    refreshCommunities: {
+                                        await store.refreshConversations()
+                                        try? communityStore.synchronizeConfirmedCommunities(store.conversations)
+                                    },
+                                    openConversation: openConversation,
+                                    acceptCreatedCommunity: store.applyRealtimeConversation
+                                )
                                 .toolbarVisibility(.hidden, for: .tabBar)
+                            } else {
+                                PhoneSpacesView(gate: featureMatrix.communities)
+                                    .toolbarVisibility(.hidden, for: .tabBar)
+                            }
+                        case let .communityProfile(conversationID):
+                            if let communityStore,
+                               let conversation = communityStore.community(conversationID)
+                                    ?? store.conversations.first(where: { $0.id == conversationID }) {
+                                PhoneCommunityProfileView(
+                                    communityStore: communityStore,
+                                    initialConversation: conversation,
+                                    openConversation: { returnToConversation($0) },
+                                    leftCommunity: { _ in
+                                        chatsPath = [.spaces]
+                                    }
+                                )
+                                .toolbarVisibility(.hidden, for: .tabBar)
+                            } else {
+                                ContentUnavailableView(
+                                    "Сообщество недоступно",
+                                    systemImage: "person.3.sequence.fill",
+                                    description: Text("Сервер больше не возвращает эту группу или канал.")
+                                )
+                            }
+                        case .requests:
+                            PhoneMessageRequestsView(
+                                store: store,
+                                openConversation: openConversation
+                            )
+                            .toolbarVisibility(.hidden, for: .tabBar)
                         case .edit:
                             PhoneEditChatsView(
                                 store: store,
-                                storiesGate: featureMatrix.stories
+                                storiesGate: featureMatrix.stories,
+                                chatFoldersStore: chatFoldersStore
                             )
                                 .toolbarVisibility(.hidden, for: .tabBar)
                         }
@@ -156,6 +240,8 @@ public struct LuxoraPhoneRootView: View {
                     PhoneYouView(
                         store: store,
                         featureMatrix: featureMatrix,
+                        phonePasswordSettingsStore: phonePasswordSettingsStore,
+                        chatFoldersStore: chatFoldersStore,
                         openRoute: { settingsPath.append($0) },
                         openSaved: openConversationFromYou,
                         openCalls: { selectedTab = .calls },
@@ -213,14 +299,36 @@ public struct LuxoraPhoneRootView: View {
         openConversation(conversationID)
     }
 
+    private func returnToConversation(_ conversationID: UUID) {
+        store.selectConversation(conversationID)
+        selectedTab = .chats
+        let target = PhoneChatRoute.conversation(conversationID)
+        if let index = chatsPath.lastIndex(of: target) {
+            chatsPath = Array(chatsPath.prefix(through: index))
+        } else {
+            chatsPath.append(target)
+        }
+    }
+
     @ViewBuilder
     private func settingsDestination(_ route: PhoneSettingsRoute) -> some View {
         switch route {
         case .folders:
-            PhoneFoldersSettingsView(store: store)
+            if let chatFoldersStore {
+                PhoneChatFoldersSettingsView(
+                    store: chatFoldersStore,
+                    conversations: store.conversations
+                )
+            } else {
+                ContentUnavailableView(
+                    "Папки недоступны",
+                    systemImage: "folder.badge.questionmark",
+                    description: Text("Сервер не подтвердил контракт синхронизации папок.")
+                )
+            }
         case .profile:
             PhoneOwnProfileView(
-                participant: store.currentUser,
+                store: store,
                 identityGate: featureMatrix.identityAccess,
                 openIdentity: { settingsPath.append(.identity) },
                 openCode: { settingsPath.append(.profileCode) }
@@ -237,14 +345,22 @@ public struct LuxoraPhoneRootView: View {
                 ]
             )
         case .devices:
-            PhoneDevicesSettingsView(
+            PhoneServerDevicesSettingsView(
+                store: deviceSessionsStore,
                 gate: featureMatrix.devices,
                 signOut: signOut
             )
+        case .phonePassword:
+            PhonePasswordSettingsView(store: phonePasswordSettingsStore)
         case .notifications:
-            PhoneNotificationsSettingsView(pushGate: featureMatrix.pushJobs)
+            PhoneNotificationsSettingsView(
+                pushGate: featureMatrix.pushJobs,
+                settingsStore: notificationSettingsStore,
+                registrationStore: pushRegistrationStore,
+                synchronizeAuthorization: synchronizePushAuthorization
+            )
         case .privacy:
-            PhonePrivacySettingsView(featureMatrix: featureMatrix)
+            PhonePrivacySettingsView(store: store, featureMatrix: featureMatrix)
         case .data:
             PhoneDataSettingsView(featureMatrix: featureMatrix)
         case .appearance:
@@ -276,13 +392,13 @@ public struct LuxoraPhoneRootView: View {
 
     #if DEBUG
     private func applyDebugRouteIfNeeded() {
-        guard !didApplyDebugRoute else { return }
-        didApplyDebugRoute = true
+        guard LuxoraPhoneDebugRouteGate.consume() else { return }
 
         let environment = ProcessInfo.processInfo.environment
-        if let rawFolder = environment["LUXORA_UI_TEST_INITIAL_FOLDER"],
+        if chatFoldersStore == nil,
+           let rawFolder = environment["LUXORA_UI_TEST_INITIAL_FOLDER"],
            let folder = ConversationFolder(rawValue: rawFolder) {
-            store.selectedFolder = folder
+                store.selectedFolder = folder
         }
         if let liveAutomation = DebugLaunchAutomation(environment: environment),
            let conversationID = liveAutomation.conversationID,
@@ -299,6 +415,7 @@ public struct LuxoraPhoneRootView: View {
         case "chats", "inbox": selectedTab = .chats
         case "you", "settings": selectedTab = .settings
         case "edit-chats": openChatRoute(.edit)
+        case "message-requests": openChatRoute(.requests)
         case "contact-profile":
             if let conversationID = store.conversations.first(where: { $0.kind == .direct })?.id {
                 selectedTab = .contacts
@@ -309,6 +426,7 @@ public struct LuxoraPhoneRootView: View {
         case "you-profile-qr": openYouRoute(.profileCode)
         case "you-identity": openYouRoute(.identity)
         case "you-devices": openYouRoute(.devices)
+        case "you-phone-password": openYouRoute(.phonePassword)
         case "you-notifications": openYouRoute(.notifications)
         case "you-privacy": openYouRoute(.privacy)
         case "you-data": openYouRoute(.data)
@@ -354,7 +472,9 @@ private enum PhoneTab: Hashable {
 
 private enum PhoneChatRoute: Hashable {
     case conversation(UUID)
+    case communityProfile(UUID)
     case spaces
+    case requests
     case edit
 }
 
@@ -368,6 +488,7 @@ private enum PhoneSettingsRoute: Hashable {
     case profileCode
     case identity
     case devices
+    case phonePassword
     case notifications
     case privacy
     case data
@@ -382,6 +503,7 @@ private enum PhoneSettingsRoute: Hashable {
 }
 
 private struct PhoneContactsView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var store: MessengerStore
     let openProfile: (UUID) -> Void
 
@@ -431,6 +553,8 @@ private struct PhoneContactsView: View {
     }
 
     var body: some View {
+        let projectedContactSections = contactSections
+
         ScrollViewReader { proxy in
             ZStack(alignment: .trailing) {
                 List {
@@ -444,7 +568,7 @@ private struct PhoneContactsView: View {
                         .accessibilityHint(phoneString("contacts.loaded_only"))
                         .accessibilityIdentifier("contacts-invite-gated")
 
-                        ForEach(contactSections) { section in
+                        ForEach(projectedContactSections) { section in
                             ForEach(section.conversations) { conversation in
                                 Button { openProfile(conversation.id) } label: {
                                     HStack(spacing: 12) {
@@ -480,9 +604,9 @@ private struct PhoneContactsView: View {
 
                 PhoneContactsAlphabetRail(
                     letters: russianAlphabet,
-                    availableLetters: Set(contactSections.map(\.letter))
+                    availableLetters: Set(projectedContactSections.map(\.letter))
                 ) { letter in
-                    withAnimation(.snappy(duration: 0.22)) {
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
                         proxy.scrollTo(PhoneContactSection.anchorID(for: letter), anchor: .top)
                     }
                 }
@@ -491,7 +615,7 @@ private struct PhoneContactsView: View {
             }
         }
         .overlay {
-            if filteredContacts.isEmpty {
+            if projectedContactSections.isEmpty {
                 ContentUnavailableView(
                     phoneString("contacts.no_results"),
                     systemImage: "person.crop.circle.badge.questionmark"
@@ -962,6 +1086,7 @@ private struct ProfileDetailLine: View {
 private struct PhoneEditChatsView: View {
     @Bindable var store: MessengerStore
     let storiesGate: FeatureGate
+    let chatFoldersStore: ChatFoldersStore?
 
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Set<UUID> = []
@@ -979,30 +1104,24 @@ private struct PhoneEditChatsView: View {
     }
 
     private var visibleConversations: [Conversation] {
-        store.conversations
-            .filter { conversation in
-                switch store.selectedFolder {
-                case .all: true
-                case .unread: conversation.unreadCount > 0
-                case .personal: conversation.folder == "personal"
-                case .work: conversation.folder == "work"
-                case .groups: conversation.kind == .group
-                case .channels: conversation.kind == .channel
-                case .saved: conversation.kind == .saved
-                }
-            }
-            .filter { conversation in
+        let usesSynchronizedFolder = chatFoldersStore != nil
+        let base = chatFoldersStore?.visibleConversations(from: store.conversations)
+            ?? store.conversations.filter(store.selectedFolder.includes)
+        let filtered = base.filter { conversation in
                 query.isEmpty
                     || conversation.title.localizedCaseInsensitiveContains(query)
                     || conversation.subtitle.localizedCaseInsensitiveContains(query)
             }
-            .sorted { lhs, rhs in
-                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                return lhs.lastActivity > rhs.lastActivity
-            }
+        guard !usesSynchronizedFolder else { return filtered }
+        return filtered.sorted { lhs, rhs in
+            if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+            return lhs.lastActivity > rhs.lastActivity
+        }
     }
 
     var body: some View {
+        let projectedConversations = visibleConversations
+
         List {
             if showsStatusRail {
                 Section {
@@ -1023,17 +1142,26 @@ private struct PhoneEditChatsView: View {
             }
 
             Section {
-                InboxFolderStrip(
-                    selection: $store.selectedFolder,
-                    conversations: store.conversations,
-                    requestRemoval: { _ in presentedGate = folderEditingGate }
-                )
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(.init(top: 1, leading: 0, bottom: 4, trailing: 0))
+                Group {
+                    if let chatFoldersStore {
+                        PhoneChatFolderRail(
+                            store: chatFoldersStore,
+                            conversations: store.conversations
+                        )
+                    } else {
+                        InboxFolderStrip(
+                            selection: $store.selectedFolder,
+                            conversations: store.conversations,
+                            requestRemoval: { _ in presentedGate = folderEditingGate }
+                        )
+                    }
+                }
+                .listRowSeparator(.hidden)
+                .listRowInsets(.init(top: 1, leading: 0, bottom: 4, trailing: 0))
             }
 
             Section {
-                ForEach(visibleConversations) { conversation in
+                ForEach(projectedConversations) { conversation in
                     Button {
                         if selected.contains(conversation.id) {
                             selected.remove(conversation.id)
@@ -1080,7 +1208,7 @@ private struct PhoneEditChatsView: View {
         .listStyle(.plain)
         .listSectionSpacing(.compact)
         .overlay {
-            if visibleConversations.isEmpty {
+            if projectedConversations.isEmpty {
                 ContentUnavailableView.search(text: query)
             }
         }
@@ -1161,40 +1289,52 @@ private struct LockedEditAction: View {
 }
 
 private struct PhoneInboxView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var store: MessengerStore
     let storiesGate: FeatureGate
     let securityGate: FeatureGate
     let openConversation: (UUID) -> Void
+    let openRequests: () -> Void
     let openSpaces: () -> Void
     let openEdit: () -> Void
+    let chatFoldersStore: ChatFoldersStore?
+    let updateChatPreferences: (UUID, ChatPreferencesPatch) async -> Bool
 
     @State private var query = ""
     @State private var isComposing = false
     @State private var presentedGate: FeatureGate?
+    @State private var preferenceOperations: Set<UUID> = []
+    @AppStorage("luxora.chatFolders.showNames") private var showsFolderNames = true
 
     private var visibleConversations: [Conversation] {
-        store.conversations
-            .filter { conversation in
-                switch store.selectedFolder {
-                case .all: true
-                case .unread: conversation.unreadCount > 0
-                case .personal: conversation.folder == "personal"
-                case .work: conversation.folder == "work"
-                case .groups: conversation.kind == .group
-                case .channels: conversation.kind == .channel
-                case .saved: conversation.kind == .saved
-                }
-            }
-            .filter { conversation in
+        let usesSynchronizedFolder = chatFoldersStore != nil
+        let base = chatFoldersStore?.visibleConversations(from: store.conversations)
+            ?? store.conversations.filter(store.selectedFolder.includes)
+        let filtered = base.filter { conversation in
                 query.isEmpty
                     || conversation.title.localizedCaseInsensitiveContains(query)
                     || conversation.subtitle.localizedCaseInsensitiveContains(query)
             }
-            .sorted(by: conversationOrder)
+        guard !usesSynchronizedFolder else { return filtered }
+        return filtered.sorted(by: conversationOrder)
     }
 
     var body: some View {
+        let projectedConversations = visibleConversations
+        let presentsStatusRail = showsStatusRail
+        let presentsExpandedTitle = usesExpandedTitle
+
         List {
+            if presentsExpandedTitle {
+                Section {
+                    PhoneChatsTitleStack(conversations: [])
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                        .listRowSeparator(.hidden)
+                }
+                .listRowBackground(Color.clear)
+            }
+
             if store.connectionState != .online {
                 Section {
                     ConnectionPill(connectionState: store.connectionState)
@@ -1224,7 +1364,7 @@ private struct PhoneInboxView: View {
                 }
             }
 
-            if showsStatusRail {
+            if presentsStatusRail {
                 Section {
                     PhoneStatusRail(
                         currentUser: store.currentUser,
@@ -1237,30 +1377,116 @@ private struct PhoneInboxView: View {
             }
 
             Section {
-                InboxFolderStrip(selection: $store.selectedFolder, conversations: store.conversations)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(.init(top: 2, leading: 0, bottom: 5, trailing: 0))
+                Button(action: openRequests) {
+                    PhoneInboxMessageRequestsRow(
+                        count: store.pendingIncomingMessageRequestCount
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("inbox-message-requests")
             }
 
             Section {
-                ForEach(visibleConversations) { conversation in
+                Group {
+                    if let chatFoldersStore {
+                        PhoneChatFolderRail(
+                            store: chatFoldersStore,
+                            conversations: store.conversations
+                        )
+                    } else {
+                        InboxFolderStrip(
+                            selection: $store.selectedFolder,
+                            conversations: store.conversations
+                        )
+                    }
+                }
+                .listRowSeparator(.hidden)
+                .listRowInsets(.init(top: 2, leading: 0, bottom: 5, trailing: 0))
+            }
+
+            Section {
+                ForEach(projectedConversations) { conversation in
                     Button {
                         openConversation(conversation.id)
                     } label: {
-                        PhoneConversationRow(conversation: conversation)
+                        PhoneConversationRow(
+                            conversation: conversation,
+                            folderNames: showsFolderNames
+                                ? chatFoldersStore?.folders
+                                    .filter { $0.includes(conversation) }
+                                    .map(\.title) ?? []
+                                : []
+                        )
                     }
                     .buttonStyle(.plain)
+                    .foregroundStyle(Color(uiColor: .label))
+                    .listRowBackground(Color(uiColor: .systemBackground))
                     .listRowInsets(.init(top: 1, leading: 16, bottom: 1, trailing: 12))
                     .accessibilityIdentifier("inbox-row-\(conversation.id.uuidString.lowercased())")
+                    .id(conversation.id)
+                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                        Button {
+                            toggleMute(conversation)
+                        } label: {
+                            Label(
+                                conversation.isMuted ? "Включить звук" : "Без звука",
+                                systemImage: conversation.isMuted ? "speaker.wave.2.fill" : "speaker.slash.fill"
+                            )
+                        }
+                        .tint(.orange)
+                        .disabled(preferenceOperations.contains(conversation.id))
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            toggleArchive(conversation)
+                        } label: {
+                            Label(
+                                conversation.isArchived ? "Вернуть" : "В архив",
+                                systemImage: conversation.isArchived ? "tray.and.arrow.up.fill" : "archivebox.fill"
+                            )
+                        }
+                        .tint(LuxoraTheme.iris)
+                        .disabled(preferenceOperations.contains(conversation.id))
+                    }
+                    .contextMenu {
+                        Button {
+                            toggleMute(conversation)
+                        } label: {
+                            Label(
+                                conversation.isMuted ? "Включить уведомления" : "Выключить уведомления",
+                                systemImage: conversation.isMuted ? "speaker.wave.2" : "speaker.slash"
+                            )
+                        }
+                        Button {
+                            toggleArchive(conversation)
+                        } label: {
+                            Label(
+                                conversation.isArchived ? "Вернуть из архива" : "Архивировать",
+                                systemImage: conversation.isArchived ? "tray.and.arrow.up" : "archivebox"
+                            )
+                        }
+                    }
                 }
             }
         }
         .listStyle(.plain)
+        // The iOS 26 floating tab bar otherwise composites over the last
+        // partially visible row. Shrink the List's real layout viewport so
+        // text and unread badges never sit beneath translucent tab chrome.
+        .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? 96 : 64)
+        // Rebuild the lazy layout shell when the system changes text size so
+        // cached row heights never leave scaled text behind.
+        .id(dynamicTypeSize)
+        .accessibilityRotor("Чаты") {
+            ForEach(projectedConversations) { conversation in
+                AccessibilityRotorEntry(conversation.title, id: conversation.id)
+            }
+        }
         .refreshable {
             await store.refreshConversations()
         }
         .overlay {
-            if visibleConversations.isEmpty {
+            if projectedConversations.isEmpty {
                 inboxEmptyState
             }
         }
@@ -1269,29 +1495,35 @@ private struct PhoneInboxView: View {
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: phoneString("chats.search")
         )
-        .navigationTitle(phoneString("chats.title"))
+        .navigationTitle(presentsExpandedTitle ? "" : phoneString("chats.title"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button(phoneString("chats.edit_short"), action: openEdit)
+                    .frame(minWidth: 44, minHeight: 44)
                     .accessibilityLabel(phoneString("chats.edit"))
                     .accessibilityIdentifier("chats-edit")
             }
             ToolbarItem(placement: .principal) {
-                PhoneChatsTitleStack(
-                    conversations: showsStatusRail ? [] : Array(store.conversations.prefix(3))
-                )
+                if !presentsExpandedTitle {
+                    PhoneChatsTitleStack(
+                        conversations: presentsStatusRail ? [] : Array(store.conversations.prefix(3))
+                    )
+                }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button(phoneString("feature.security.title"), systemImage: "shield") {
                     presentedGate = securityGate
                 }
+                .frame(minWidth: 44, minHeight: 44)
                 .accessibilityIdentifier("chats-security-gated")
                 Button(phoneString("chats.spaces"), systemImage: "person.3.fill", action: openSpaces)
+                    .frame(minWidth: 44, minHeight: 44)
                     .accessibilityIdentifier("chats-spaces")
                 Button(phoneString("chats.new"), systemImage: "square.and.pencil") {
                     isComposing = true
                 }
+                .frame(minWidth: 44, minHeight: 44)
                 .accessibilityIdentifier("inbox-new-message")
             }
         }
@@ -1302,6 +1534,11 @@ private struct PhoneInboxView: View {
         .sheet(item: $presentedGate) { gate in
             PhoneFeatureStatusSheet(gate: gate)
                 .presentationDetents([.medium])
+        }
+        .onChange(of: store.conversations.lazy.filter(\.isArchived).count) { _, archivedCount in
+            if archivedCount == 0, chatFoldersStore?.isArchiveSelected == true {
+                chatFoldersStore?.select(nil)
+            }
         }
         #if DEBUG
         .task {
@@ -1360,9 +1597,441 @@ private struct PhoneInboxView: View {
         #endif
     }
 
+    private var usesExpandedTitle: Bool {
+        dynamicTypeSize >= .xxLarge
+    }
+
     private func conversationOrder(_ lhs: Conversation, _ rhs: Conversation) -> Bool {
         if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
         return lhs.lastActivity > rhs.lastActivity
+    }
+
+    private func toggleArchive(_ conversation: Conversation) {
+        performPreferenceUpdate(
+            chatID: conversation.id,
+            patch: ChatPreferencesPatch(archived: !conversation.isArchived)
+        )
+    }
+
+    private func toggleMute(_ conversation: Conversation) {
+        let mutedUntil: ChatMutedUntilPatch = conversation.isMuted
+            ? .unmuted
+            : .until(Date().addingTimeInterval(10 * 365 * 24 * 60 * 60))
+        performPreferenceUpdate(
+            chatID: conversation.id,
+            patch: ChatPreferencesPatch(mutedUntil: mutedUntil)
+        )
+    }
+
+    private func performPreferenceUpdate(chatID: UUID, patch: ChatPreferencesPatch) {
+        guard preferenceOperations.insert(chatID).inserted else { return }
+        Task {
+            _ = await updateChatPreferences(chatID, patch)
+            preferenceOperations.remove(chatID)
+        }
+    }
+}
+
+private struct PhoneInboxMessageRequestsRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.crop.circle.badge.questionmark")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(LuxoraTheme.iris)
+                .frame(width: 34, height: 34)
+                .background(LuxoraTheme.iris.opacity(0.12), in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(usesCompactCopy ? "Запросы" : "Запросы на переписку")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(usesCompactCopy
+                    ? "От незнакомых"
+                    : "Неизвестные отправители не видят прочтение до принятия")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 6)
+            if count > 0 {
+                Text("\(count)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(LuxoraTheme.accent, in: Capsule())
+            }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "Запросы на переписку. Неизвестные отправители не видят прочтение до принятия."
+        )
+        .accessibilityValue(count > 0 ? "Новых запросов: \(count)" : "Новых запросов нет")
+        .accessibilityHint("Открывает входящие и исходящие запросы")
+    }
+
+    private var usesCompactCopy: Bool {
+        dynamicTypeSize >= .xxLarge
+    }
+}
+
+private struct PhoneMessageRequestsView: View {
+    @Bindable var store: MessengerStore
+    let openConversation: (UUID) -> Void
+
+    @State private var direction: MessageRequestDirection = .incoming
+    @State private var presentsNewRequest = false
+    @State private var dismissalCandidate: MessageRequestItem?
+
+    private var requests: [MessageRequestItem] { store.messageRequests(direction) }
+    private var state: RemoteContentState { store.messageRequestListState(direction) }
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Направление", selection: $direction) {
+                    ForEach(MessageRequestDirection.allCases) { direction in
+                        Text(direction.russianTitle).tag(direction)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("message-requests-direction")
+            }
+            .listRowBackground(Color.clear)
+
+            Section {
+                Label {
+                    Text("До принятия отправитель не получает отметку о прочтении, точный статус присутствия или доступ к звонкам.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: "hand.raised.fill")
+                        .foregroundStyle(LuxoraTheme.iris)
+                }
+            }
+
+            if case let .failed(message) = state {
+                Section {
+                    PhoneRemoteFailureRow(
+                        title: "Не удалось обновить \(direction == .incoming ? "входящие" : "исходящие") запросы",
+                        detail: message,
+                        retry: {
+                            Task { await store.loadMessageRequests(direction, force: true) }
+                        }
+                    )
+                }
+            }
+
+            Section(direction.russianTitle) {
+                if state == .loading, requests.isEmpty {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Загружаем запросы…")
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityIdentifier("message-requests-loading")
+                } else if requests.isEmpty {
+                    ContentUnavailableView(
+                        direction == .incoming ? "Новых запросов нет" : "Исходящих запросов нет",
+                        systemImage: direction == .incoming ? "person.crop.circle.badge.checkmark" : "paperplane",
+                        description: Text(
+                            direction == .incoming
+                                ? "Незнакомые пользователи появятся здесь, не раскрывая им ваше прочтение."
+                                : "Создайте запрос по точному username."
+                        )
+                    )
+                    .accessibilityIdentifier("message-requests-empty-\(direction.rawValue)")
+                } else {
+                    ForEach(requests) { request in
+                        PhoneMessageRequestRow(
+                            request: request,
+                            mutationState: store.messageRequestMutationState(request.id),
+                            error: store.messageRequestMutationErrors[request.id],
+                            accept: { store.acceptMessageRequest(request.id) },
+                            dismiss: { dismissalCandidate = request },
+                            retry: { store.retryMessageRequestMutation(request.id) }
+                        )
+                    }
+                }
+            }
+        }
+        .navigationTitle("Запросы на переписку")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Новый запрос", systemImage: "square.and.pencil") {
+                    presentsNewRequest = true
+                }
+                .disabled(!store.supportsMessageRequestCreation)
+                .accessibilityIdentifier("message-request-new")
+            }
+        }
+        .refreshable {
+            await store.loadMessageRequests(.incoming, force: true)
+            await store.loadMessageRequests(.outgoing, force: true)
+        }
+        .sheet(isPresented: $presentsNewRequest) {
+            PhoneNewMessageRequestSheet(store: store)
+        }
+        .confirmationDialog(
+            "Удалить запрос?",
+            isPresented: Binding(
+                get: { dismissalCandidate != nil },
+                set: { if !$0 { dismissalCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let dismissalCandidate {
+                Button("Удалить", role: .destructive) {
+                    store.dismissMessageRequest(dismissalCandidate.id)
+                    self.dismissalCandidate = nil
+                }
+            }
+            Button("Отмена", role: .cancel) { dismissalCandidate = nil }
+        } message: {
+            Text("Отправитель не узнает, что вы просмотрели или удалили запрос.")
+        }
+        .task {
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["LUXORA_UI_TEST_MESSAGE_REQUESTS"] == "1",
+               !store.supportsMessageRequests {
+                store.installDebugMessageRequestFixture()
+            }
+            #endif
+            await store.loadMessageRequests(.incoming)
+            await store.loadMessageRequests(.outgoing)
+        }
+        .onChange(of: store.lastAcceptedMessageRequestConversationID) { _, conversationID in
+            guard let conversationID else { return }
+            _ = store.consumeAcceptedMessageRequestConversation()
+            openConversation(conversationID)
+        }
+        .accessibilityIdentifier("message-requests-screen")
+    }
+}
+
+private struct PhoneMessageRequestRow: View {
+    let request: MessageRequestItem
+    let mutationState: RemoteContentState
+    let error: String?
+    let accept: () -> Void
+    let dismiss: () -> Void
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                AvatarView(participant: request.participant, size: 48)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(request.participant.displayName)
+                        .font(.body.weight(.semibold))
+                    Text("@\(request.participant.username)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(request.body)
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
+                Spacer(minLength: 4)
+                Text(request.createdAt, style: .relative)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.trailing)
+            }
+
+            if request.direction == .incoming, request.state == .pending {
+                if mutationState == .loading {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Подтверждаем на сервере…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityIdentifier("message-request-mutation-loading-\(request.id.uuidString.lowercased())")
+                } else {
+                    HStack(spacing: 10) {
+                        Button("Принять", action: accept)
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("message-request-accept-\(request.id.uuidString.lowercased())")
+                        Button("Удалить", role: .destructive, action: dismiss)
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("message-request-dismiss-\(request.id.uuidString.lowercased())")
+                    }
+                }
+            } else {
+                Label(request.state.russianTitle, systemImage: requestStateSymbol)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(request.state == .expired ? .secondary : LuxoraTheme.iris)
+                    .accessibilityIdentifier("message-request-state-\(request.id.uuidString.lowercased())")
+            }
+
+            if let error {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Button("Повторить", action: retry)
+                        .font(.caption.weight(.semibold))
+                }
+                .accessibilityIdentifier("message-request-mutation-error-\(request.id.uuidString.lowercased())")
+            }
+        }
+        .padding(.vertical, 5)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("message-request-row-\(request.id.uuidString.lowercased())")
+    }
+
+    private var requestStateSymbol: String {
+        switch request.state {
+        case .pending: "clock.fill"
+        case .accepted: "checkmark.circle.fill"
+        case .recipientDismissed: "trash.fill"
+        case .expired: "hourglass.bottomhalf.filled"
+        }
+    }
+}
+
+private struct PhoneNewMessageRequestSheet: View {
+    @Bindable var store: MessengerStore
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var username = ""
+    @State private var requestBody = ""
+    @State private var didSubmit = false
+
+    private var normalizedBody: String {
+        requestBody.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Точный username") {
+                    TextField("@username", text: $username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.search)
+                        .onSubmit(search)
+                        .accessibilityIdentifier("message-request-username")
+                    Button("Найти", systemImage: "magnifyingglass", action: search)
+                        .disabled(username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("message-request-lookup")
+                }
+
+                Section("Получатель") {
+                    switch store.messageRequestLookupState {
+                    case .idle:
+                        Text("Введите точный username. Глобальный список пользователей не раскрывается.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .loading:
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Проверяем доступность…")
+                        }
+                    case .loaded:
+                        if let participant = store.messageRequestLookupResult {
+                            HStack(spacing: 12) {
+                                AvatarView(participant: participant, size: 46)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(participant.displayName)
+                                        .font(.body.weight(.semibold))
+                                    Text("@\(participant.username)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .accessibilityIdentifier("message-request-recipient")
+                        } else {
+                            Label("Пользователь недоступен", systemImage: "person.crop.circle.badge.xmark")
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("message-request-recipient-unavailable")
+                        }
+                    case let .failed(message):
+                        PhoneRemoteFailureRow(title: "Поиск не выполнен", detail: message, retry: search)
+                    }
+                }
+
+                if store.messageRequestLookupResult != nil {
+                    Section("Первое сообщение") {
+                        TextEditor(text: $requestBody)
+                            .frame(minHeight: 110)
+                            .accessibilityIdentifier("message-request-body")
+                        Text("\(requestBody.unicodeScalars.count) из 1000 · вложения недоступны до принятия")
+                            .font(.caption2)
+                            .foregroundStyle(requestBody.unicodeScalars.count > 1_000 ? .red : .secondary)
+                    }
+                }
+
+                if case let .failed(message) = store.messageRequestCreationState {
+                    Section {
+                        PhoneRemoteFailureRow(
+                            title: "Запрос не отправлен",
+                            detail: store.messageRequestCreationError ?? message,
+                            retry: {
+                                didSubmit = true
+                                store.retryMessageRequestCreation()
+                            }
+                        )
+                    }
+                }
+
+                Section {
+                    Text("Получатель увидит только ваше публичное имя, username и это сообщение. До принятия Luxora не отправляет вам отметку о прочтении.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Новый запрос")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(store.messageRequestCreationState == .loading ? "Отправляем…" : "Отправить") {
+                        guard let recipient = store.messageRequestLookupResult else { return }
+                        didSubmit = true
+                        store.createMessageRequest(to: recipient.id, body: normalizedBody)
+                    }
+                    .disabled(
+                        store.messageRequestLookupResult == nil
+                            || normalizedBody.isEmpty
+                            || requestBody.unicodeScalars.count > 1_000
+                            || store.messageRequestCreationState == .loading
+                    )
+                    .accessibilityIdentifier("message-request-send")
+                }
+            }
+        }
+        .onChange(of: requestBody) { _, value in
+            if value.unicodeScalars.count > 1_000 {
+                requestBody = String(value.unicodeScalars.prefix(1_000))
+            }
+        }
+        .onChange(of: store.messageRequestCreationState) { _, state in
+            if didSubmit, state == .loaded { dismiss() }
+        }
+        .accessibilityIdentifier("message-request-new-sheet")
+    }
+
+    private func search() {
+        store.lookupMessageRequestRecipient(username)
     }
 }
 
@@ -1394,14 +2063,15 @@ private struct PhoneChatsTitleStack: View {
             Text(phoneString("chats.title"))
                 .font(.headline)
         }
-        .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(phoneString("chats.title"))
+        .accessibilityHeading(.h1)
         .accessibilityIdentifier("chats-title-stack")
     }
 }
 
 private struct InboxFolderStrip: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var selection: ConversationFolder
     let conversations: [Conversation]
     let requestRemoval: ((ConversationFolder) -> Void)?
@@ -1421,18 +2091,20 @@ private struct InboxFolderStrip: View {
     }
 
     var body: some View {
+        let projectedUnreadCount = unreadCount
+
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
                 ForEach(folders) { folder in
                     InboxFolderChip(
                         folder: folder,
                         isSelected: selection == folder,
-                        unreadCount: unreadCount,
+                        unreadCount: projectedUnreadCount,
                         removalAction: requestRemoval.map { requestRemoval in
                             { requestRemoval(folder) }
                         }
                     ) {
-                        withAnimation(.snappy(duration: 0.22)) {
+                        withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
                             selection = folder
                             scrollPosition = folder
                         }
@@ -1442,7 +2114,7 @@ private struct InboxFolderStrip: View {
             }
             .scrollTargetLayout()
         }
-        .frame(height: 40)
+        .frame(minHeight: 48)
         .contentMargins(.horizontal, 4, for: .scrollContent)
         .background(Color.secondary.opacity(0.09), in: Capsule())
         .overlay(Capsule().stroke(Color.secondary.opacity(0.16), lineWidth: 0.5))
@@ -1456,7 +2128,7 @@ private struct InboxFolderStrip: View {
             }
         }
         .onChange(of: selection) { _, newSelection in
-            withAnimation(.snappy(duration: 0.22)) {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
                 scrollPosition = newSelection
             }
         }
@@ -1483,7 +2155,7 @@ private struct InboxFolderStrip: View {
         let current = scrollPosition ?? selection
         guard let index = folders.firstIndex(of: current) else { return }
         let targetIndex = min(max(index + offset, folders.startIndex), folders.index(before: folders.endIndex))
-        withAnimation(.snappy(duration: 0.22)) {
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
             scrollPosition = folders[targetIndex]
         }
     }
@@ -1513,24 +2185,35 @@ private struct InboxFolderChip: View {
                 .padding(.leading, 14)
                 .padding(.trailing, showsRemoval ? 5 : 14)
                 .padding(.vertical, 7)
+                .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            .accessibilityLabel(
+                folder == .unread && unreadCount > 0
+                    ? "\(folder.title), \(unreadCount)"
+                    : folder.title
+            )
             .accessibilityAddTraits(isSelected ? .isSelected : [])
             .accessibilityValue(isSelected ? phoneString("folders.selected") : "")
+            .accessibilityShowsLargeContentViewer {
+                Text(folder.title)
+            }
             .accessibilityIdentifier("inbox-folder-\(folder.rawValue)")
 
             if let removalAction, folder != .all {
                 Button(action: removalAction) {
                     Image(systemName: "xmark")
                         .font(.caption.weight(.bold))
-                        .frame(width: 25, height: 30)
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(String(format: phoneString("folders.remove_unavailable"), folder.title))
                 .accessibilityIdentifier("folder-remove-\(folder.rawValue)-gated")
             }
         }
-        .foregroundStyle(isSelected ? .white : .secondary)
+        .foregroundStyle(isSelected ? .white : Color(uiColor: .label))
         .background {
             if isSelected {
                 Capsule().fill(LuxoraTheme.brandGradient)
@@ -1544,25 +2227,39 @@ private struct InboxFolderChip: View {
 }
 
 private struct PhoneStatusRail: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let currentUser: Participant
     let conversations: [Conversation]
     let gate: FeatureGate
 
-    @State private var scrollPosition: UUID?
+    @State private var scrollPosition: String?
     @State private var presentedGate: FeatureGate?
 
     private var items: [StatusRailItem] {
-        let mine = StatusRailItem(participant: currentUser, isMine: true)
+        let mine = StatusRailItem(
+            id: "mine-\(currentUser.id.uuidString.lowercased())",
+            participant: currentUser,
+            isMine: true
+        )
         let contacts = conversations
             .filter { $0.kind == .direct }
-            .map { StatusRailItem(participant: $0.avatar, isMine: false) }
+            .map {
+                StatusRailItem(
+                    id: "conversation-\($0.id.uuidString.lowercased())",
+                    participant: $0.avatar,
+                    isMine: false
+                )
+            }
         return [mine] + contacts
     }
 
     var body: some View {
+        let projectedItems = items
+
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 4) {
-                ForEach(items) { item in
+                ForEach(projectedItems) { item in
                     Button {
                         scrollPosition = item.id
                         presentedGate = gate
@@ -1583,25 +2280,33 @@ private struct PhoneStatusRail: View {
                             }
 
                             Text(item.isMine ? phoneString("stories.mine") : item.participant.displayName)
-                                .font(.caption2)
+                                .font(usesExpandedLayout ? .body : .caption2)
                                 .foregroundStyle(.primary)
-                                .lineLimit(1)
+                                .lineLimit(usesExpandedLayout ? nil : 1)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity)
+                                .accessibilityHidden(true)
                         }
-                        .frame(width: 72)
+                        .frame(width: usesExpandedLayout ? 220 : 72)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(
                         "\(item.isMine ? phoneString("stories.mine") : item.participant.displayName), \(phoneString("stories.unavailable"))"
                     )
                     .accessibilityHint(gate.detail)
-                    .accessibilityIdentifier("status-item-\(item.id.uuidString.lowercased())")
+                    .accessibilityShowsLargeContentViewer {
+                        Text(item.isMine ? phoneString("stories.mine") : item.participant.displayName)
+                    }
+                    .accessibilityIdentifier(
+                        "status-item-\(item.participant.id.uuidString.lowercased())"
+                    )
                     .id(item.id)
                 }
             }
             .scrollTargetLayout()
+            .id(dynamicTypeSize)
         }
-        .frame(height: 88)
+        .frame(minHeight: usesExpandedLayout ? 168 : 92)
         .contentMargins(.horizontal, 12, for: .scrollContent)
         .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
         .scrollPosition(id: $scrollPosition)
@@ -1623,27 +2328,34 @@ private struct PhoneStatusRail: View {
         }
         .task {
             if scrollPosition == nil {
-                scrollPosition = items.first?.id
+                scrollPosition = projectedItems.first?.id
             }
         }
     }
 
+    private var usesExpandedLayout: Bool {
+        dynamicTypeSize >= .xxLarge
+    }
+
     private func move(by offset: Int) {
-        guard !items.isEmpty else { return }
-        let current = scrollPosition ?? items[0].id
-        let index = items.firstIndex(where: { $0.id == current }) ?? 0
-        let targetIndex = min(max(index + offset, items.startIndex), items.index(before: items.endIndex))
-        withAnimation(.snappy(duration: 0.22)) {
-            scrollPosition = items[targetIndex].id
+        let projectedItems = items
+        guard !projectedItems.isEmpty else { return }
+        let current = scrollPosition ?? projectedItems[0].id
+        let index = projectedItems.firstIndex(where: { $0.id == current }) ?? 0
+        let targetIndex = min(
+            max(index + offset, projectedItems.startIndex),
+            projectedItems.index(before: projectedItems.endIndex)
+        )
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
+            scrollPosition = projectedItems[targetIndex].id
         }
     }
 }
 
 private struct StatusRailItem: Identifiable {
+    let id: String
     let participant: Participant
     let isMine: Bool
-
-    var id: UUID { participant.id }
 }
 
 private struct PhoneRemoteFailureRow: View {
@@ -1725,64 +2437,154 @@ private struct ConnectionPill: View {
 }
 
 private struct PhoneConversationRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let conversation: Conversation
+    let folderNames: [String]
+
+    init(conversation: Conversation, folderNames: [String] = []) {
+        self.conversation = conversation
+        self.folderNames = folderNames
+    }
 
     var body: some View {
         HStack(spacing: 12) {
             AvatarView(participant: conversation.avatar, size: 54)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 5) {
+            if usesExpandedLayout {
+                VStack(alignment: .leading, spacing: 5) {
                     Text(conversation.title)
                         .font(.body.weight(.semibold))
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(conversation.lastActivity, style: .time)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(activityTime)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color(uiColor: .label))
+                        .fixedSize(horizontal: true, vertical: true)
+                    folderTags
+                    conversationSummary
                 }
-
-                HStack(spacing: 6) {
-                    Text(conversation.isTyping ? phoneString("chats.typing") : conversation.subtitle)
-                        .font(.callout)
-                        .foregroundStyle(conversation.isTyping ? LuxoraTheme.iris : .secondary)
-                        .lineLimit(2)
-                    Spacer(minLength: 4)
-                    if conversation.isMuted {
-                        Image(systemName: "speaker.slash.fill")
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 5) {
+                        Text(conversation.title)
+                            .font(.body.weight(.semibold))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(activityTime)
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Color(uiColor: .label))
+                            .fixedSize(horizontal: true, vertical: true)
                     }
-                    if conversation.unreadCount > 0 {
-                        Text("\(conversation.unreadCount)")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(LuxoraTheme.accent, in: Capsule())
-                    } else if conversation.isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
+                    folderTags
+                    conversationSummary
                 }
             }
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(conversation.title), непрочитанных: \(conversation.unreadCount)")
+        .accessibilityLabel(conversationAccessibilityLabel)
+        .accessibilityHint("Открывает переписку")
+    }
+
+    @ViewBuilder
+    private var folderTags: some View {
+        if !folderNames.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(Array(folderNames.prefix(2)), id: \.self) { name in
+                    Text(name)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .foregroundStyle(LuxoraTheme.iris)
+                        .background(LuxoraTheme.iris.opacity(0.11), in: Capsule())
+                }
+                if folderNames.count > 2 {
+                    Text("+\(folderNames.count - 2)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Папки: \(folderNames.joined(separator: ", "))")
+        }
+    }
+
+    private var conversationSummary: some View {
+        HStack(spacing: 6) {
+            Text(conversation.isTyping ? phoneString("chats.typing") : conversation.subtitle)
+                .font(.callout)
+                .foregroundStyle(conversation.isTyping ? typingColor : Color(uiColor: .label))
+                .lineLimit(usesExpandedLayout ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if conversation.isMuted {
+                Image(systemName: "speaker.slash.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            if conversation.unreadCount > 0 {
+                Text("\(conversation.unreadCount)")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(LuxoraTheme.accent, in: Capsule())
+                    .accessibilityHidden(true)
+            } else if conversation.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private var usesExpandedLayout: Bool {
+        dynamicTypeSize >= .xxLarge
+    }
+
+    private var activityTime: String {
+        conversation.lastActivity.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var typingColor: Color {
+        colorScheme == .dark ? LuxoraTheme.frost : LuxoraTheme.deepViolet
+    }
+
+    private var conversationAccessibilityLabel: String {
+        var parts = [
+            conversation.title,
+            conversation.isTyping ? phoneString("chats.typing") : conversation.subtitle,
+            "непрочитанных: \(conversation.unreadCount)",
+        ]
+        if conversation.isMuted { parts.append("уведомления выключены") }
+        if conversation.isPinned { parts.append("закреплено") }
+        if !folderNames.isEmpty { parts.append("папки: \(folderNames.joined(separator: ", "))") }
+        return parts.joined(separator: ", ")
     }
 }
 
 private struct PhoneDirectConversationView: View {
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var store: MessengerStore
     let conversation: Conversation
     let callsGate: FeatureGate
     let mediaGate: FeatureGate
     let securityGate: FeatureGate
+    let communityStore: CommunityStore?
+    let openCommunityProfile: () -> Void
 
     @State private var presentedGate: FeatureGate?
+    @State private var forwardedMessage: ChatMessage?
+    @State private var deletionCandidate: ChatMessage?
+    #if DEBUG
+    @State private var didInstallDebugMessageMutations = false
+    @State private var didApplyDebugMessageCaptureState = false
+    #endif
 
     private var messages: [ChatMessage] {
         store.messagesByConversation[conversation.id, default: []]
@@ -1792,23 +2594,44 @@ private struct PhoneDirectConversationView: View {
         store.messageState(for: conversation.id)
     }
 
-    private var failedMessages: [ChatMessage] {
-        messages.filter { $0.isOutgoing && $0.delivery == .failed }
-    }
-
     var body: some View {
+        let displayedMessages = messages
+        let currentMessageState = messageState
+        let messagesPendingRetry = displayedMessages.filter {
+            $0.isOutgoing && $0.delivery == .failed
+        }
+
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    PhonePinnedContext(gate: securityGate)
-
-                    if !failedMessages.isEmpty {
-                        PhoneSendFailureNotice(count: failedMessages.count) {
-                            failedMessages.forEach { store.retryMessage($0.id) }
+                    // At accessibility Dynamic Type sizes this context belongs
+                    // to the scrollable transcript. Keeping it in the fixed
+                    // top inset can consume almost the whole viewport and hide
+                    // both the first message and the composer. The participant
+                    // title remains fixed and fully readable below.
+                    if usesExpandedMessageLayout {
+                        if let pinnedMessage = store.pinnedMessages(for: conversation.id).last {
+                            PhonePinnedContext(gate: securityGate, message: pinnedMessage)
+                        } else if !store.supportsMessagePinning {
+                            PhonePinnedContext(gate: securityGate)
                         }
                     }
 
-                    if case let .failed(message) = messageState, !messages.isEmpty {
+                    if let failure = store.messageMutationFailure {
+                        PhoneMessageMutationFailureNotice(
+                            failure: failure,
+                            retry: store.retryLastMessageMutation,
+                            dismiss: store.dismissMessageMutationFailure
+                        )
+                    }
+
+                    if !messagesPendingRetry.isEmpty {
+                        PhoneSendFailureNotice(count: messagesPendingRetry.count) {
+                            messagesPendingRetry.forEach { store.retryMessage($0.id) }
+                        }
+                    }
+
+                    if case let .failed(message) = currentMessageState, !displayedMessages.isEmpty {
                         PhoneRemoteFailureRow(
                             title: "Не удалось обновить сообщения",
                             detail: message,
@@ -1820,17 +2643,20 @@ private struct PhoneDirectConversationView: View {
 
                     Text(phoneString("conversation.today"))
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color(uiColor: .label))
                         .padding(.horizontal, 11)
                         .padding(.vertical, 5)
-                        .background(.thinMaterial, in: Capsule())
+                        .background(
+                            Color(uiColor: .secondarySystemGroupedBackground),
+                            in: Capsule()
+                        )
                         .accessibilityAddTraits(.isHeader)
 
-                    if messages.isEmpty, messageState == .loading || messageState == .idle {
+                    if displayedMessages.isEmpty, currentMessageState == .loading || currentMessageState == .idle {
                         ProgressView("Загружаем сообщения…")
                             .padding(.top, 48)
                             .accessibilityIdentifier("conversation-loading")
-                    } else if messages.isEmpty, case let .failed(message) = messageState {
+                    } else if displayedMessages.isEmpty, case let .failed(message) = currentMessageState {
                         ContentUnavailableView {
                             Label("Не удалось загрузить сообщения", systemImage: "wifi.exclamationmark")
                         } description: {
@@ -1843,7 +2669,7 @@ private struct PhoneDirectConversationView: View {
                         }
                         .padding(.top, 32)
                         .accessibilityIdentifier("conversation-load-failed")
-                    } else if messages.isEmpty {
+                    } else if displayedMessages.isEmpty {
                         ContentUnavailableView(
                             phoneString("conversation.no_messages"),
                             systemImage: "text.bubble",
@@ -1851,12 +2677,29 @@ private struct PhoneDirectConversationView: View {
                         )
                         .padding(.top, 48)
                     } else {
-                        ForEach(messages) { message in
+                        ForEach(displayedMessages) { message in
+                            let metadata = store.metadata(for: message.id)
                             PhoneMessageBubble(
                                 message: message,
+                                metadata: metadata,
+                                showsAuthorName: conversation.kind == .group || conversation.kind == .channel,
+                                isMutationInFlight: store.isMessageMutationInFlight(message.id),
                                 retry: { store.retryMessage(message.id) },
-                                react: { emoji in store.toggleReaction(emoji, messageID: message.id) }
+                                react: { emoji in store.toggleReaction(emoji, messageID: message.id) },
+                                reply: store.canReply(to: message) ? { store.beginReply(to: message) } : nil,
+                                edit: store.canEdit(message) ? { store.beginEditing(message) } : nil,
+                                delete: store.canDelete(message) ? { deletionCandidate = message } : nil,
+                                forward: store.canForward(message) ? { forwardedMessage = message } : nil,
+                                togglePin: store.canPin(message, in: conversation)
+                                    ? { store.togglePin(message.id, in: conversation.id) }
+                                    : nil
                             )
+                                .padding(
+                                    .bottom,
+                                    usesExpandedMessageLayout && message.id == displayedMessages.last?.id
+                                        ? 2
+                                        : 0
+                                )
                                 .id(message.id)
                                 .accessibilityIdentifier("message-\(message.id.uuidString.lowercased())")
                         }
@@ -1864,7 +2707,7 @@ private struct PhoneDirectConversationView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
-                .padding(.bottom, 8)
+                .padding(.bottom, usesExpandedMessageLayout ? 0 : 8)
             }
             .background {
                 ZStack {
@@ -1875,32 +2718,93 @@ private struct PhoneDirectConversationView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            .accessibilityRotor("Сообщения") {
+                ForEach(displayedMessages) { message in
+                    AccessibilityRotorEntry(
+                        "\(message.author.displayName): \(message.text)",
+                        id: message.id
+                    )
+                }
+            }
             .refreshable {
                 await store.loadMessages(for: conversation.id, force: true)
                 await store.markConversationRead(conversation.id)
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                MessageComposer(
-                    store: store,
-                    onAttachment: { presentedGate = mediaGate }
-                )
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if usesExpandedMessageLayout {
+                    conversationTitle(isExpanded: true)
+                    // Navigation chrome must remain readable without taking
+                    // the transcript's entire viewport at Accessibility XXXL.
+                    // Message bodies keep the user's uncapped Dynamic Type.
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
+                    .background(Color(uiColor: .systemGroupedBackground))
+                } else {
+                    if let pinnedMessage = store.pinnedMessages(for: conversation.id).last {
+                        PhonePinnedContext(gate: securityGate, message: pinnedMessage)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
+                    } else if !store.supportsMessagePinning {
+                        PhonePinnedContext(gate: securityGate)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
+                    }
+                }
             }
-            .onChange(of: messages.count) { _, _ in
-                guard let lastID = messages.last?.id else { return }
-                withAnimation(.snappy(duration: store.reduceMotion ? 0 : 0.24)) {
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if conversation.kind == .channel,
+                   communityStore?.canPublish(in: conversation) != true {
+                    PhoneChannelReadOnlyComposer(conversation: conversation)
+                } else {
+                    MessageComposer(
+                        store: store,
+                        onAttachment: { presentedGate = mediaGate }
+                    )
+                }
+            }
+            .onChange(of: displayedMessages.count) { _, _ in
+                guard let lastID = displayedMessages.last?.id else { return }
+                withAnimation(reducesMotion ? nil : .snappy(duration: 0.24)) {
                     proxy.scrollTo(lastID, anchor: .bottom)
                 }
             }
+            .task(id: "\(conversation.id.uuidString)-\(dynamicTypeSize)") {
+                // Dynamic Type can change while this view is already alive.
+                // Wait for the new bubble/composer measurements, then restore
+                // the chat's bottom anchor so text is never left underneath
+                // the composer using the previous geometry.
+                await Task.yield()
+                guard let lastID = displayedMessages.last?.id else { return }
+                proxy.scrollTo(lastID, anchor: .bottom)
+            }
         }
         .task(id: conversation.id) {
+            #if DEBUG
+            if !didInstallDebugMessageMutations,
+               ProcessInfo.processInfo.environment["LUXORA_UI_TEST_MESSAGE_ACTIONS"] == "1" {
+                if !store.supportsReplying {
+                    store.installDebugMessageMutationFixture()
+                }
+                didInstallDebugMessageMutations = true
+            }
+            #endif
             await store.loadMessages(for: conversation.id)
             await store.markConversationRead(conversation.id)
+            #if DEBUG
+            applyDebugMessageCaptureStateIfRequested()
+            #endif
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(.hidden, for: .tabBar)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conversation-screen")
         .toolbar {
             ToolbarItem(placement: .principal) {
-                PhoneConversationTitle(conversation: conversation)
+                if !usesExpandedMessageLayout {
+                    conversationTitle(isExpanded: false)
+                }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
@@ -1925,7 +2829,97 @@ private struct PhoneDirectConversationView: View {
             PhoneFeatureStatusSheet(gate: gate)
                 .presentationDetents([.medium])
         }
+        .sheet(item: $forwardedMessage) { message in
+            PhoneForwardDestinationSheet(
+                message: message,
+                conversations: store.conversations.filter { store.canForward(to: $0) },
+                select: { conversationID in
+                    forwardedMessage = nil
+                    store.forwardMessage(message.id, to: conversationID)
+                }
+            )
+        }
+        .confirmationDialog(
+            "Удалить сообщение?",
+            isPresented: Binding(
+                get: { deletionCandidate != nil },
+                set: { if !$0 { deletionCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let deletionCandidate {
+                Button("Удалить для всех", role: .destructive) {
+                    store.deleteMessage(deletionCandidate.id)
+                    self.deletionCandidate = nil
+                }
+            }
+            Button("Отмена", role: .cancel) {
+                deletionCandidate = nil
+            }
+        } message: {
+            Text("Сообщение будет удалено на сервере Luxora и во всех ваших сессиях.")
+        }
     }
+
+    @ViewBuilder
+    private func conversationTitle(isExpanded: Bool) -> some View {
+        if conversation.kind == .group || conversation.kind == .channel {
+            Button(action: openCommunityProfile) {
+                PhoneConversationTitle(
+                    conversation: conversation,
+                    isExpanded: isExpanded
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Открывает профиль, состав и роли")
+            .accessibilityIdentifier("conversation-community-profile")
+        } else {
+            PhoneConversationTitle(
+                conversation: conversation,
+                isExpanded: isExpanded
+            )
+        }
+    }
+
+    private var reducesMotion: Bool {
+        store.reduceMotion || systemReduceMotion
+    }
+
+    private var usesExpandedMessageLayout: Bool {
+        dynamicTypeSize >= .xxLarge
+    }
+
+    #if DEBUG
+    private func applyDebugMessageCaptureStateIfRequested() {
+        guard !didApplyDebugMessageCaptureState,
+              let state = ProcessInfo.processInfo.environment["LUXORA_UI_TEST_MESSAGE_CAPTURE_STATE"]
+        else { return }
+        didApplyDebugMessageCaptureState = true
+        let conversationMessages = store.messagesByConversation[conversation.id, default: []]
+        switch state {
+        case "reply":
+            if let message = conversationMessages.last(where: { !$0.isOutgoing }) {
+                store.beginReply(to: message)
+            }
+        case "edit":
+            if let message = conversationMessages.last(where: \.isOutgoing) {
+                store.beginEditing(message)
+            }
+        case "pinned":
+            if let message = conversationMessages.last {
+                store.applyRealtimePin(
+                    chatID: conversation.id,
+                    messageID: message.id,
+                    active: true
+                )
+            }
+        case "forward":
+            forwardedMessage = conversationMessages.last
+        default:
+            break
+        }
+    }
+    #endif
 }
 
 private struct PhoneSendFailureNotice: View {
@@ -1941,6 +2935,7 @@ private struct PhoneSendFailureNotice: View {
             Spacer(minLength: 4)
             Button("Повторить", action: retry)
                 .font(.caption.weight(.semibold))
+                .frame(minHeight: 44)
                 .disabled(count == 0)
         }
         .padding(.horizontal, 12)
@@ -1950,23 +2945,81 @@ private struct PhoneSendFailureNotice: View {
     }
 }
 
-private struct PhoneConversationTitle: View {
-    let conversation: Conversation
+private struct PhoneMessageMutationFailureNotice: View {
+    let failure: MessageMutationFailure
+    let retry: () -> Void
+    let dismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            AvatarView(participant: conversation.avatar, size: 32)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(conversation.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text(conversation.isTyping ? phoneString("chats.typing") : conversation.avatar.status)
+        HStack(spacing: 9) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(failure.key.kind.russianTitle) не выполнено")
+                    .font(.caption.weight(.semibold))
+                Text(failure.detail)
                     .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            Button("Повторить", action: retry)
+                .font(.caption.weight(.semibold))
+                .frame(minHeight: 44)
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+            }
+            .buttonStyle(.plain)
+            .frame(minWidth: 44, minHeight: 44)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Закрыть")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("message-mutation-failure")
+    }
+}
+
+private struct PhoneConversationTitle: View {
+    let conversation: Conversation
+    let isExpanded: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: isExpanded ? 11 : 8) {
+            AvatarView(participant: conversation.avatar, size: isExpanded ? 44 : 32)
+            VStack(alignment: .leading, spacing: isExpanded ? 3 : 0) {
+                Text(conversation.title)
+                    .font(isExpanded ? .headline.weight(.semibold) : .subheadline.weight(.semibold))
+                    .lineLimit(isExpanded ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(statusText)
+                    .font(isExpanded ? .subheadline : .caption2)
                     .foregroundStyle(conversation.isTyping ? LuxoraTheme.iris : .secondary)
-                    .lineLimit(1)
+                    .lineLimit(isExpanded ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: isExpanded ? .infinity : nil, alignment: .leading)
+        }
+        .padding(isExpanded ? 12 : 0)
+        .frame(maxWidth: isExpanded ? .infinity : nil, alignment: .leading)
+        .background {
+            if isExpanded {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(conversation.title)
+        .accessibilityValue(statusText)
+        .accessibilityIdentifier("conversation-title")
+    }
+
+    private var statusText: String {
+        conversation.isTyping ? phoneString("chats.typing") : conversation.avatar.status
     }
 }
 
@@ -1987,6 +3040,12 @@ private struct LockedToolbarIcon: View {
 
 private struct PhonePinnedContext: View {
     let gate: FeatureGate
+    var message: ChatMessage?
+
+    init(gate: FeatureGate, message: ChatMessage? = nil) {
+        self.gate = gate
+        self.message = message
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1996,13 +3055,14 @@ private struct PhonePinnedContext: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(phoneString("conversation.pinned"))
                     .font(.caption.weight(.semibold))
-                Text("Закреплённый контекст появится после серверной поддержки")
+                Text(message?.text ?? "Закрепление сообщений ещё не подключено в этой сборке iPhone")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 4)
-            Image(systemName: "lock.fill")
+            Image(systemName: message == nil ? "lock.fill" : "pin.fill")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -2010,21 +3070,51 @@ private struct PhonePinnedContext: View {
         .padding(.vertical, 8)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("conversation-truth-state")
+        .accessibilityIdentifier(message == nil ? "conversation-truth-state" : "conversation-pinned-message")
     }
 }
 
 private struct PhoneMessageBubble: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let message: ChatMessage
+    let metadata: MessageRemoteMetadata
+    let showsAuthorName: Bool
+    let isMutationInFlight: Bool
     let retry: () -> Void
     let react: (String) -> Void
+    let reply: (() -> Void)?
+    let edit: (() -> Void)?
+    let delete: (() -> Void)?
+    let forward: (() -> Void)?
+    let togglePin: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 0) {
-            if message.isOutgoing { Spacer(minLength: 54) }
+            if message.isOutgoing, !usesExpandedLayout {
+                Spacer(minLength: 54)
+            }
 
             VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
                 VStack(alignment: .leading, spacing: 6) {
+                    if showsAuthorName, !message.isOutgoing {
+                        Text(message.author.displayName)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(LuxoraTheme.iris)
+                            .lineLimit(1)
+                            .accessibilityHidden(true)
+                    }
+                    if let forwardedFrom = metadata.forwardedFrom {
+                        Label(
+                            "Переслано от \(forwardedFrom.senderDisplayName)",
+                            systemImage: "arrowshape.turn.up.right.fill"
+                        )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(message.isOutgoing ? .white : Color(uiColor: .label))
+                        .lineLimit(usesExpandedLayout ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("message-forward-provenance")
+                    }
+
                     if let replyPreview = message.replyPreview {
                         HStack(spacing: 7) {
                             RoundedRectangle(cornerRadius: 2)
@@ -2032,36 +3122,41 @@ private struct PhoneMessageBubble: View {
                                 .frame(width: 3)
                             Text(replyPreview)
                                 .font(.caption)
-                                .lineLimit(2)
+                                .lineLimit(usesExpandedLayout ? nil : 2)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .foregroundStyle(message.isOutgoing ? .white.opacity(0.78) : .secondary)
+                        .foregroundStyle(message.isOutgoing ? .white : Color(uiColor: .label))
                     }
 
                     Text(message.text)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .font(.body)
+                        .lineLimit(nil)
+                        // Oversized glyphs need breathing room from the bubble
+                        // chrome, especially for Cyrillic ascenders/descenders.
+                        .padding(.vertical, usesExpandedLayout ? 3 : 0)
+                        .frame(
+                            maxWidth: usesExpandedLayout ? .infinity : nil,
+                            alignment: .leading
+                        )
+                        .layoutPriority(1)
 
-                    HStack(spacing: 4) {
-                        Spacer(minLength: 0)
-                        if message.editedAt != nil { Text(phoneString("conversation.edited")) }
-                        Text(message.sentAt, style: .time)
-                        if message.isOutgoing {
-                            Image(systemName: message.delivery.symbol)
-                        }
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(message.isOutgoing ? .white.opacity(0.72) : .secondary)
+                    messageMetadata
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
-                .foregroundStyle(message.isOutgoing ? Color.white : Color.primary)
-                .background {
-                    if message.isOutgoing {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(LuxoraTheme.brandGradient)
-                    } else {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                .foregroundStyle(messageForeground)
+                .background(
+                    messageBackground,
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                )
+                .overlay(alignment: .topTrailing) {
+                    if isMutationInFlight {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .padding(7)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .padding(4)
+                            .accessibilityIdentifier("message-mutation-progress")
                     }
                 }
 
@@ -2083,7 +3178,13 @@ private struct PhoneMessageBubble: View {
                                     )
                             }
                             .buttonStyle(.plain)
-                            .disabled(message.delivery == .sending || message.delivery == .failed)
+                            .frame(minHeight: 44)
+                            .disabled(
+                                metadata.isDeleted
+                                    || isMutationInFlight
+                                    || message.delivery == .sending
+                                    || message.delivery == .failed
+                            )
                             .accessibilityLabel("\(reaction.emoji), реакций: \(reaction.count)")
                         }
                     }
@@ -2095,16 +3196,26 @@ private struct PhoneMessageBubble: View {
                             .font(.caption.weight(.semibold))
                     }
                     .buttonStyle(.borderless)
+                    .frame(minHeight: 44)
                     .accessibilityIdentifier("message-retry-\(message.id.uuidString.lowercased())")
                 }
             }
-            .frame(maxWidth: 310, alignment: message.isOutgoing ? .trailing : .leading)
+            .frame(
+                maxWidth: usesExpandedLayout ? .infinity : 310,
+                alignment: message.isOutgoing ? .trailing : .leading
+            )
+            .layoutPriority(1)
 
-            if !message.isOutgoing { Spacer(minLength: 54) }
+            if !message.isOutgoing, !usesExpandedLayout {
+                Spacer(minLength: 54)
+            }
         }
         .frame(maxWidth: .infinity)
         .contextMenu {
-            if message.delivery != .sending, message.delivery != .failed {
+            if !metadata.isDeleted,
+               !isMutationInFlight,
+               message.delivery != .sending,
+               message.delivery != .failed {
                 ForEach(["👍", "❤️", "🔥", "😂", "😮", "😢"], id: \.self) { emoji in
                     Button(emoji) { react(emoji) }
                 }
@@ -2112,9 +3223,208 @@ private struct PhoneMessageBubble: View {
             if message.isOutgoing, message.delivery == .failed {
                 Button("Повторить отправку", systemImage: "arrow.clockwise", action: retry)
             }
+            if let reply {
+                Button("Ответить", systemImage: "arrowshape.turn.up.left", action: reply)
+                    .accessibilityIdentifier("message-action-reply")
+            }
+            if !metadata.isDeleted, message.delivery != .sending, message.delivery != .failed {
+                Button("Копировать", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = message.text
+                }
+                .accessibilityIdentifier("message-action-copy")
+            }
+            if let edit {
+                Button("Изменить", systemImage: "pencil", action: edit)
+                    .accessibilityIdentifier("message-action-edit")
+            }
+            if let togglePin {
+                Button(
+                    metadata.isPinned ? "Открепить" : "Закрепить",
+                    systemImage: metadata.isPinned ? "pin.slash" : "pin",
+                    action: togglePin
+                )
+                .accessibilityIdentifier("message-action-pin")
+            }
+            if let forward {
+                Button("Переслать", systemImage: "arrowshape.turn.up.right", action: forward)
+                    .accessibilityIdentifier("message-action-forward")
+            }
+            if let delete {
+                Divider()
+                Button("Удалить", systemImage: "trash", role: .destructive, action: delete)
+                    .accessibilityIdentifier("message-action-delete")
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(message.author.displayName): \(message.text)")
+        .accessibilityValue(messageAccessibilityValue)
+        .accessibilityHint("Смахните вверх или вниз, чтобы выбрать действие с сообщением")
+        .accessibilityActions {
+            if message.isOutgoing, message.delivery == .failed {
+                Button("Повторить отправку", action: retry)
+            }
+            if let reply {
+                Button("Ответить", action: reply)
+            }
+            if !metadata.isDeleted, message.delivery != .sending, message.delivery != .failed {
+                Button("Копировать") {
+                    UIPasteboard.general.string = message.text
+                }
+                ForEach(["👍", "❤️", "🔥", "😂", "😮", "😢"], id: \.self) { emoji in
+                    Button("Реакция \(emoji)") { react(emoji) }
+                }
+            }
+            if let edit {
+                Button("Изменить", action: edit)
+            }
+            if let togglePin {
+                Button(metadata.isPinned ? "Открепить" : "Закрепить", action: togglePin)
+            }
+            if let forward {
+                Button("Переслать", action: forward)
+            }
+            if let delete {
+                Button("Удалить", role: .destructive, action: delete)
+            }
+        }
+    }
+
+    private var usesExpandedLayout: Bool {
+        dynamicTypeSize >= .xxLarge
+    }
+
+    private var messageForeground: Color {
+        message.isOutgoing ? .white : Color(uiColor: .label)
+    }
+
+    private var messageBackground: Color {
+        message.isOutgoing ? LuxoraTheme.deepViolet : Color(uiColor: .secondarySystemGroupedBackground)
+    }
+
+    private var messageTime: String {
+        message.sentAt.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var messageMetadata: some View {
+        HStack(spacing: 4) {
+            Spacer(minLength: 0)
+            if message.editedAt != nil {
+                Text(phoneString("conversation.edited"))
+            }
+            if metadata.isPinned {
+                Image(systemName: "pin.fill")
+            }
+            Text(messageTime)
+                .fixedSize(horizontal: true, vertical: true)
+            if message.isOutgoing {
+                Image(systemName: message.delivery.symbol)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(messageForeground)
+        .accessibilityHidden(true)
+    }
+
+    private var messageAccessibilityValue: String {
+        var parts = [message.isOutgoing ? "исходящее" : "входящее"]
+        parts.append(message.sentAt.formatted(date: .omitted, time: .shortened))
+        if message.editedAt != nil { parts.append(phoneString("conversation.edited")) }
+        if metadata.isPinned { parts.append("закреплено") }
+        if metadata.forwardedFrom != nil { parts.append("переслано") }
+        if message.isOutgoing { parts.append(deliveryAccessibilityLabel) }
+        if !message.reactions.isEmpty {
+            parts.append("реакций: \(message.reactions.reduce(0) { $0 + $1.count })")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private var deliveryAccessibilityLabel: String {
+        switch message.delivery {
+        case .sending: "отправляется"
+        case .sent: "отправлено"
+        case .delivered: "доставлено"
+        case .read: "прочитано"
+        case .failed: "ошибка отправки"
+        }
+    }
+}
+
+private struct PhoneForwardDestinationSheet: View {
+    let message: ChatMessage
+    let conversations: [Conversation]
+    let select: (UUID) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    private var filteredConversations: [Conversation] {
+        conversations
+            .filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
+            .sorted { $0.lastActivity > $1.lastActivity }
+    }
+
+    var body: some View {
+        let destinations = filteredConversations
+
+        NavigationStack {
+            List {
+                Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrowshape.turn.up.right.fill")
+                            .foregroundStyle(LuxoraTheme.iris)
+                        Text(message.text)
+                            .font(.callout)
+                            .lineLimit(2)
+                    }
+                    .accessibilityIdentifier("forward-message-preview")
+                }
+
+                Section("Выберите чат") {
+                    if destinations.isEmpty {
+                        ContentUnavailableView(
+                            "Подходящие чаты не найдены",
+                            systemImage: "bubble.left.and.exclamationmark.bubble.right"
+                        )
+                    } else {
+                        ForEach(destinations) { conversation in
+                            Button {
+                                select(conversation.id)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    AvatarView(participant: conversation.avatar, size: 42)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(conversation.title)
+                                            .font(.body)
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                        Text(conversation.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier(
+                                "forward-destination-\(conversation.id.uuidString.lowercased())"
+                            )
+                        }
+                    }
+                }
+            }
+            .contentMargins(.bottom, 72, for: .scrollContent)
+            .navigationTitle("Переслать сообщение")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $query, prompt: "Поиск чата")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { dismiss() }
+                }
+            }
+        }
+        .accessibilityIdentifier("forward-destination-sheet")
     }
 }
 
@@ -2135,6 +3445,9 @@ private struct PhoneNewMessageSheet: View {
     }
 
     var body: some View {
+        let loadedConversations = localResults
+        let searchQuery = normalizedQuery
+
         NavigationStack {
             List {
                 Section {
@@ -2146,9 +3459,9 @@ private struct PhoneNewMessageSheet: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if !localResults.isEmpty {
+                if !loadedConversations.isEmpty {
                     Section("Загруженные переписки") {
-                        ForEach(localResults) { conversation in
+                        ForEach(loadedConversations) { conversation in
                             Button {
                                 dismiss()
                                 openConversation(conversation.id)
@@ -2169,7 +3482,7 @@ private struct PhoneNewMessageSheet: View {
                     }
                 }
 
-                if !normalizedQuery.isEmpty {
+                if !searchQuery.isEmpty {
                     Section("Контакты на сервере") {
                         switch store.peopleSearchState {
                         case .idle, .loading:
@@ -2183,7 +3496,7 @@ private struct PhoneNewMessageSheet: View {
                             PhoneRemoteFailureRow(
                                 title: "Поиск не выполнен",
                                 detail: message,
-                                retry: { Task { await store.searchKnownPeople(normalizedQuery) } }
+                                retry: { Task { await store.searchKnownPeople(searchQuery) } }
                             )
                         case .loaded:
                             if store.peopleSearchResults.isEmpty {
@@ -2237,7 +3550,7 @@ private struct PhoneNewMessageSheet: View {
                     }
                 }
 
-                if normalizedQuery.isEmpty, localResults.isEmpty {
+                if searchQuery.isEmpty, loadedConversations.isEmpty {
                     Section {
                         ContentUnavailableView(
                             "Чатов пока нет",
@@ -2255,14 +3568,14 @@ private struct PhoneNewMessageSheet: View {
                     Button(phoneString("common.cancel")) { dismiss() }
                 }
             }
-            .task(id: normalizedQuery) {
-                guard !normalizedQuery.isEmpty else {
+            .task(id: searchQuery) {
+                guard !searchQuery.isEmpty else {
                     await store.searchKnownPeople("")
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(300))
                 guard !Task.isCancelled else { return }
-                await store.searchKnownPeople(normalizedQuery)
+                await store.searchKnownPeople(searchQuery)
             }
         }
         .accessibilityIdentifier("new-message-sheet")
@@ -2398,12 +3711,15 @@ private struct PhoneSearchView: View {
     }
 
     var body: some View {
+        let projectedResults = results
+        let projectedRecentPeople = recentPeople
+
         List {
-            if !recentPeople.isEmpty, !hidesRecentPeople {
+            if !projectedRecentPeople.isEmpty, !hidesRecentPeople {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 14) {
-                            ForEach(recentPeople) { conversation in
+                            ForEach(projectedRecentPeople) { conversation in
                                 Button { openConversation(conversation.id) } label: {
                                     VStack(spacing: 6) {
                                         AvatarView(participant: conversation.avatar, size: 60)
@@ -2425,7 +3741,7 @@ private struct PhoneSearchView: View {
             }
 
             Section {
-                ForEach(results) { conversation in
+                ForEach(projectedResults) { conversation in
                     Button { openConversation(conversation.id) } label: {
                         PhoneSearchResultRow(conversation: conversation)
                     }
@@ -2454,7 +3770,7 @@ private struct PhoneSearchView: View {
         }
         .accessibilityIdentifier("search-screen")
         .overlay {
-            if results.isEmpty {
+            if projectedResults.isEmpty {
                 ContentUnavailableView(
                     "Ничего не найдено",
                     systemImage: scope == "Медиа" ? "lock.fill" : "magnifyingglass",
@@ -2593,6 +3909,8 @@ private struct PhoneSearchResultRow: View {
 private struct PhoneYouView: View {
     @Bindable var store: MessengerStore
     let featureMatrix: LuxoraFeatureMatrix
+    let phonePasswordSettingsStore: PhonePasswordSettingsStore?
+    let chatFoldersStore: ChatFoldersStore?
     let openRoute: (PhoneSettingsRoute) -> Void
     let openSaved: (UUID) -> Void
     let openCalls: () -> Void
@@ -2609,9 +3927,13 @@ private struct PhoneYouView: View {
                     AvatarView(participant: store.currentUser, size: 94)
                     Text(store.currentUser.displayName)
                         .font(.title2.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("@\(store.currentUser.username) · Beta-0.1")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
@@ -2673,13 +3995,25 @@ private struct PhoneYouView: View {
                 )
 
                 settingsButton(
+                    route: .phonePassword,
+                    symbol: "key.fill",
+                    color: .purple,
+                    title: "Пароль входа",
+                    value: phonePasswordStatusTitle,
+                    identifier: "you-settings-phone-password",
+                    locked: phonePasswordSettingsStore == nil
+                )
+
+                settingsButton(
                     route: .folders,
                     symbol: "folder.fill",
                     color: .cyan,
                     title: phoneString("settings.folders"),
-                    value: phoneString("common.local"),
+                    value: chatFoldersStore.map {
+                        "\($0.folders.count) из \(ChatFolderContract.maximumFolders) · Сервер Luxora"
+                    } ?? "Сервер недоступен",
                     identifier: "you-settings-folders",
-                    locked: false
+                    locked: chatFoldersStore == nil
                 )
             }
 
@@ -2801,12 +4135,18 @@ private struct PhoneYouView: View {
             ToolbarItem(placement: .topBarLeading) {
                 Button { openRoute(.profileCode) } label: {
                     Image(systemName: "qrcode")
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .accessibilityLabel("QR профиля")
                 .accessibilityIdentifier("settings-profile-qr")
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button(phoneString("settings.edit")) { openRoute(.profile) }
+                Button { openRoute(.profile) } label: {
+                    Image(systemName: "pencil")
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                    .foregroundStyle(.primary)
+                    .accessibilityLabel(phoneString("settings.edit"))
                     .accessibilityIdentifier("settings-edit-profile")
             }
         }
@@ -2854,6 +4194,11 @@ private struct PhoneYouView: View {
         default: "Системное"
         }
     }
+
+    private var phonePasswordStatusTitle: String? {
+        guard let status = phonePasswordSettingsStore?.status else { return nil }
+        return status.enabled ? "Вкл." : "Выкл."
+    }
 }
 
 private extension View {
@@ -2868,6 +4213,7 @@ private extension View {
 }
 
 private struct PhoneSettingsCompactRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let symbol: String
     let color: Color
     let title: String
@@ -2882,15 +4228,23 @@ private struct PhoneSettingsCompactRow: View {
                 .foregroundStyle(.white)
                 .frame(width: 32, height: 32)
                 .background(color.gradient, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            Text(title)
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.86)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .foregroundStyle(.primary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: true)
+                if dynamicTypeSize.isAccessibilitySize, let value {
+                    Text(value)
+                        .font(.callout)
+                        .foregroundStyle(.primary.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Spacer(minLength: 8)
-            if let value {
+            if !dynamicTypeSize.isAccessibilitySize, let value {
                 Text(value)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary.opacity(0.72))
                     .lineLimit(1)
             }
             if locked {
@@ -2911,6 +4265,7 @@ private struct PhoneSettingsCompactRow: View {
 }
 
 private struct PhoneSettingsRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let symbol: String
     let color: Color
     let title: String
@@ -2930,14 +4285,23 @@ private struct PhoneSettingsRow: View {
                     .font(.body)
                 Text(detail)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .foregroundStyle(.primary.opacity(0.72))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if dynamicTypeSize.isAccessibilitySize {
+                    Text(value)
+                        .font(.caption)
+                        .foregroundStyle(.primary.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 6)
-            Text(value)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            if !dynamicTypeSize.isAccessibilitySize {
+                Text(value)
+                    .font(.caption)
+                    .foregroundStyle(.primary.opacity(0.72))
+                    .lineLimit(1)
+            }
             if showsDisclosure {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -2950,6 +4314,7 @@ private struct PhoneSettingsRow: View {
 }
 
 private struct PhoneFoldersSettingsView: View {
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Bindable var store: MessengerStore
 
     private var summaries: [PhoneFolderSummary] {
@@ -2957,6 +4322,8 @@ private struct PhoneFoldersSettingsView: View {
     }
 
     var body: some View {
+        let folderSummaries = summaries
+
         ScrollView {
             VStack(spacing: 24) {
                 VStack(spacing: 10) {
@@ -2971,9 +4338,9 @@ private struct PhoneFoldersSettingsView: View {
                 .padding(.top, 18)
 
                 VStack(spacing: 0) {
-                    ForEach(Array(summaries.enumerated()), id: \.element.folder) { index, summary in
+                    ForEach(Array(folderSummaries.enumerated()), id: \.element.folder) { index, summary in
                         Button {
-                            withAnimation(.snappy(duration: store.reduceMotion ? 0 : 0.22)) {
+                            withAnimation(reducesMotion ? nil : .snappy(duration: 0.22)) {
                                 store.selectedFolder = summary.folder
                             }
                         } label: {
@@ -2984,7 +4351,7 @@ private struct PhoneFoldersSettingsView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("folders-option-\(summary.folder.rawValue)")
-                        if index != summaries.indices.last {
+                        if index != folderSummaries.indices.last {
                             Divider().padding(.leading, 56)
                         }
                     }
@@ -3030,6 +4397,10 @@ private struct PhoneFoldersSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("you-folders-screen")
     }
+
+    private var reducesMotion: Bool {
+        store.reduceMotion || systemReduceMotion
+    }
 }
 
 private struct PhoneFolderSelectionRow: View {
@@ -3063,6 +4434,7 @@ private struct PhoneFolderSelectionRow: View {
     private var symbol: String {
         switch summary.folder {
         case .all: "tray.full.fill"
+        case .archived: "archivebox.fill"
         case .unread: "circlebadge.fill"
         case .personal: "person.fill"
         case .work: "briefcase.fill"
@@ -3075,6 +4447,7 @@ private struct PhoneFolderSelectionRow: View {
     private var color: Color {
         switch summary.folder {
         case .all: LuxoraTheme.electricBlue
+        case .archived: .gray
         case .unread: .orange
         case .personal: .cyan
         case .work: .purple
@@ -3202,7 +4575,7 @@ private struct PhoneGateSettingsView: View {
                 FeatureGateRow(gate: gate)
             }
             Section("Покрытие") {
-                ForEach(Array(planned.enumerated()), id: \.offset) { _, item in
+                ForEach(Array(planned.enumerated()), id: \.element.title) { _, item in
                     PlannedRow(symbol: item.symbol, title: item.title, detail: item.detail)
                 }
             }
@@ -3220,6 +4593,9 @@ private struct PhoneGateSettingsView: View {
 
 private struct PhoneNotificationsSettingsView: View {
     let pushGate: FeatureGate
+    let settingsStore: NotificationSettingsStore?
+    let registrationStore: PushRegistrationStore?
+    let synchronizeAuthorization: (Bool) -> Void
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var permissions = PhoneSystemPermissionSnapshot.loading
@@ -3229,6 +4605,12 @@ private struct PhoneNotificationsSettingsView: View {
         List {
             Section("Доставка") {
                 FeatureGateRow(gate: pushGate)
+                if let registrationStore {
+                    PhonePushRegistrationRow(store: registrationStore)
+                } else {
+                    LabeledContent("Токен устройства", value: "Нет сеанса")
+                        .foregroundStyle(.secondary)
+                }
             }
             Section("Разрешение iPhone") {
                 PhoneSystemPermissionRow(
@@ -3245,14 +4627,21 @@ private struct PhoneNotificationsSettingsView: View {
                 }
                 PhoneSystemSettingsButton()
             }
-            Section("После подключения push-сервера") {
-                PlannedRow(symbol: "message.badge.filled.fill", title: "Уведомления о сообщениях", detail: "Системные оповещения и предпросмотр на iPhone")
-                PlannedRow(symbol: "speaker.wave.2.fill", title: "Звуки", detail: "Звуки отдельных чатов и общие звуки")
-                PlannedRow(symbol: "moon.fill", title: "Тихие часы", detail: "Расписания и исключения пользователя")
-                PlannedRow(symbol: "at", title: "Упоминания и ответы", detail: "Приоритет без манипуляций вовлечённостью")
+
+            if let settingsStore {
+                PhoneNotificationPreferencesSections(store: settingsStore)
+            } else {
+                Section("Настройки Luxora") {
+                    ContentUnavailableView(
+                        "Нет авторизованного сеанса",
+                        systemImage: "bell.slash",
+                        description: Text("Войдите, чтобы синхронизировать настройки уведомлений.")
+                    )
+                }
             }
+
             Section {
-                Text("Разрешение iPhone работает уже сейчас, но само по себе не означает доставку сообщений: серверный push для Beta-0.1 пока закрыт.")
+                Text("Luxora хранит токен зашифрованно и не возвращает его приложению. Предпросмотр по умолчанию скрыт. Реальная доставка APNs для Beta-0.1 остаётся выключена серверным флагом до подключения провайдера.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -3260,7 +4649,16 @@ private struct PhoneNotificationsSettingsView: View {
         .navigationTitle(phoneString("settings.notifications"))
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("you-notifications-screen")
-        .task { await refreshPermissions() }
+        .task {
+            await refreshPermissions()
+            await settingsStore?.refresh()
+            await registrationStore?.refresh()
+        }
+        .refreshable {
+            await refreshPermissions()
+            await settingsStore?.refresh(force: true)
+            await registrationStore?.refresh(force: true)
+        }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             Task { await refreshPermissions() }
@@ -3276,10 +4674,197 @@ private struct PhoneNotificationsSettingsView: View {
 
     private func refreshPermissions() async {
         permissions = await PhoneSystemPermissionSnapshot.current()
+        switch permissions.notifications {
+        case .allowed, .limited:
+            synchronizeAuthorization(true)
+            UIApplication.shared.registerForRemoteNotifications()
+        case .denied, .restricted:
+            synchronizeAuthorization(false)
+        case .notRequested:
+            break
+        }
+    }
+}
+
+private struct PhonePushRegistrationRow: View {
+    @Bindable var store: PushRegistrationStore
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if store.state == .loading {
+                ProgressView()
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("notifications-push-registration-status")
+    }
+
+    private var title: String {
+        switch store.state {
+        case .loading: "Синхронизация токена"
+        case .failed: "Токен не синхронизирован"
+        case .idle, .loaded:
+            store.registration == nil ? "Ожидаем токен iPhone" : "Токен зарегистрирован"
+        }
+    }
+
+    private var detail: String {
+        switch store.state {
+        case let .failed(message):
+            return message
+        case .loading:
+            return "Токен не показывается и не записывается в журналы."
+        case .idle, .loaded:
+            if let registration = store.registration {
+                return registration.environment == .production
+                    ? "Среда App Store · защищённая серверная запись"
+                    : "Среда разработки · защищённая серверная запись"
+            }
+            return "Выдаётся iOS после разрешения уведомлений."
+        }
+    }
+
+    private var symbol: String {
+        if case .failed = store.state { return "exclamationmark.triangle.fill" }
+        return store.registration == nil ? "iphone.badge.exclamationmark" : "checkmark.shield.fill"
+    }
+
+    private var color: Color {
+        if case .failed = store.state { return .orange }
+        return store.registration == nil ? LuxoraTheme.iris : LuxoraTheme.success
+    }
+}
+
+private struct PhoneNotificationPreferencesSections: View {
+    @Bindable var store: NotificationSettingsStore
+
+    var body: some View {
+        if let settings = store.settings {
+            Section("События") {
+                settingToggle(
+                    "Личные сообщения",
+                    symbol: "message.badge.filled.fill",
+                    value: settings.messageAlerts,
+                    identifier: "notifications-message-alerts"
+                ) { NotificationSettingsPatch(messageAlerts: $0) }
+                settingToggle(
+                    "Запросы на переписку",
+                    symbol: "person.crop.circle.badge.questionmark",
+                    value: settings.messageRequestAlerts,
+                    identifier: "notifications-request-alerts"
+                ) { NotificationSettingsPatch(messageRequestAlerts: $0) }
+                settingToggle(
+                    "Упоминания и ответы",
+                    symbol: "at",
+                    value: settings.mentionAlerts,
+                    identifier: "notifications-mention-alerts"
+                ) { NotificationSettingsPatch(mentionAlerts: $0) }
+            }
+
+            Section("Оформление") {
+                settingToggle(
+                    "Звук",
+                    symbol: "speaker.wave.2.fill",
+                    value: settings.sound,
+                    identifier: "notifications-sound"
+                ) { NotificationSettingsPatch(sound: $0) }
+                settingToggle(
+                    "Счётчик на иконке",
+                    symbol: "app.badge.fill",
+                    value: settings.badge,
+                    identifier: "notifications-badge"
+                ) { NotificationSettingsPatch(badge: $0) }
+
+                Picker(
+                    "Предпросмотр",
+                    selection: Binding(
+                        get: { settings.previewMode },
+                        set: { previewMode in
+                            Task { await store.update(.init(previewMode: previewMode)) }
+                        }
+                    )
+                ) {
+                    ForEach(NotificationPreviewMode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .disabled(isSaving)
+                .accessibilityIdentifier("notifications-preview-mode")
+            }
+
+            if case let .failed(message) = store.mutationState {
+                Section {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("notifications-settings-error")
+                    Button("Повторить загрузку") {
+                        store.clearMutationFailure()
+                        Task { await store.refresh(force: true) }
+                    }
+                }
+            }
+        } else {
+            Section("Настройки Luxora") {
+                switch store.loadState {
+                case .idle, .loading:
+                    HStack {
+                        ProgressView()
+                        Text("Загружаем настройки с сервера…")
+                            .foregroundStyle(.secondary)
+                    }
+                case let .failed(message):
+                    Label(message, systemImage: "wifi.exclamationmark")
+                        .foregroundStyle(.orange)
+                    Button("Повторить") { Task { await store.refresh(force: true) } }
+                        .accessibilityIdentifier("notifications-settings-retry")
+                case .loaded:
+                    ContentUnavailableView(
+                        "Настройки недоступны",
+                        systemImage: "bell.slash",
+                        description: Text("Сервер не вернул состояние уведомлений.")
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func settingToggle(
+        _ title: String,
+        symbol: String,
+        value: Bool,
+        identifier: String,
+        patch: @escaping (Bool) -> NotificationSettingsPatch
+    ) -> some View {
+        Toggle(
+            isOn: Binding(
+                get: { value },
+                set: { newValue in Task { await store.update(patch(newValue)) } }
+            )
+        ) {
+            Label(title, systemImage: symbol)
+        }
+        .disabled(isSaving)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var isSaving: Bool {
+        store.mutationState == .loading
     }
 }
 
 private struct PhonePrivacySettingsView: View {
+    @Bindable var store: MessengerStore
     let featureMatrix: LuxoraFeatureMatrix
 
     @Environment(\.scenePhase) private var scenePhase
@@ -3293,6 +4878,77 @@ private struct PhonePrivacySettingsView: View {
             }
             Section("Доверие к содержимому") {
                 FeatureGateRow(gate: featureMatrix.securityE2EE)
+            }
+            Section("Кто может найти и написать") {
+                if let settings = store.privacySettings {
+                    Toggle(
+                        "Находить меня по точному username",
+                        isOn: Binding(
+                            get: { settings.usernameDiscoverable },
+                            set: { store.updatePrivacySettings(usernameDiscoverable: $0) }
+                        )
+                    )
+                    .disabled(store.privacySettingsState == .loading)
+                    .accessibilityIdentifier("privacy-username-discoverable")
+
+                    Picker(
+                        "Запросы на переписку",
+                        selection: Binding(
+                            get: { settings.messageRequests },
+                            set: { store.updatePrivacySettings(messageRequests: $0) }
+                        )
+                    ) {
+                        ForEach(MessageRequestPolicy.allCases) { policy in
+                            Text(policy.russianTitle).tag(policy)
+                        }
+                    }
+                    .disabled(store.privacySettingsState == .loading)
+                    .accessibilityIdentifier("privacy-message-requests-policy")
+                } else if store.privacySettingsState == .loading {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Загружаем настройки…")
+                            .foregroundStyle(.secondary)
+                    }
+                } else if !store.supportsPrivacySettings {
+                    Label("Серверные настройки недоступны", systemImage: "lock.fill")
+                        .foregroundStyle(.secondary)
+                }
+
+                if store.privacySettingsState == .loading, store.privacySettings != nil {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Подтверждаем изменение на сервере…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityIdentifier("privacy-settings-saving")
+                }
+
+                if store.privacySettingsState == .loaded, store.privacySettings != nil {
+                    Label("Сохранено на сервере", systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.green)
+                        .accessibilityIdentifier("privacy-settings-confirmed")
+                }
+
+                if case let .failed(message) = store.privacySettingsState {
+                    PhoneRemoteFailureRow(
+                        title: "Настройки не сохранены",
+                        detail: message,
+                        retry: {
+                            if store.privacySettings == nil {
+                                Task { await store.loadPrivacySettings(force: true) }
+                            } else {
+                                store.retryPrivacySettingsUpdate()
+                            }
+                        }
+                    )
+                }
+
+                Text("Удаление входящего запроса остаётся приватным: отправитель не получает сигнал о просмотре или удалении.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Разрешения этого iPhone") {
                 PhoneSystemPermissionRow(title: "Контакты", symbol: "person.crop.circle", state: permissions.contacts)
@@ -3311,7 +4967,16 @@ private struct PhonePrivacySettingsView: View {
         .navigationTitle(phoneString("settings.privacy"))
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("you-privacy-screen")
-        .task { await refreshPermissions() }
+        .task {
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["LUXORA_UI_TEST_MESSAGE_REQUESTS"] == "1",
+               !store.supportsPrivacySettings {
+                store.installDebugMessageRequestFixture()
+            }
+            #endif
+            await store.loadPrivacySettings()
+            await refreshPermissions()
+        }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             Task { await refreshPermissions() }
@@ -3530,16 +5195,25 @@ private struct PlannedRow: View {
                 .foregroundStyle(LuxoraTheme.iris)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(title).font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Text(status)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        Text(title).font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(status)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.subheadline.weight(.semibold))
+                        Text(status)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, 2)
@@ -3599,13 +5273,22 @@ struct FeatureGateRow: View {
                 .frame(width: 28, height: 28)
                 .background(stateColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text(gate.title)
-                        .font(.subheadline.weight(.semibold))
-                    Spacer(minLength: 6)
-                    Text(gate.state.label)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(stateColor)
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        Text(gate.title)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 6)
+                        Text(gate.state.label)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(stateColor)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(gate.title)
+                            .font(.subheadline.weight(.semibold))
+                        Text(gate.state.label)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(stateColor)
+                    }
                 }
                 Text(gate.detail)
                     .font(.caption)

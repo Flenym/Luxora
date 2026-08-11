@@ -39,27 +39,6 @@ struct PhoneFolderSummary: Equatable, Sendable {
     }
 }
 
-extension ConversationFolder {
-    func includes(_ conversation: Conversation) -> Bool {
-        switch self {
-        case .all:
-            true
-        case .unread:
-            conversation.unreadCount > 0
-        case .personal:
-            conversation.folder == "personal"
-        case .work:
-            conversation.folder == "work"
-        case .groups:
-            conversation.kind == .group
-        case .channels:
-            conversation.kind == .channel
-        case .saved:
-            conversation.kind == .saved
-        }
-    }
-}
-
 struct PhoneLoadedMessageSearch: Sendable {
     static func results(in messages: [ChatMessage], query: String) -> [ChatMessage] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)

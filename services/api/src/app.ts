@@ -39,8 +39,10 @@ import { StepUpTokenSecurity } from "./passkeys/step-up-token.js";
 import { StorePasskeyCredentialRepository } from "./passkeys/store-passkey-repository.js";
 import { AttachmentService } from "./services/attachment-service.js";
 import { AuthService } from "./services/auth-service.js";
+import { ChatFolderService } from "./services/chat-folder-service.js";
 import { ChatService } from "./services/chat-service.js";
 import { IdentityAccessService } from "./services/identity-access-service.js";
+import { NotificationService } from "./services/notification-service.js";
 import { PasskeyAuthenticatorManagementService } from "./services/passkey-authenticator-management-service.js";
 import { PasskeyLoginExpirySweeper } from "./services/passkey-login-expiry-sweeper.js";
 import { PasskeyLoginService } from "./services/passkey-login-service.js";
@@ -48,6 +50,7 @@ import { PasskeyService } from "./services/passkey-service.js";
 import { PasskeySignupExpirySweeper } from "./services/passkey-signup-expiry-sweeper.js";
 import { PasskeySignupService } from "./services/passkey-signup-service.js";
 import { PhoneAuthService } from "./services/phone-auth-service.js";
+import { ProfileAvatarService } from "./services/profile-avatar-service.js";
 import { SearchService } from "./services/search-service.js";
 import { RealtimeOutboxPublisher } from "./services/realtime-outbox-publisher.js";
 import { UploadService } from "./services/upload-service.js";
@@ -167,6 +170,21 @@ async function purgeExpiredPasskeySecrets(store: Store, nowMs = Date.now()): Pro
   return purged;
 }
 
+function purgeExpiredChatFolderReceipts(
+  store: Store,
+  at = new Date().toISOString()
+): number {
+  const batchSize = 1_000;
+  const maximumBatches = 10;
+  let purged = 0;
+  for (let batch = 0; batch < maximumBatches; batch += 1) {
+    const count = store.purgeExpiredChatFolderCommandReceipts(at, batchSize);
+    purged += count;
+    if (count < batchSize) break;
+  }
+  return purged;
+}
+
 export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp> {
   const config = options.config ?? loadConfig();
   // Callers may inject an already-materialized AppConfig and bypass
@@ -177,6 +195,17 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   }
   if (config.nodeEnv === "production" && config.passkeyInternalSignupRoutesEnabled) {
     throw new Error("PASSKEY_INTERNAL_SIGNUP_ROUTES_ENABLED cannot be enabled in production");
+  }
+  if (
+    config.nodeEnv !== "test"
+    && (
+      config.activeDataEncryptionKeyId === undefined
+      || config.dataEncryptionKeys[config.activeDataEncryptionKeyId] === undefined
+    )
+  ) {
+    throw new Error(
+      "Luxora API requires an active data-encryption key outside tests"
+    );
   }
   if (config.phoneAuthEnabled) {
     if (config.phoneAuthProvider === "disabled" || config.phoneAuthHmacSecret === undefined) {
@@ -372,7 +401,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
 
   const store = options.store ?? new SqliteStore(
     config.databasePath,
-    contentCipherFromConfig(config.dataEncryptionKeys, config.activeDataEncryptionKeyId)
+    contentCipherFromConfig(config.dataEncryptionKeys, config.activeDataEncryptionKeyId),
+    Date.now,
+    config.syncInvalidationEnabled
   );
   const passkeyLoginExpiry = new PasskeyLoginExpirySweeper(store, {
     batchSize: 100,
@@ -385,13 +416,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const metrics = new Metrics();
   const security = new TokenSecurity(config);
   const cursors = new RealtimeCursorCodec(config.jwtSecret);
-  const hub = new RealtimeHub(store, metrics, cursors);
+  const hub = new RealtimeHub(store, metrics, cursors, config.syncInvalidationEnabled);
   const outbox = new RealtimeOutboxPublisher(store, hub, {
+    shouldPublish: (event) => config.syncInvalidationEnabled
+      || event.event.type !== "sync.invalidated",
     onFailure: ({ stage, eventSequence, error }) => {
       app.log.warn({ err: error, stage, eventSequence }, "Realtime outbox delivery attempt failed");
     }
   });
-  const auth = new AuthService(store, security, config, hub);
+  const auth = new AuthService(store, security, config, hub, undefined, outbox);
   const phoneDelivery = options.phoneDeliveryProvider
     ?? (config.phoneAuthProvider === "development"
       ? new DevelopmentPhoneVerificationDeliveryProvider()
@@ -402,9 +435,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   if (reindexedItems > 0) app.log.info({ indexedItems: reindexedItems }, "Search indexes rebuilt");
   const storage = await createStorageProvider(config);
   const chats = new ChatService(store, outbox, searchHasher);
+  const chatFolders = new ChatFolderService(store, outbox);
   const identity = new IdentityAccessService(store, outbox, searchHasher);
+  const notifications = new NotificationService(store);
   const uploads = await UploadService.create(store, storage, searchHasher, outbox, config);
   const attachments = new AttachmentService(store, storage);
+  const profileAvatars = new ProfileAvatarService(
+    store,
+    storage,
+    config.userStorageQuotaBytes,
+    undefined,
+    outbox,
+    config.syncInvalidationEnabled
+  );
   const search = new SearchService(store, searchHasher);
   const authGuard = createAuthGuard(security, store);
   app.luxora = { config, store, metrics, hub, outbox, storage, uploads };
@@ -514,6 +557,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     }
     if (error instanceof AppError) {
       metrics.recordError(error.code);
+      if (
+        error.statusCode === 429
+        && typeof error.details?.["retryAfterSeconds"] === "number"
+      ) {
+        reply.header("retry-after", String(error.details["retryAfterSeconds"]));
+      }
       return reply.code(error.statusCode).send({
         error: {
           code: error.code,
@@ -570,10 +619,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     store,
     auth,
     phoneAuth,
+    profileAvatars,
     chats,
+    chatFolders,
     uploads,
     attachments,
     identity,
+    notifications,
     search,
     storage,
     metrics,
@@ -703,6 +755,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   } catch (error) {
     app.log.error({ err: error }, "Initial passkey challenge cleanup failed");
   }
+  try {
+    const purgedChatFolderReceipts = purgeExpiredChatFolderReceipts(store);
+    if (purgedChatFolderReceipts > 0) {
+      app.log.info({ purgedChatFolderReceipts }, "Expired chat-folder receipts purged");
+    }
+  } catch (error) {
+    app.log.error({ err: error }, "Initial chat-folder receipt cleanup failed");
+  }
   cleanupTimer = setInterval(() => {
     void uploads.cleanup().then((result) => {
       if (result.cleanupFailures > 0) {
@@ -734,6 +794,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     }).catch((error: unknown) => {
       app.log.error({ err: error }, "Periodic passkey challenge cleanup failed");
     });
+    try {
+      const purgedChatFolderReceipts = purgeExpiredChatFolderReceipts(store);
+      if (purgedChatFolderReceipts > 0) {
+        app.log.info({ purgedChatFolderReceipts }, "Expired chat-folder receipts purged");
+      }
+    } catch (error) {
+      app.log.error({ err: error }, "Periodic chat-folder receipt cleanup failed");
+    }
   }, 10 * 60_000);
   cleanupTimer.unref();
   return app;

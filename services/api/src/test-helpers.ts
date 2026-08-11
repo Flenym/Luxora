@@ -65,6 +65,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     phoneAuthRegistrationTtlSeconds: 600,
     phoneAuthRetryAfterSeconds: 60,
     phoneAuthMaxAttempts: 5,
+    syncInvalidationEnabled: true,
     ...overrides
   };
 }

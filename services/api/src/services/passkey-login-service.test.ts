@@ -77,6 +77,8 @@ function user(): UserRecord {
     displayName: "Passkey User",
     passwordHash: "unused-test-hash",
     passwordAuthEnabled: true,
+    phonePasswordHash: null,
+    phonePasswordEnabled: false,
     bio: "",
     avatarUrl: null,
     createdAt,

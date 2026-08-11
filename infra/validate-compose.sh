@@ -17,6 +17,7 @@ cd "$repo_root"
 LUXORA_ENV_FILE=.env.example docker compose \
   --env-file .env.example \
   --profile observability \
+  --profile development \
   config --format json >"$root_config"
 docker compose \
   --env-file infra/calls/environment.example \
@@ -26,6 +27,7 @@ docker compose \
 jq --exit-status '
   .services.api as $api
   | .services.prometheus as $prom
+  | .services["otp-console"] as $otp
   | ($api.read_only == true)
     and ($api.cap_drop == ["ALL"])
     and (($api.security_opt | index("no-new-privileges:true")) != null)
@@ -43,6 +45,25 @@ jq --exit-status '
     and all($prom.ports[]; .host_ip == "127.0.0.1")
     and ($prom.healthcheck.test[1] == "/bin/promtool")
     and (($prom.command | index("--web.enable-lifecycle")) == null)
+    and ($otp.profiles == ["development"])
+    and ($otp.read_only == true)
+    and ($otp.cap_drop == ["ALL"])
+    and (($otp.security_opt | index("no-new-privileges:true")) != null)
+    and ($otp.environment.NODE_ENV == "development")
+    and ($otp.environment.LUXORA_LOCAL_OTP_CONSOLE == "enabled")
+    and (($otp.environment | keys | sort) == [
+      "LUXORA_LOCAL_OTP_CONSOLE",
+      "LUXORA_OTP_CONSOLE_PUBLIC_PORT",
+      "NODE_ENV",
+      "PHONE_AUTH_DEVELOPMENT_CODE",
+      "PHONE_AUTH_PROVIDER",
+      "PORT"
+    ])
+    and (($otp.ports | length) == 1)
+    and all($otp.ports[]; .host_ip == "127.0.0.1")
+    and ($otp.healthcheck.test[0] == "CMD")
+    and ($otp.healthcheck.test[1] == "/nodejs/bin/node")
+    and ($otp.networks["developer-tools"] == null)
     and (.networks.observability.internal == true)
 ' "$root_config" >/dev/null || {
   echo "Root Compose security invariants failed." >&2

@@ -46,7 +46,8 @@ TLS and disk encryption reduce network/media theft risk. They do not protect aga
 
 - Never commit `.env`, keys, tokens, certificates or signing material.
 - `JWT_SECRET` must be random, at least 32 characters and unique per environment.
-- Production requires `DATA_ENCRYPTION_KEYS` and `ACTIVE_DATA_ENCRYPTION_KEY_ID`.
+- Every runnable development/production API requires `DATA_ENCRYPTION_KEYS`
+  and `ACTIVE_DATA_ENCRYPTION_KEY_ID`; only isolated tests may use the plaintext seam.
 - Phone authentication requires an independent `PHONE_AUTH_HMAC_SECRET`; it must not reuse JWT, data-encryption or passkey authorization/refresh material.
 - Keep old data keys available during rotation until all relevant envelopes are re-encrypted/expired and backups follow policy.
 - Inject secrets from a managed secret store using short-lived workload identity; do not bake them into image, Compose, CI variables visible to forks or logs.
@@ -123,6 +124,13 @@ development-provider phone registration, exact registration replay and
 authorized `/v1/me` smoke under read-only/rootless hardening. This is
 point-in-time local evidence, not a substitute for scanning the image again in
 CI and at deployment.
+
+The 11 August 2026 push-registration candidate was rescanned against a freshly
+downloaded Trivy database: the blocking result remained 0 High, 0 Critical and
+0 secret findings, while the all-severity inventory exposed 14 currently
+unfixed Debian findings (2 Unknown, 7 Low and 5 Medium). The exact artifact,
+CVE inventory and limitations are recorded in
+[`docs/audits/CONTAINER_SCAN_BETA_0_1_2026-08-11.md`](docs/audits/CONTAINER_SCAN_BETA_0_1_2026-08-11.md).
 
 ## 10. E2EE gate (not implemented)
 

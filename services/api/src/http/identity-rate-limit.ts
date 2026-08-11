@@ -12,6 +12,7 @@ export interface IdentityRateLimitGuards {
   requestCreate: preHandlerAsyncHookHandler;
   relationshipMutation: preHandlerAsyncHookHandler;
   safetyReport: preHandlerAsyncHookHandler;
+  chatFolderMutation: preHandlerAsyncHookHandler;
 }
 
 function createAuthenticatedGuard(
@@ -62,6 +63,11 @@ export function createIdentityRateLimitGuards(app: FastifyInstance): IdentityRat
       accountMax: 10,
       deviceSessionMax: 8,
       timeWindow: "1 hour"
+    }),
+    chatFolderMutation: createAuthenticatedGuard(app, {
+      accountMax: 40,
+      deviceSessionMax: 30,
+      timeWindow: "1 minute"
     })
   };
 }

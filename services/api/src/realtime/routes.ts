@@ -348,7 +348,8 @@ function registerSnapshotRoute(app: FastifyInstance, dependencies: RealtimeDepen
           "reactions",
           "receipts",
           "attachments",
-          "safety_reports"
+          "safety_reports",
+          "chat_folders"
         ]
       },
       resources: {
@@ -358,6 +359,7 @@ function registerSnapshotRoute(app: FastifyInstance, dependencies: RealtimeDepen
         chats: "/v2/sync/chats",
         attachments: "/v1/attachments",
         safetyReports: "/v1/safety/reports",
+        chatFolders: "/v1/chat-folders",
         membersTemplate: "/v1/chats/{chatId}/members",
         messagesTemplate: "/v1/chats/{chatId}/messages",
         pinsTemplate: "/v1/chats/{chatId}/pins",

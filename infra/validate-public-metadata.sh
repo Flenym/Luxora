@@ -40,7 +40,8 @@ luxora_truth_check() {
 }
 
 # Product release tokens are human-facing `Beta-0.1`. The lowercase spelling is
-# allowed only as the normalized Docker image tag `luxora-api:beta-0.1`.
+# allowed only as a normalized first-party Docker image tag:
+# `luxora-api:beta-0.1` or `luxora-otp-console:beta-0.1`.
 # Internal package SemVer, Apple numeric bundle versions and HTTP/schema v1/v2
 # are intentionally outside these patterns.
 luxora_truth_check \
@@ -51,7 +52,7 @@ luxora_truth_check \
 luxora_truth_check \
   'lowercase product release token outside the Docker image tag' \
   '*' \
-  '(?<!luxora-api:)beta-0\.1\b' \
+  '(?<!luxora-api:)(?<!luxora-otp-console:)beta-0\.1\b' \
   .
 luxora_truth_check \
   'Markdown release metadata without canonical Beta-0.1' \

@@ -34,5 +34,24 @@ final class DebugLaunchAutomationTests: XCTestCase {
         XCTAssertEqual(automation.username, "egor_beta")
         XCTAssertEqual(automation.conversationID, chatID)
     }
+
+    func testAutomationReconstructsPasswordFromTwoEnvironmentFragments() throws {
+        let automation = try XCTUnwrap(DebugLaunchAutomation(environment: [
+            "LUXORA_DEBUG_AUTOMATION": "1",
+            "LUXORA_DEBUG_USERNAME": "egor_beta",
+            "LUXORA_DEBUG_PASSWORD_PREFIX": "debug-test-",
+            "LUXORA_DEBUG_PASSWORD_SUFFIX": "placeholder",
+        ]))
+
+        XCTAssertEqual(automation.password, "debug-test-placeholder")
+    }
+
+    func testAutomationRejectsAnIncompletePasswordFragmentPair() {
+        XCTAssertNil(DebugLaunchAutomation(environment: [
+            "LUXORA_DEBUG_AUTOMATION": "1",
+            "LUXORA_DEBUG_USERNAME": "egor_beta",
+            "LUXORA_DEBUG_PASSWORD_PREFIX": "debug-test-placeholder",
+        ]))
+    }
 }
 #endif

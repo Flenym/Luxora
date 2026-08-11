@@ -63,17 +63,36 @@ Local Compose:
 
 ```bash
 cp .env.example .env
-# Replace JWT_SECRET in .env.
+# Replace JWT_SECRET and configure DATA_ENCRYPTION_KEYS plus
+# ACTIVE_DATA_ENCRYPTION_KEY_ID in the untracked .env.
 make compose-config
 make compose-up
 ```
 
-The API binds to `127.0.0.1:${PORT:-8080}`. The build stage uses the digest-pinned
+The API binds to `127.0.0.1:${LUXORA_API_HOST_PORT:-8080}`. The build stage uses the digest-pinned
 Node 22 image; the shipped runtime is a separately digest-pinned Debian 13
 distroless Node 22 image. It runs as numeric non-root UID/GID `65532`, contains
 no shell or package manager, drops Linux capabilities, enables
 `no-new-privileges`, has a read-only root filesystem and writes only `/app/data`
 plus tmpfs `/tmp`.
+
+For local phone-auth/Xcode work, configure the untracked `.env` with
+`PHONE_AUTH_ENABLED=true`, `PHONE_AUTH_PROVIDER=development`, an independent
+HMAC root, a six-digit `PHONE_AUTH_DEVELOPMENT_CODE` and the development data
+encryption keyring. The fixed code can then be read from the separate local
+console:
+
+```bash
+docker compose --profile development up --build -d otp-console
+open http://127.0.0.1:${LUXORA_OTP_CONSOLE_HOST_PORT:-8081}
+curl --fail http://127.0.0.1:${LUXORA_OTP_CONSOLE_HOST_PORT:-8081}/api/code
+```
+
+The console is a distinct distroless, non-root, read-only container published
+only on loopback. It rejects a non-development provider, an invalid/missing
+code, a non-local Host header and any `NODE_ENV` other than `development`; it is
+not a route or dependency of the API. Never enable this profile or inject a
+fixed verification code in production.
 
 Observability profile:
 
@@ -177,6 +196,28 @@ Startup applies ordered migrations transactionally and records IDs. Current migr
 - never rewrite encrypted content without retaining old keys and checksums;
 - migration failure keeps traffic off the unhealthy instance;
 - rollback means compatible code rollback or reviewed forward-fix, not manual DB edits.
+
+### Migration 024 local-live checkpoint (11 August 2026)
+
+Luxora Beta-0.1, owner/developer Flenym, completed a controlled local-preview
+promotion to `024_chat_membership_revision_ledger` with `12.005` seconds of
+measured downtime. The active primary image is
+`sha256:47e66d5d490d770d79a62708be5061519e5d04b63888e78dfd7934e63f4a046a`
+with `SYNC_INVALIDATION_ENABLED=true`. The only supported application fallback
+is `sha256:f907528e5f0d39656989e5c77cbae8cf4bcabdb97216d14de8bf3bc27063c3d0`
+with the flag explicitly `false`.
+
+Never restart the stopped `c514db0e…` container against the migration-024
+volume: its membership insert path is not ledger-aware. Never remove migration
+rows or edit the ledger to make an older binary start. The fresh sealed backup
+is
+`/Users/vikavavilina/Documents/egor/Luxora-local-backups/Beta-0.1/pre-live-m024-promotion-20260811T143400Z`
+with `SHA256SUMS` digest
+`f0867986a23f8b03b919e3117616ee6e18d5ab7dd09b89873bb1f538778cbabc`.
+Exact tests, scan, backup, primary smoke, fallback rehearsal and postdeploy
+gates are recorded in
+[`docs/audits/SYNC_INVALIDATION_SCHEMA_COMPATIBLE_FALLBACK_2026-08-11.md`](docs/audits/SYNC_INVALIDATION_SCHEMA_COMPATIBLE_FALLBACK_2026-08-11.md).
+This is local-preview evidence, not a production DR or public-release claim.
 
 ## 9. Observability
 

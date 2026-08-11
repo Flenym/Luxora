@@ -3033,5 +3033,519 @@ export const migrations: Migration[] = [
         SELECT RAISE(ABORT, 'phone authentication audit cannot be deleted');
       END;
     `
+  },
+  {
+    id: "019_phone_password_challenge",
+    sql: `
+      ALTER TABLE users ADD COLUMN phone_password_hash TEXT;
+      ALTER TABLE users ADD COLUMN phone_password_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (phone_password_enabled IN (0, 1));
+
+      CREATE TRIGGER trg_users_phone_password_insert_valid
+      BEFORE INSERT ON users
+      WHEN NEW.phone_password_enabled = 1 AND NEW.phone_password_hash IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'enabled phone password requires a hash');
+      END;
+      CREATE TRIGGER trg_users_phone_password_update_valid
+      BEFORE UPDATE OF phone_password_hash, phone_password_enabled ON users
+      WHEN NEW.phone_password_enabled = 1 AND NEW.phone_password_hash IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'enabled phone password requires a hash');
+      END;
+
+      CREATE TABLE phone_auth_password_receipts (
+        scope TEXT PRIMARY KEY CHECK (length(scope) BETWEEN 1 AND 192),
+        fingerprint TEXT NOT NULL CHECK (
+          length(fingerprint) = 64 AND fingerprint NOT GLOB '*[^0-9a-f]*'
+        ),
+        challenge_id TEXT NOT NULL REFERENCES phone_auth_challenges(id),
+        result_kind TEXT NOT NULL CHECK (result_kind IN (
+          'password_required', 'password_invalid', 'attempts_exhausted', 'authenticated'
+        )),
+        response_ciphertext TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        CHECK (julianday(created_at) IS NOT NULL),
+        CHECK (julianday(expires_at) IS NOT NULL),
+        CHECK (julianday(expires_at) > julianday(created_at)),
+        CHECK (
+          (result_kind IN ('password_invalid', 'attempts_exhausted')
+            AND response_ciphertext IS NULL)
+          OR (result_kind IN ('password_required', 'authenticated')
+            AND response_ciphertext IS NOT NULL)
+        )
+      ) STRICT;
+      CREATE INDEX idx_phone_auth_password_receipts_challenge
+        ON phone_auth_password_receipts(challenge_id, created_at);
+
+      CREATE TABLE phone_auth_password_events (
+        event_id TEXT PRIMARY KEY,
+        challenge_id TEXT NOT NULL REFERENCES phone_auth_challenges(id),
+        observed_revision INTEGER NOT NULL CHECK (observed_revision >= 1),
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'phone.challenge.password_required',
+          'phone.challenge.password_rejected',
+          'phone.challenge.password_locked',
+          'phone.challenge.password_authenticated'
+        )),
+        command_scope TEXT NOT NULL UNIQUE CHECK (length(command_scope) BETWEEN 1 AND 192),
+        occurred_at TEXT NOT NULL,
+        CHECK (julianday(occurred_at) IS NOT NULL)
+      ) STRICT;
+      CREATE INDEX idx_phone_auth_password_events_challenge
+        ON phone_auth_password_events(challenge_id, occurred_at);
+
+      CREATE TRIGGER trg_phone_password_receipts_immutable
+      BEFORE UPDATE ON phone_auth_password_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'phone password receipt is immutable');
+      END;
+      CREATE TRIGGER trg_phone_password_receipts_no_delete
+      BEFORE DELETE ON phone_auth_password_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'phone password receipt cannot be deleted');
+      END;
+      CREATE TRIGGER trg_phone_password_events_append_only_update
+      BEFORE UPDATE ON phone_auth_password_events
+      BEGIN
+        SELECT RAISE(ABORT, 'phone password audit is append-only');
+      END;
+      CREATE TRIGGER trg_phone_password_events_append_only_delete
+      BEFORE DELETE ON phone_auth_password_events
+      BEGIN
+        SELECT RAISE(ABORT, 'phone password audit cannot be deleted');
+      END;
+    `
+  },
+  {
+    id: "020_processed_profile_avatar",
+    sql: `
+      ALTER TABLE users ADD COLUMN avatar_attachment_id TEXT
+        REFERENCES attachments(id) ON DELETE SET NULL;
+      CREATE INDEX idx_users_avatar_attachment
+        ON users(avatar_attachment_id) WHERE avatar_attachment_id IS NOT NULL;
+
+      ALTER TABLE attachments ADD COLUMN safety_status TEXT NOT NULL DEFAULT 'unscanned'
+        CHECK (safety_status IN ('unscanned', 'reencoded'));
+      ALTER TABLE attachments ADD COLUMN metadata_trust TEXT NOT NULL DEFAULT 'client_declared'
+        CHECK (metadata_trust IN ('client_declared', 'server_verified'));
+
+      CREATE TRIGGER trg_user_avatar_owned_verified_insert
+      BEFORE INSERT ON users
+      WHEN NEW.avatar_attachment_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM attachments a
+        WHERE a.id = NEW.avatar_attachment_id
+          AND a.owner_user_id = NEW.id
+          AND a.kind = 'image'
+          AND a.safety_status = 'reencoded'
+          AND a.metadata_trust = 'server_verified'
+          AND a.deleting_at IS NULL
+          AND a.deleted_at IS NULL
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'profile avatar must be an owned verified image');
+      END;
+
+      CREATE TRIGGER trg_user_avatar_owned_verified_update
+      BEFORE UPDATE OF avatar_attachment_id ON users
+      WHEN NEW.avatar_attachment_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM attachments a
+        WHERE a.id = NEW.avatar_attachment_id
+          AND a.owner_user_id = NEW.id
+          AND a.kind = 'image'
+          AND a.safety_status = 'reencoded'
+          AND a.metadata_trust = 'server_verified'
+          AND a.deleting_at IS NULL
+          AND a.deleted_at IS NULL
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'profile avatar must be an owned verified image');
+      END;
+    `
+  },
+  {
+    id: "021_push_registration_preferences",
+    sql: `
+      CREATE TABLE push_registrations (
+        id TEXT PRIMARY KEY CHECK (length(id) = 36),
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES device_sessions(id) ON DELETE CASCADE,
+        platform TEXT NOT NULL CHECK (platform = 'apns'),
+        environment TEXT NOT NULL CHECK (environment IN ('development', 'production')),
+        topic TEXT NOT NULL CHECK (topic = 'app.luxora.mobile'),
+        token_digest TEXT NOT NULL CHECK (
+          length(token_digest) = 64 AND token_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        token_ciphertext TEXT NOT NULL CHECK (token_ciphertext GLOB 'luxora:v1.*'),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        revoked_at TEXT,
+        UNIQUE (platform, environment, topic, token_digest),
+        CHECK (julianday(created_at) IS NOT NULL),
+        CHECK (julianday(updated_at) IS NOT NULL),
+        CHECK (updated_at >= created_at),
+        CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+      ) STRICT;
+      CREATE UNIQUE INDEX idx_push_registration_active_session
+        ON push_registrations(session_id, platform, topic)
+        WHERE revoked_at IS NULL;
+      CREATE INDEX idx_push_registration_active_user
+        ON push_registrations(user_id, updated_at)
+        WHERE revoked_at IS NULL;
+
+      CREATE TABLE notification_settings (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        message_alerts INTEGER NOT NULL DEFAULT 1 CHECK (message_alerts IN (0, 1)),
+        message_request_alerts INTEGER NOT NULL DEFAULT 1
+          CHECK (message_request_alerts IN (0, 1)),
+        mention_alerts INTEGER NOT NULL DEFAULT 1 CHECK (mention_alerts IN (0, 1)),
+        sound INTEGER NOT NULL DEFAULT 1 CHECK (sound IN (0, 1)),
+        badge INTEGER NOT NULL DEFAULT 1 CHECK (badge IN (0, 1)),
+        preview_mode TEXT NOT NULL DEFAULT 'hidden'
+          CHECK (preview_mode IN ('hidden', 'sender', 'full')),
+        updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL)
+      ) STRICT;
+
+      CREATE TRIGGER trg_push_registration_session_binding_insert
+      BEFORE INSERT ON push_registrations
+      WHEN NOT EXISTS (
+        SELECT 1 FROM device_sessions s
+        WHERE s.id = NEW.session_id
+          AND s.user_id = NEW.user_id
+          AND s.revoked_at IS NULL
+          AND s.expires_at > NEW.updated_at
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'push registration requires an active owned session');
+      END;
+
+      CREATE TRIGGER trg_push_registration_session_binding_update
+      BEFORE UPDATE OF user_id, session_id, revoked_at, updated_at ON push_registrations
+      WHEN NEW.revoked_at IS NULL AND NOT EXISTS (
+        SELECT 1 FROM device_sessions s
+        WHERE s.id = NEW.session_id
+          AND s.user_id = NEW.user_id
+          AND s.revoked_at IS NULL
+          AND s.expires_at > NEW.updated_at
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'push registration requires an active owned session');
+      END;
+
+      CREATE TRIGGER trg_push_registration_identity_immutable
+      BEFORE UPDATE OF id, platform, environment, topic, token_digest, created_at
+      ON push_registrations
+      BEGIN
+        SELECT RAISE(ABORT, 'push registration identity is immutable');
+      END;
+    `
+  },
+  {
+    id: "022_chat_folders",
+    sql: `
+      CREATE TABLE chat_folder_states (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL)
+      ) STRICT;
+
+      CREATE TABLE chat_folders (
+        id TEXT PRIMARY KEY CHECK (length(id) = 36),
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 48),
+        position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 9999),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        include_direct INTEGER NOT NULL CHECK (include_direct IN (0, 1)),
+        include_group INTEGER NOT NULL CHECK (include_group IN (0, 1)),
+        include_channel INTEGER NOT NULL CHECK (include_channel IN (0, 1)),
+        unread_only INTEGER NOT NULL CHECK (unread_only IN (0, 1)),
+        exclude_muted INTEGER NOT NULL CHECK (exclude_muted IN (0, 1)),
+        include_archived INTEGER NOT NULL CHECK (include_archived IN (0, 1)),
+        created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+        updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+        UNIQUE (id, user_id),
+        CHECK (updated_at >= created_at)
+      ) STRICT;
+      CREATE INDEX idx_chat_folders_account_order
+        ON chat_folders(user_id, position, id);
+
+      CREATE TABLE chat_folder_overrides (
+        folder_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('include', 'exclude')),
+        pinned_position INTEGER CHECK (pinned_position BETWEEN 0 AND 99),
+        created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+        updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+        PRIMARY KEY (folder_id, chat_id),
+        FOREIGN KEY (folder_id, user_id)
+          REFERENCES chat_folders(id, user_id) ON DELETE CASCADE,
+        FOREIGN KEY (chat_id, user_id)
+          REFERENCES chat_members(chat_id, user_id) ON DELETE CASCADE,
+        CHECK (updated_at >= created_at),
+        CHECK (mode = 'include' OR pinned_position IS NULL)
+      ) STRICT;
+      CREATE INDEX idx_chat_folder_overrides_account_chat
+        ON chat_folder_overrides(user_id, chat_id, folder_id);
+      CREATE UNIQUE INDEX idx_chat_folder_pinned_position
+        ON chat_folder_overrides(folder_id, pinned_position)
+        WHERE pinned_position IS NOT NULL;
+
+      CREATE TABLE chat_folder_command_receipts (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL CHECK (length(client_nonce) = 36),
+        operation TEXT NOT NULL CHECK (operation IN ('create', 'update', 'delete', 'reorder')),
+        fingerprint TEXT NOT NULL CHECK (length(fingerprint) BETWEEN 1 AND 8192),
+        response_ciphertext TEXT NOT NULL CHECK (response_ciphertext GLOB 'luxora:v1.*'),
+        created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+        PRIMARY KEY (user_id, client_nonce)
+      ) STRICT;
+
+      CREATE TRIGGER trg_chat_folder_limit
+      BEFORE INSERT ON chat_folders
+      WHEN (SELECT count(*) FROM chat_folders WHERE user_id = NEW.user_id) >= 10
+      BEGIN
+        SELECT RAISE(ABORT, 'an account can contain at most 10 custom chat folders');
+      END;
+
+      CREATE TRIGGER trg_chat_folder_override_limit
+      BEFORE INSERT ON chat_folder_overrides
+      WHEN (SELECT count(*) FROM chat_folder_overrides WHERE folder_id = NEW.folder_id) >= 100
+      BEGIN
+        SELECT RAISE(ABORT, 'a chat folder can contain at most 100 overrides');
+      END;
+
+      CREATE TRIGGER trg_chat_folder_state_monotonic
+      BEFORE UPDATE ON chat_folder_states
+      WHEN NEW.user_id <> OLD.user_id
+        OR NEW.revision <> OLD.revision + 1
+        OR julianday(NEW.updated_at) < julianday(OLD.updated_at)
+      BEGIN
+        SELECT RAISE(ABORT, 'chat folder state revision must advance exactly once');
+      END;
+
+      CREATE TRIGGER trg_chat_folder_revision_monotonic
+      BEFORE UPDATE ON chat_folders
+      WHEN NEW.id <> OLD.id
+        OR NEW.user_id <> OLD.user_id
+        OR NEW.created_at <> OLD.created_at
+        OR NEW.revision <> OLD.revision + 1
+        OR julianday(NEW.updated_at) < julianday(OLD.updated_at)
+      BEGIN
+        SELECT RAISE(ABORT, 'chat folder revision must advance exactly once');
+      END;
+
+      CREATE TRIGGER trg_chat_folder_receipts_immutable
+      BEFORE UPDATE ON chat_folder_command_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'chat folder command receipt is immutable');
+      END;
+
+      CREATE TRIGGER trg_chat_folder_receipts_no_delete
+      BEFORE DELETE ON chat_folder_command_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'chat folder command receipt cannot be deleted');
+      END;
+    `
+  },
+  {
+    id: "023_chat_folder_receipt_retention",
+    sql: `
+      DROP TRIGGER trg_chat_folder_receipts_no_delete;
+      ALTER TABLE chat_folder_command_receipts ADD COLUMN expires_at TEXT
+        CHECK (
+          expires_at IS NULL OR (
+            julianday(expires_at) IS NOT NULL
+            AND julianday(expires_at) > julianday(created_at)
+          )
+        );
+      CREATE INDEX idx_chat_folder_receipts_expiry
+        ON chat_folder_command_receipts(expires_at, user_id, client_nonce);
+      CREATE INDEX idx_chat_folder_receipts_legacy_expiry
+        ON chat_folder_command_receipts(created_at, user_id, client_nonce)
+        WHERE expires_at IS NULL;
+
+      CREATE TRIGGER trg_chat_folder_receipts_require_expiry
+      BEFORE INSERT ON chat_folder_command_receipts
+      WHEN NEW.expires_at IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'chat folder command receipt requires an expiry');
+      END;
+    `
+  },
+  {
+    id: "024_chat_membership_revision_ledger",
+    sql: `
+      CREATE TABLE chat_membership_revision_ledger (
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        last_revision INTEGER NOT NULL CHECK (last_revision >= 2),
+        last_removed_at TEXT NOT NULL CHECK (julianday(last_removed_at) IS NOT NULL),
+        PRIMARY KEY (chat_id, user_id)
+      ) STRICT;
+
+      INSERT INTO chat_membership_revision_ledger (
+        chat_id, user_id, last_revision, last_removed_at
+      )
+      SELECT
+        chat_id,
+        target_user_id,
+        max(result_revision),
+        max(result_updated_at)
+      FROM chat_membership_command_receipts
+      WHERE operation = 'remove'
+      GROUP BY chat_id, target_user_id;
+
+      DROP TRIGGER trg_chat_members_insert_invariants;
+      DROP TRIGGER trg_chat_members_identity_immutable;
+      DROP TRIGGER trg_chat_members_role_revision;
+
+      UPDATE chat_members
+      SET
+        membership_revision = (
+          SELECT ledger.last_revision + 1
+          FROM chat_membership_revision_ledger AS ledger
+          WHERE ledger.chat_id = chat_members.chat_id
+            AND ledger.user_id = chat_members.user_id
+        ),
+        joined_at = strftime(
+          '%Y-%m-%dT%H:%M:%fZ',
+          max(
+            julianday(joined_at),
+            julianday(COALESCE(membership_updated_at, joined_at)),
+            (SELECT julianday(ledger.last_removed_at)
+             FROM chat_membership_revision_ledger AS ledger
+             WHERE ledger.chat_id = chat_members.chat_id
+               AND ledger.user_id = chat_members.user_id)
+          ) + (1.0 / 86400000.0)
+        ),
+        membership_updated_at = strftime(
+          '%Y-%m-%dT%H:%M:%fZ',
+          max(
+            julianday(joined_at),
+            julianday(COALESCE(membership_updated_at, joined_at)),
+            (SELECT julianday(ledger.last_removed_at)
+             FROM chat_membership_revision_ledger AS ledger
+             WHERE ledger.chat_id = chat_members.chat_id
+               AND ledger.user_id = chat_members.user_id)
+          ) + (1.0 / 86400000.0)
+        )
+      WHERE EXISTS (
+        SELECT 1
+        FROM chat_membership_revision_ledger AS ledger
+        WHERE ledger.chat_id = chat_members.chat_id
+          AND ledger.user_id = chat_members.user_id
+          AND chat_members.membership_revision <= ledger.last_revision
+      );
+
+      CREATE TRIGGER trg_chat_members_identity_immutable
+      BEFORE UPDATE ON chat_members
+      WHEN NEW.chat_id <> OLD.chat_id
+        OR NEW.user_id <> OLD.user_id
+        OR NEW.joined_at <> OLD.joined_at
+      BEGIN
+        SELECT RAISE(ABORT, 'chat membership identity is immutable');
+      END;
+
+      CREATE TRIGGER trg_chat_members_insert_invariants
+      BEFORE INSERT ON chat_members
+      WHEN NEW.membership_revision <> COALESCE((
+          SELECT ledger.last_revision + 1
+          FROM chat_membership_revision_ledger AS ledger
+          WHERE ledger.chat_id = NEW.chat_id
+            AND ledger.user_id = NEW.user_id
+        ), 1)
+        OR NEW.membership_updated_at IS NULL
+        OR julianday(NEW.joined_at) IS NULL
+        OR julianday(NEW.membership_updated_at) IS NULL
+        OR julianday(NEW.membership_updated_at) < julianday(NEW.joined_at)
+        OR EXISTS (
+          SELECT 1
+          FROM chat_membership_revision_ledger AS ledger
+          WHERE ledger.chat_id = NEW.chat_id
+            AND ledger.user_id = NEW.user_id
+            AND julianday(NEW.joined_at) <= julianday(ledger.last_removed_at)
+        )
+        OR (
+          (SELECT kind FROM chats WHERE id = NEW.chat_id) = 'direct'
+          AND NEW.role <> 'member'
+        )
+        OR (
+          NEW.role = 'owner'
+          AND EXISTS (
+            SELECT 1 FROM chat_members
+            WHERE chat_id = NEW.chat_id AND role = 'owner'
+          )
+        )
+        OR (
+          SELECT count(*) FROM chat_members WHERE chat_id = NEW.chat_id
+        ) >= 200
+      BEGIN
+        SELECT RAISE(ABORT, 'chat membership insert invariant failed');
+      END;
+
+      CREATE TRIGGER trg_chat_members_role_revision
+      BEFORE UPDATE ON chat_members
+      WHEN (
+          NEW.role <> OLD.role
+          AND (
+            NEW.membership_revision <> OLD.membership_revision + 1
+            OR NEW.membership_updated_at IS NULL
+            OR julianday(NEW.membership_updated_at) IS NULL
+            OR julianday(NEW.membership_updated_at) <= julianday(
+              COALESCE(OLD.membership_updated_at, OLD.joined_at)
+            )
+          )
+        )
+        OR (
+          NEW.role = OLD.role
+          AND (
+            NEW.membership_revision <> OLD.membership_revision
+            OR NEW.membership_updated_at <> OLD.membership_updated_at
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'chat membership revision transition is invalid');
+      END;
+
+      CREATE TRIGGER trg_chat_membership_revision_ledger_monotonic
+      BEFORE UPDATE ON chat_membership_revision_ledger
+      WHEN NEW.chat_id <> OLD.chat_id
+        OR NEW.user_id <> OLD.user_id
+        OR NEW.last_revision <= OLD.last_revision
+        OR julianday(NEW.last_removed_at) <= julianday(OLD.last_removed_at)
+      BEGIN
+        SELECT RAISE(ABORT, 'chat membership revision ledger must advance');
+      END;
+
+      CREATE TRIGGER trg_chat_members_delete_revision_ledger
+      BEFORE DELETE ON chat_members
+      BEGIN
+        INSERT INTO chat_membership_revision_ledger (
+          chat_id, user_id, last_revision, last_removed_at
+        ) VALUES (
+          OLD.chat_id,
+          OLD.user_id,
+          OLD.membership_revision + 1,
+          strftime(
+            '%Y-%m-%dT%H:%M:%fZ',
+            max(
+              julianday(COALESCE(OLD.membership_updated_at, OLD.joined_at)),
+              COALESCE((
+                SELECT julianday(ledger.last_removed_at)
+                FROM chat_membership_revision_ledger AS ledger
+                WHERE ledger.chat_id = OLD.chat_id
+                  AND ledger.user_id = OLD.user_id
+              ), julianday(COALESCE(OLD.membership_updated_at, OLD.joined_at)))
+            ) + (1.0 / 86400000.0)
+          )
+        )
+        ON CONFLICT(chat_id, user_id) DO UPDATE SET
+          last_revision = excluded.last_revision,
+          last_removed_at = excluded.last_removed_at
+        WHERE excluded.last_revision > chat_membership_revision_ledger.last_revision;
+      END;
+    `
   }
 ];

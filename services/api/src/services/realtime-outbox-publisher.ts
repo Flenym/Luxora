@@ -43,6 +43,7 @@ export interface RealtimeOutboxPublisherOptions {
   retryMaxMs?: number;
   workerId?: string;
   clock?: () => Date;
+  shouldPublish?: (event: StoredEvent) => boolean;
   onFailure?: (failure: RealtimeOutboxFailure) => void;
 }
 
@@ -72,6 +73,7 @@ export class RealtimeOutboxPublisher implements EventPublisher {
   readonly #retryMaxMs: number;
   readonly #workerId: string;
   readonly #clock: () => Date;
+  readonly #shouldPublish: (event: StoredEvent) => boolean;
   readonly #onFailure: ((failure: RealtimeOutboxFailure) => void) | undefined;
   #timer: NodeJS.Timeout | undefined;
   #draining = false;
@@ -104,6 +106,7 @@ export class RealtimeOutboxPublisher implements EventPublisher {
     }
     this.#workerId = options.workerId ?? randomUUID();
     this.#clock = options.clock ?? (() => new Date());
+    this.#shouldPublish = options.shouldPublish ?? (() => true);
     this.#onFailure = options.onFailure;
   }
 
@@ -185,7 +188,7 @@ export class RealtimeOutboxPublisher implements EventPublisher {
             continue;
           }
           try {
-            this.delegate.publish([item.event]);
+            if (this.#shouldPublish(item.event)) this.delegate.publish([item.event]);
           } catch (error) {
             this.#failure({ stage: "publish", eventSequence: item.event.sequence, error });
             this.#retryOrFail(
