@@ -82,12 +82,15 @@ Docker и тестовые артефакты: общий workspace изменя
   содержит только `2026dc4` и **не включает dirty tree**; после final commit его
   нужно пересоздать.
 - Official `gh` 2.97.0 установлен и checksum-verified; keyring auth активен для
-  account `Flenym`. На момент проверки remote ещё отсутствовал. Root должен
-  создать только private `Flenym/Luxora`, push текущего final commit и отдельно
-  подтвердить `visibility=PRIVATE`/remote branch; до этого публикация считается
-  **pending**, а не завершённой. Public fallback запрещён. Никогда не выводить
-  OTP, `.env`, bearer/refresh material, GitHub credentials, encryption keys,
-  реальные телефоны или другие приватные данные.
+  account `Flenym`. Private repository
+  `https://github.com/Flenym/Luxora` создан и загружен: GitHub API подтвердил
+  `visibility=PRIVATE`, default branch `main`, а `origin` не содержит credential.
+  Полный implementation checkpoint `8639279962c8a0e539733c94c088eb6eb4ede03c`
+  присутствует в истории; при продолжении всегда сверять фактические local и
+  remote `main`, поскольку handoff-документация могла добавить следующий commit.
+  Public fallback запрещён. Никогда не выводить OTP, `.env`, bearer/refresh
+  material, GitHub credentials, encryption keys, реальные телефоны или другие
+  приватные данные.
 
 ## 0B. Исторический checkpoint 11 августа 2026
 
@@ -1064,6 +1067,13 @@ tests. Не обновлять docs так, будто production SMS или 2FA
   build caches, DerivedData или unreviewed credentials.
 
 ## 15. GitHub-перенос, который попросил Flenym
+
+Актуальный результат 15 августа: перенос выполнен в private repository
+`https://github.com/Flenym/Luxora`; `visibility=PRIVATE` и branch `main`
+проверены отдельно после push. Implementation checkpoint
+`8639279962c8a0e539733c94c088eb6eb4ede03c` находится в remote history. При
+новом продолжении сначала сравнить `git rev-parse HEAD` с `origin/main`, а не
+полагаться на сохранённый SHA как на вечную вершину.
 
 Требование: приватный репозиторий, доступный только Flenym, чтобы продолжить на
 Windows. Перед первым push обязательно:

@@ -76,11 +76,14 @@
   Windows-invalid paths/casefold collisions, clean
   `git diff --check`, 0 high-confidence/Trivy secret findings при исключённых
   ignored `.env`/runtime/build paths. Всё перепроверь после остановки агентов.
-  Старый checksum-valid bundle содержит только `2026dc4`, не dirty tree; после
-  final commit пересоздай bundle. Official `gh` 2.97.0 checksum-verified и
-  keyring auth активен для `Flenym`; root должен создать только private
-  `Flenym/Luxora`, push и подтвердить `visibility=PRIVATE`/remote branch. Пока
-  это не проверено, публикация pending. Public fallback запрещён.
+  Старый checksum-valid bundle содержал только `2026dc4`; после implementation
+  commit создан новый verified bundle. Official `gh` 2.97.0 checksum-verified,
+  keyring auth активен для `Flenym`. Private repository
+  `https://github.com/Flenym/Luxora` создан и загружен; GitHub API подтвердил
+  `visibility=PRIVATE`, default branch `main`, а implementation checkpoint
+  `8639279962c8a0e539733c94c088eb6eb4ede03c` присутствует в remote history.
+  При продолжении повторно сравни local HEAD с `origin/main`, потому что handoff
+  docs могли добавить следующий commit. Public fallback запрещён.
 
 ### Следующая очередь исполнения
 
@@ -1091,6 +1094,13 @@ based progress and continue.
 
 ## 16. Private GitHub publication requested by Flenym
 
+Current 2026-08-15 outcome: publication completed to the private repository
+`https://github.com/Flenym/Luxora`. GitHub reported `visibility=PRIVATE`, default
+branch `main`, and the implementation checkpoint
+`8639279962c8a0e539733c94c088eb6eb4ede03c` is present in remote history. On a
+new machine, verify the current remote tip instead of assuming that checkpoint
+is still the latest documentation commit.
+
 If no private remote already exists, Flenym explicitly authorized creating one
 for this project and uploading the intended project corpus. This does **not**
 authorize publishing publicly or uploading secrets/build caches.
@@ -1145,8 +1155,9 @@ gh repo create Flenym/Luxora --private --source=. --remote=origin --push
 gh repo view Flenym/Luxora --json nameWithOwner,visibility,url,defaultBranchRef
 ```
 
-На старом Mac `gh` отсутствовал, а подключённый GitHub App не предоставлял
-create-repository. Если это всё ещё так, Flenym должен один раз выполнить:
+Исторически на Mac `gh` отсутствовал, а подключённый GitHub App не предоставлял
+create-repository. Этот blocker закрыт установкой checksum-verified `gh` 2.97.0
+и существующей keyring-сессией Flenym. На другом компьютере без сессии нужны:
 
 ```bash
 brew install gh
@@ -1154,8 +1165,9 @@ gh auth login
 ```
 
 Не искать обход через public repository и не извлекать токены из Keychain или
-connector state. До появления авторизованного `gh` допустим только проверенный
-локальный commit/bundle; нельзя утверждать, что GitHub upload завершён.
+connector state. Выполненный upload считать действительным только пока API
+подтверждает private visibility и remote branch; при любой новой передаче
+перепроверять оба условия.
 
 Adapt the repository name only if Flenym’s account already has a conflict. Never
 switch to public as a workaround. Never embed a token in the remote URL.
