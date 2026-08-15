@@ -209,6 +209,27 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
     payload: { archived: true }
   },
   {
+    key: "GET /v1/chats/:id/draft",
+    method: "GET",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/draft`
+  },
+  {
+    key: "PUT /v1/chats/:id/draft",
+    method: "PUT",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/draft`,
+    payload: {
+      text: CONTENT_CANARY,
+      expectedRevision: 0,
+      clientNonce: SECOND_RESOURCE_ID
+    }
+  },
+  {
+    key: "DELETE /v1/chats/:id/draft",
+    method: "DELETE",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/draft`,
+    payload: { expectedRevision: 1, clientNonce: SECOND_RESOURCE_ID }
+  },
+  {
     key: "GET /v1/chats/:id/members",
     method: "GET",
     url: `/v1/chats/${RESOURCE_ID_CANARY}/members`
@@ -513,7 +534,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(71);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(74);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

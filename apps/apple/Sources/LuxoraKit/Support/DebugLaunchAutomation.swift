@@ -32,6 +32,144 @@ public struct DebugLaunchAutomation: Equatable, Sendable {
     }
 }
 
+enum DebugSynchronizedDraftScenario: Equatable, Sendable {
+    case autosaveRateLimitOnce
+
+    init?(environment: [String: String]) {
+        guard environment["LUXORA_UI_TEST_DRAFT_SCENARIO"] == "autosave-rate-limit-once" else {
+            return nil
+        }
+        self = .autosaveRateLimitOnce
+    }
+}
+
+private actor DebugSynchronizedDraftBackend {
+    private let primaryConversationID: UUID
+    private var states: [UUID: SynchronizedChatDraftState] = [:]
+    private var receipts: [UUID: ChatDraftMutationResult] = [:]
+    private var didRateLimitPrimaryPut = false
+    private var rateLimitedCommand: ChatDraftPutCommand?
+
+    init(primaryConversationID: UUID) {
+        self.primaryConversationID = primaryConversationID
+    }
+
+    func load(chatID: UUID) async throws -> SynchronizedChatDraftState {
+        try await Task.sleep(for: .milliseconds(1_500))
+        return states[chatID] ?? SynchronizedChatDraftState(draft: nil, revision: 0)
+    }
+
+    func put(
+        chatID: UUID,
+        command: ChatDraftPutCommand
+    ) async throws -> ChatDraftMutationResult {
+        let shouldRateLimit = chatID == primaryConversationID && !didRateLimitPrimaryPut
+        // Keep the first autosave visibly in flight while XCUIAutomation verifies
+        // the real software keyboard. The returned rate-limit still carries the
+        // bounded Retry-After value of three seconds.
+        try await Task.sleep(for: .milliseconds(shouldRateLimit ? 6_000 : 3_000))
+
+        if shouldRateLimit, !didRateLimitPrimaryPut {
+            didRateLimitPrimaryPut = true
+            rateLimitedCommand = command
+            throw ChatDraftRateLimitError(retryAfterSeconds: 3)
+        }
+        if let rateLimitedCommand {
+            guard command == rateLimitedCommand else {
+                throw LuxoraAPIError.server(
+                    status: 409,
+                    code: "CHAT_DRAFT_DEBUG_COMMAND_CHANGED",
+                    message: "The retry must preserve the same logical draft command."
+                )
+            }
+            self.rateLimitedCommand = nil
+        }
+        if let receipt = receipts[command.clientNonce] {
+            return ChatDraftMutationResult(state: receipt.state, replayed: true)
+        }
+
+        let current = states[chatID] ?? SynchronizedChatDraftState(draft: nil, revision: 0)
+        guard current.revision == command.expectedRevision else {
+            throw LuxoraAPIError.server(
+                status: 409,
+                code: "CHAT_DRAFT_REVISION_CONFLICT",
+                message: "The draft revision changed."
+            )
+        }
+        let revision = current.revision + 1
+        let state = SynchronizedChatDraftState(
+            draft: SynchronizedChatDraft(
+                chatID: chatID,
+                content: command.content,
+                revision: revision,
+                updatedAt: Date(timeIntervalSince1970: 1_785_834_060)
+            ),
+            revision: revision
+        )
+        let result = ChatDraftMutationResult(state: state, replayed: false)
+        states[chatID] = state
+        receipts[command.clientNonce] = result
+        return result
+    }
+
+    func delete(
+        chatID: UUID,
+        command: ChatDraftDeleteCommand
+    ) async throws -> ChatDraftMutationResult {
+        try await Task.sleep(for: .milliseconds(3_000))
+        if let receipt = receipts[command.clientNonce] {
+            return ChatDraftMutationResult(state: receipt.state, replayed: true)
+        }
+
+        let current = states[chatID] ?? SynchronizedChatDraftState(draft: nil, revision: 0)
+        guard current.revision == command.expectedRevision else {
+            throw LuxoraAPIError.server(
+                status: 409,
+                code: "CHAT_DRAFT_REVISION_CONFLICT",
+                message: "The draft revision changed."
+            )
+        }
+        let state = SynchronizedChatDraftState(
+            draft: nil,
+            revision: current.revision + 1
+        )
+        let result = ChatDraftMutationResult(state: state, replayed: false)
+        states[chatID] = state
+        receipts[command.clientNonce] = result
+        return result
+    }
+}
+
+private struct DebugSynchronizedDraftFixture {
+    let store: SynchronizedChatDraftStore
+    let binding: SynchronizedChatDraftSessionBinding
+
+    @MainActor
+    static func make(
+        accountID: UUID,
+        primaryConversationID: UUID
+    ) -> DebugSynchronizedDraftFixture {
+        let backend = DebugSynchronizedDraftBackend(
+            primaryConversationID: primaryConversationID
+        )
+        let store = SynchronizedChatDraftStore()
+        let binding = store.configureRemote(
+            accountID: accountID,
+            sessionID: UUID(uuidString: "d7a6b0c1-0ee0-4d9a-8d36-4e3c5a9c1234")!,
+            loader: { chatID in
+                try await backend.load(chatID: chatID)
+            },
+            putter: { chatID, command in
+                try await backend.put(chatID: chatID, command: command)
+            },
+            deleter: { chatID, command in
+                try await backend.delete(chatID: chatID, command: command)
+            }
+        )
+        return DebugSynchronizedDraftFixture(store: store, binding: binding)
+    }
+}
+
 /// Deterministic data for exercising the production mobile shell in UI tests
 /// and Simulator screenshot review. It is compiled out of Release and does not
 /// import or link the separately distributed LuxoraDesignFixtures product.
@@ -43,8 +181,14 @@ enum DebugMobileScenario {
 
     static func make(
         accessibilityMessageIndex: Int? = nil,
-        accessibilityConversationLimit: Int? = nil
-    ) -> (store: MessengerStore, capabilities: ServerCapabilities) {
+        accessibilityConversationLimit: Int? = nil,
+        synchronizedDraftScenario: DebugSynchronizedDraftScenario? = nil
+    ) -> (
+        store: MessengerStore,
+        capabilities: ServerCapabilities,
+        synchronizedDraftStore: SynchronizedChatDraftStore?,
+        synchronizedDraftBinding: SynchronizedChatDraftSessionBinding?
+    ) {
         let me = Participant(
             id: UUID(uuidString: "770ec1e2-2fdc-445c-a145-c83bf86c3b20")!,
             displayName: "Егор Flenym",
@@ -599,6 +743,13 @@ enum DebugMobileScenario {
         store.connectionState = .online
         store.preferredAppearance = "dark"
 
+        let synchronizedDraftFixture = synchronizedDraftScenario.map { _ in
+            DebugSynchronizedDraftFixture.make(
+                accountID: me.id,
+                primaryConversationID: primaryConversationID
+            )
+        }
+
         let capabilities = ServerCapabilities(
             trust: .init(
                 profile: "cloud_preview",
@@ -619,15 +770,23 @@ enum DebugMobileScenario {
                 serverSearchConfigured: false,
                 calls: false,
                 passkeys: false,
-                push: false
+                push: false,
+                drafts: synchronizedDraftFixture != nil
             ),
             limits: .init(
                 maxMessageCodePoints: 10_000,
                 maxAttachmentsPerMessage: 10,
-                maxAttachmentBytes: 104_857_600
-            )
+                maxAttachmentBytes: 104_857_600,
+                maxDraftCodePoints: synchronizedDraftFixture == nil ? nil : 10_000
+            ),
+            realtimeProtocolVersion: synchronizedDraftFixture == nil ? .legacyV1 : .scopedV2
         )
-        return (store, capabilities)
+        return (
+            store,
+            capabilities,
+            synchronizedDraftFixture?.store,
+            synchronizedDraftFixture?.binding
+        )
     }
 }
 #endif

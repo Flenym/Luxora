@@ -1,6 +1,6 @@
 import Foundation
 
-public struct MessageForwardProvenance: Equatable, Hashable, Sendable {
+public struct MessageForwardProvenance: Codable, Equatable, Hashable, Sendable {
     public let senderDisplayName: String
     public let originalCreatedAt: Date
 
@@ -10,7 +10,7 @@ public struct MessageForwardProvenance: Equatable, Hashable, Sendable {
     }
 }
 
-public struct MessageRemoteMetadata: Equatable, Hashable, Sendable {
+public struct MessageRemoteMetadata: Codable, Equatable, Hashable, Sendable {
     public var revision: Int?
     public var replyToMessageID: UUID?
     public var forwardedFrom: MessageForwardProvenance?
@@ -32,7 +32,7 @@ public struct MessageRemoteMetadata: Equatable, Hashable, Sendable {
     }
 }
 
-struct RemoteMessageSnapshot: Equatable, Sendable {
+struct RemoteMessageSnapshot: Codable, Equatable, Sendable {
     var message: ChatMessage
     var metadata: MessageRemoteMetadata
 

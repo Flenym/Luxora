@@ -275,6 +275,8 @@ public final class ApplicationSession {
     public private(set) var chatPreferencesStore: ChatPreferencesStore?
     public private(set) var chatFoldersStore: ChatFoldersStore?
     public private(set) var communityStore: CommunityStore?
+    public private(set) var globalSearchStore: GlobalSearchStore?
+    public private(set) var synchronizedDraftStore: SynchronizedChatDraftStore?
     public let avatarImageCache = AuthenticatedAvatarImageCache()
     public private(set) var capabilityState: CapabilityLoadState = .loading
     public private(set) var isWorking = false
@@ -301,11 +303,14 @@ public final class ApplicationSession {
     private let chatFoldersAPI: LuxoraChatFoldersAPIClient
     private let realtime: LuxoraRealtimeClient
     private let keychain: KeychainSessionStore
+    private let durableMessaging: ScopedMessengerPersistence
     private var credentialCoordinator: SessionCredentialCoordinator?
     private var currentUserID: UUID?
+    private var durableMessagingScope: DurableMessagingScope?
     private let pushNotificationLifecycle = PushNotificationSessionLifecycle()
     private var chatPreferencesBinding: ChatPreferencesSessionBinding?
     private var chatFoldersBinding: ChatFoldersSessionBinding?
+    private var synchronizedDraftBinding: SynchronizedChatDraftSessionBinding?
     private var realtimeSequence: Int?
     private var realtimeV2Sequence: Int?
     private var realtimeTask: Task<Void, Never>?
@@ -332,8 +337,19 @@ public final class ApplicationSession {
     private var phoneRegistrationCommand = PhoneAuthenticationCommandNonce<PhoneRegistrationKey>()
     private var phonePasswordCommand = PhoneAuthenticationCommandNonce<PhonePasswordKey>()
 
-    public init(configuration: LuxoraClientConfiguration = .development) {
+    public convenience init(configuration: LuxoraClientConfiguration = .development) {
+        self.init(
+            configuration: configuration,
+            durableMessaging: ScopedMessengerPersistence()
+        )
+    }
+
+    init(
+        configuration: LuxoraClientConfiguration,
+        durableMessaging: ScopedMessengerPersistence
+    ) {
         self.configuration = configuration
+        self.durableMessaging = durableMessaging
         api = LuxoraAPIClient(configuration: configuration)
         communityAPI = LuxoraCommunityAPIClient(configuration: configuration)
         chatFoldersAPI = LuxoraChatFoldersAPIClient(configuration: configuration)
@@ -352,11 +368,13 @@ public final class ApplicationSession {
             return
         }
         await refreshCapabilities()
+        var restoringSessionID: UUID?
         do {
             guard let stored = try keychain.load() else {
                 phase = .unauthenticated
                 return
             }
+            restoringSessionID = stored.sessionID
             try await bootstrap(credentials: stored)
             resetPhoneAuthenticationCommands()
         } catch is CancellationError {
@@ -365,6 +383,10 @@ public final class ApplicationSession {
             return
         } catch let error as LuxoraAPIError {
             if case let .server(status, _, _) = error, status == 401 {
+                await purgeDurableMessagingScope(
+                    fallbackSessionID: restoringSessionID,
+                    purgeAllIfUnresolved: true
+                )
                 try? keychain.clear()
                 errorMessage = LuxoraL10n.text("error.saved_session_expired")
                 phase = .unauthenticated
@@ -379,6 +401,10 @@ public final class ApplicationSession {
             // A local Keychain/credential decoding failure cannot recover by
             // retrying the same bytes. Network and server failures above keep
             // the refresh token so a later retry does not silently sign out.
+            await purgeDurableMessagingScope(
+                fallbackSessionID: restoringSessionID,
+                purgeAllIfUnresolved: true
+            )
             try? keychain.clear()
             errorMessage = String(
                 format: LuxoraL10n.text("error.session_restore_failed"),
@@ -396,6 +422,7 @@ public final class ApplicationSession {
     }
 
     public func discardRestoredSession() async {
+        let fallbackSessionID = storedSessionIDForDurablePurge()
         messengerStore?.cancelRemoteOperations()
         deviceSessionsStore?.cancelRemoteOperations()
         phonePasswordSettingsStore?.cancelRemoteOperations()
@@ -403,8 +430,14 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        globalSearchStore?.resetForSessionReplacement()
+        synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
         cancelRealtime(resetSequence: true)
+        await purgeDurableMessagingScope(
+            fallbackSessionID: fallbackSessionID,
+            purgeAllIfUnresolved: true
+        )
         await avatarImageCache.clear()
         if let credentialCoordinator {
             await credentialCoordinator.invalidate()
@@ -422,6 +455,9 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        globalSearchStore = nil
+        synchronizedDraftStore = nil
+        synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
         errorMessage = nil
         phase = .unauthenticated
@@ -679,8 +715,11 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        globalSearchStore?.resetForSessionReplacement()
+        synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
         cancelRealtime(resetSequence: true)
+        await purgeDurableMessagingScope()
         await avatarImageCache.clear()
         if let credentialCoordinator {
             try? await credentialCoordinator.withAccessToken { [api] token in
@@ -704,6 +743,9 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        globalSearchStore = nil
+        synchronizedDraftStore = nil
+        synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
         errorMessage = nil
         phase = .unauthenticated
@@ -868,6 +910,32 @@ public final class ApplicationSession {
             loadedConversationIDs: loadedIDs
         )
         let userID = user.id
+        let durableScope = DurableMessagingScope(
+            accountID: userID,
+            sessionID: credentials.sessionID
+        )
+        let durableMessaging = self.durableMessaging
+        // Corruption recovery is fail-closed inside the actor. Cache I/O must
+        // not prevent a valid server session from bootstrapping.
+        _ = try? await durableMessaging.load(scope: durableScope)
+        let initialDurableProjection = store.durableConfirmedProjection()
+        try? await durableMessaging.replaceConfirmedProjection(
+            scope: durableScope,
+            conversations: initialDurableProjection.conversations,
+            messages: initialDurableProjection.messages
+        )
+        let durableRemoteSender: ScopedMessengerPersistence.MessageSender = { pending in
+            let snapshot = try await coordinator.withAccessToken { token in
+                try await api.sendMessage(
+                    chatID: pending.conversationID,
+                    clientNonce: pending.clientNonce,
+                    body: pending.body,
+                    replyToMessageID: pending.replyToMessageID,
+                    token: token
+                )
+            }.snapshot(currentUserID: userID)
+            return DurableConfirmedMessageSnapshot(snapshot)
+        }
         store.configureRemote(
             sender: { conversationID, clientID, body in
                 let message = try await coordinator.withAccessToken { token in
@@ -886,9 +954,14 @@ public final class ApplicationSession {
                 }.map { $0.message(currentUserID: userID) }
             },
             conversationsLoader: {
-                try await coordinator.withAccessToken { token in
+                let conversations = try await coordinator.withAccessToken { token in
                     try await api.chats(token: token)
                 }.map { $0.conversation(currentUserID: userID) }
+                try? await durableMessaging.replaceConfirmedConversations(
+                    scope: durableScope,
+                    conversations: conversations
+                )
+                return conversations
             },
             peopleSearcher: { query in
                 try await coordinator.withAccessToken { token in
@@ -911,20 +984,25 @@ public final class ApplicationSession {
                 }.map(\.reaction)
             },
             messageSender: { conversationID, clientID, body, replyToMessageID in
-                try await coordinator.withAccessToken { token in
-                    try await api.sendMessage(
-                        chatID: conversationID,
-                        clientNonce: clientID,
-                        body: body,
-                        replyToMessageID: replyToMessageID,
-                        token: token
-                    )
-                }.snapshot(currentUserID: userID)
+                try await durableMessaging.sendText(
+                    scope: durableScope,
+                    conversationID: conversationID,
+                    clientNonce: clientID,
+                    body: body,
+                    replyToMessageID: replyToMessageID,
+                    sender: durableRemoteSender
+                ).remoteSnapshot
             },
             messageSnapshotLoader: { conversationID in
-                try await coordinator.withAccessToken { token in
+                let snapshots = try await coordinator.withAccessToken { token in
                     try await api.messages(chatID: conversationID, token: token)
                 }.map { $0.snapshot(currentUserID: userID) }
+                try? await durableMessaging.replaceConfirmedMessages(
+                    scope: durableScope,
+                    conversationID: conversationID,
+                    snapshots: snapshots.map(DurableConfirmedMessageSnapshot.init)
+                )
+                return snapshots
             },
             messageEditor: { messageID, body, expectedRevision in
                 try await coordinator.withAccessToken { token in
@@ -1047,6 +1125,37 @@ public final class ApplicationSession {
                 }.snapshot
             }
         )
+
+        let searchStore = GlobalSearchStore()
+        searchStore.configureRemote(
+            people: { query, cursor in
+                let page = try await coordinator.withAccessToken { token in
+                    try await api.searchUsersPage(query: query, cursor: cursor, token: token)
+                }
+                return GlobalSearchPage(
+                    items: page.items.map(\.participant).filter { $0.id != userID },
+                    nextCursor: page.nextCursor
+                )
+            },
+            messages: { query, cursor in
+                let page = try await coordinator.withAccessToken { token in
+                    try await api.searchMessagesPage(query: query, cursor: cursor, token: token)
+                }
+                return GlobalSearchPage(
+                    items: page.items.map(\.globalSearchResult),
+                    nextCursor: page.nextCursor
+                )
+            },
+            files: { query, cursor in
+                let page = try await coordinator.withAccessToken { token in
+                    try await api.searchFilesPage(query: query, cursor: cursor, token: token)
+                }
+                return GlobalSearchPage(
+                    items: page.items.map(\.globalSearchResult),
+                    nextCursor: page.nextCursor
+                )
+            }
+        )
         let sessionsStore = DeviceSessionsStore()
         sessionsStore.configureRemote(
             loader: {
@@ -1150,6 +1259,44 @@ public final class ApplicationSession {
         preferencesStore.replaceConfirmed(
             Dictionary(uniqueKeysWithValues: remoteChats.map { ($0.id, $0.preferences) })
         )
+
+        let draftsStore: SynchronizedChatDraftStore?
+        let draftsBinding: SynchronizedChatDraftSessionBinding?
+        if capabilityState.capabilities?.supportsSynchronizedDrafts == true {
+            let configuredDrafts = SynchronizedChatDraftStore()
+            draftsBinding = configuredDrafts.configureRemote(
+                accountID: userID,
+                sessionID: credentials.sessionID,
+                loader: { chatID in
+                    try await coordinator.withAccessToken { token in
+                        try await api.chatDraft(chatID: chatID, token: token)
+                    }
+                },
+                putter: { chatID, command in
+                    try await coordinator.withAccessToken { token in
+                        try await api.putChatDraft(
+                            chatID: chatID,
+                            command: command,
+                            token: token
+                        )
+                    }
+                },
+                deleter: { chatID, command in
+                    try await coordinator.withAccessToken { token in
+                        try await api.deleteChatDraft(
+                            chatID: chatID,
+                            command: command,
+                            token: token
+                        )
+                    }
+                }
+            )
+            draftsStore = configuredDrafts
+        } else {
+            draftsStore = nil
+            draftsBinding = nil
+        }
+        store.configureSynchronizedDrafts(draftsStore)
 
         let foldersStore = ChatFoldersStore()
         let foldersBinding = foldersStore.configureRemote(
@@ -1282,6 +1429,29 @@ public final class ApplicationSession {
                 foldersBinding: foldersBinding
             )
         }
+        let finalDurableProjection = store.durableConfirmedProjection()
+        if let bootstrapReconciliation {
+            try? await durableMessaging.replaceConfirmedProjectionAndCheckpoint(
+                scope: durableScope,
+                conversations: finalDurableProjection.conversations,
+                messages: finalDurableProjection.messages,
+                checkpoint: DurableRealtimeCheckpoint(
+                    sequence: bootstrapReconciliation.boundary.sequence,
+                    cursor: bootstrapReconciliation.boundary.cursor,
+                    capturedAt: bootstrapReconciliation.boundary.capturedAt,
+                    expiresAt: bootstrapReconciliation.boundary.cursorExpiresAt
+                )
+            )
+        } else {
+            try? await durableMessaging.replaceConfirmedProjection(
+                scope: durableScope,
+                conversations: finalDurableProjection.conversations,
+                messages: finalDurableProjection.messages
+            )
+        }
+        if let durableState = try? await durableMessaging.state(scope: durableScope) {
+            store.restoreDurablePendingTextOutbox(durableState.pendingTextOutbox)
+        }
 
         messengerStore?.cancelRemoteOperations()
         deviceSessionsStore?.cancelRemoteOperations()
@@ -1290,9 +1460,15 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        globalSearchStore?.resetForSessionReplacement()
+        synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
         if let previousCoordinator = credentialCoordinator {
             await previousCoordinator.invalidate()
+        }
+        if let previousDurableScope = durableMessagingScope,
+           previousDurableScope != durableScope {
+            try? await durableMessaging.remove(scope: previousDurableScope)
         }
         let avatarCacheNamespace = [
             configuration.apiBaseURL.absoluteURL.absoluteString,
@@ -1313,6 +1489,7 @@ public final class ApplicationSession {
         }
         credentialCoordinator = coordinator
         currentUserID = user.id
+        durableMessagingScope = durableScope
         messengerStore = store
         deviceSessionsStore = sessionsStore
         phonePasswordSettingsStore = passwordSettingsStore
@@ -1323,10 +1500,32 @@ public final class ApplicationSession {
         chatFoldersStore = foldersStore
         chatFoldersBinding = foldersBinding
         communityStore = communitiesStore
+        globalSearchStore = searchStore
+        synchronizedDraftStore = draftsStore
+        synchronizedDraftBinding = draftsBinding
         pushNotificationLifecycle.attach(pushStore)
         store.connectionState = .connecting
         phase = .authenticated
         startRealtime(userID: user.id, store: store)
+
+        Task { @MainActor [weak self, weak store] in
+            let result = await durableMessaging.replayPending(
+                scope: durableScope,
+                sender: durableRemoteSender
+            )
+            guard let self,
+                  let store,
+                  self.durableMessagingScope == durableScope,
+                  self.messengerStore === store
+            else { return }
+            result.confirmed.forEach(store.applyDurableOutboxConfirmation)
+            if let failedNonce = result.stoppedAtNonce {
+                store.applyDurableOutboxFailure(
+                    clientNonce: failedNonce,
+                    detail: result.errorDescription
+                )
+            }
+        }
 
         Task { @MainActor [weak self] in
             await self?.synchronizeNotificationFoundation(
@@ -1405,6 +1604,57 @@ public final class ApplicationSession {
         startRealtime(userID: currentUserID, store: messengerStore)
     }
 
+    private func purgeDurableMessagingScope(
+        fallbackSessionID: UUID? = nil,
+        purgeAllIfUnresolved: Bool = false
+    ) async {
+        if let scope = durableMessagingScope {
+            // Clear ownership before awaiting disk I/O. A late network
+            // completion is fenced by the persistence epoch and cannot
+            // recreate this session directory after logout.
+            durableMessagingScope = nil
+            try? await durableMessaging.remove(scope: scope)
+            return
+        }
+        if let fallbackSessionID {
+            try? await durableMessaging.removeSession(fallbackSessionID)
+            return
+        }
+        if purgeAllIfUnresolved {
+            try? await durableMessaging.removeAll()
+        }
+    }
+
+    private func storedSessionIDForDurablePurge() -> UUID? {
+        do {
+            return try keychain.load()?.sessionID
+        } catch {
+            return nil
+        }
+    }
+
+    private func persistDurableRealtimeCheckpoint(
+        sequence: Int,
+        cursor: String,
+        capturedAt: Date = .now,
+        expiresAt: Date? = nil,
+        store: MessengerStore
+    ) async {
+        guard let scope = durableMessagingScope, messengerStore === store else { return }
+        let projection = store.durableConfirmedProjection()
+        try? await durableMessaging.replaceConfirmedProjectionAndCheckpoint(
+            scope: scope,
+            conversations: projection.conversations,
+            messages: projection.messages,
+            checkpoint: DurableRealtimeCheckpoint(
+                sequence: sequence,
+                cursor: cursor,
+                capturedAt: capturedAt,
+                expiresAt: expiresAt ?? capturedAt.addingTimeInterval(604_800)
+            )
+        )
+    }
+
     #if DEBUG
     /// Clears persisted UI-test state before SwiftUI starts its restoration
     /// task. A newly-created ApplicationSession has no credential coordinator,
@@ -1418,6 +1668,8 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        globalSearchStore?.resetForSessionReplacement()
+        synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
         cancelRealtime(resetSequence: true)
         try? keychain.clear()
@@ -1432,6 +1684,9 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        globalSearchStore = nil
+        synchronizedDraftStore = nil
+        synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
         errorMessage = nil
         phase = .unauthenticated
@@ -1448,6 +1703,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
         cancelRealtime(resetSequence: true)
         let environment = ProcessInfo.processInfo.environment
@@ -1457,11 +1713,17 @@ public final class ApplicationSession {
             ].flatMap(Int.init),
             accessibilityConversationLimit: environment[
                 "LUXORA_UI_TEST_ACCESSIBILITY_CONVERSATION_LIMIT"
-            ].flatMap(Int.init)
+            ].flatMap(Int.init),
+            synchronizedDraftScenario: DebugSynchronizedDraftScenario(
+                environment: environment
+            )
         )
         credentialCoordinator = nil
         currentUserID = scenario.store.currentUser.id
         messengerStore = scenario.store
+        synchronizedDraftStore = scenario.synchronizedDraftStore
+        synchronizedDraftBinding = scenario.synchronizedDraftBinding
+        scenario.store.configureSynchronizedDrafts(scenario.synchronizedDraftStore)
         let debugCommunityStore = DebugCommunityScenario.make(messengerStore: scenario.store)
         debugCommunityStore.configureProjectionObservers(
             communityUpdated: { [weak store = scenario.store] conversation in
@@ -1482,6 +1744,49 @@ public final class ApplicationSession {
             scenario.store.applyRealtimeConversation(conversation)
         }
         communityStore = debugCommunityStore
+        let debugSearchCurrentUser = scenario.store.currentUser
+        let debugSearchConversations = scenario.store.conversations
+        let debugSearchMessages = scenario.store.messagesByConversation
+        let debugSearchStore = GlobalSearchStore()
+        debugSearchStore.configureRemote(
+            people: { query, _ in
+                let normalized = query.folding(
+                    options: [.caseInsensitive, .diacriticInsensitive],
+                    locale: .current
+                )
+                var seen = Set<UUID>()
+                let people = debugSearchConversations
+                    .map(\.avatar)
+                    .filter { participant in
+                        participant.id != debugSearchCurrentUser.id
+                            && seen.insert(participant.id).inserted
+                            && (participant.displayName.folding(
+                                options: [.caseInsensitive, .diacriticInsensitive],
+                                locale: .current
+                            ).contains(normalized)
+                                || participant.username.localizedCaseInsensitiveContains(query))
+                    }
+                return GlobalSearchPage(items: people, nextCursor: nil)
+            },
+            messages: { query, _ in
+                let results = debugSearchMessages.values
+                    .flatMap { $0 }
+                    .filter { $0.text.localizedCaseInsensitiveContains(query) }
+                    .sorted { $0.sentAt > $1.sentAt }
+                    .map {
+                        GlobalMessageSearchResult(
+                            id: $0.id,
+                            conversationID: $0.conversationID,
+                            sender: $0.author,
+                            text: $0.text,
+                            createdAt: $0.sentAt
+                        )
+                    }
+                return GlobalSearchPage(items: results, nextCursor: nil)
+            },
+            files: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) }
+        )
+        globalSearchStore = debugSearchStore
         let debugChatFoldersStore = DebugChatFoldersScenario.make(
             conversations: scenario.store.conversations,
             accountID: scenario.store.currentUser.id
@@ -1693,6 +1998,8 @@ public final class ApplicationSession {
         }
         let realtime = self.realtime
         let api = self.api
+        let expectedDraftStore = synchronizedDraftStore
+        let expectedDraftBinding = synchronizedDraftBinding
         realtimeTask = Task { [weak self] in
             guard let self else { return }
             var retryDelaySeconds = 1
@@ -1714,7 +2021,9 @@ public final class ApplicationSession {
                               chatPreferencesBinding == preferencesBinding,
                               chatFoldersStore === foldersStore,
                               chatFoldersBinding == foldersBinding,
-                              communityStore === expectedCommunityStore
+                              communityStore === expectedCommunityStore,
+                              synchronizedDraftStore === expectedDraftStore,
+                              synchronizedDraftBinding == expectedDraftBinding
                         else { return }
 
                         switch signal {
@@ -1834,6 +2143,59 @@ public final class ApplicationSession {
                             }
                             guard foldersStillOwned else { return }
 
+                        case let .chatDraft(dispatch):
+                            guard dispatch.sequence > (realtimeV2Sequence ?? 0),
+                                  dispatch.accountID == userID,
+                                  let expectedDraftStore,
+                                  let expectedDraftBinding,
+                                  synchronizedDraftStore === expectedDraftStore,
+                                  synchronizedDraftBinding == expectedDraftBinding
+                            else {
+                                if dispatch.sequence <= (realtimeV2Sequence ?? 0) { continue }
+                                throw LuxoraAPIError.invalidResponse
+                            }
+                            if store.conversations.contains(where: { $0.id == dispatch.chatID }) {
+                                switch expectedDraftStore.applyRealtime(
+                                    dispatch,
+                                    binding: expectedDraftBinding
+                                ) {
+                                case .accepted:
+                                    store.applySynchronizedDraftProjection(for: dispatch.chatID)
+                                case .exactReplay, .causalNoOp, .stale:
+                                    // The HTTP projection or the first delivery
+                                    // is already at least as new. Advance only
+                                    // the account cursor.
+                                    break
+                                case .rejected:
+                                    throw LuxoraAPIError.invalidResponse
+                                }
+                            } else {
+                                // Membership removal is authoritative. A later
+                                // same-account draft frame (including its normal
+                                // tombstone) is cursor-safe but must not recreate
+                                // an orphan per-chat projection.
+                                expectedDraftStore.removeChat(dispatch.chatID)
+                            }
+                            let draftStillOwned = try await ScopedRealtimePostAwaitFence.run {
+                                try await coordinator.commitRealtimeV2Cursor(dispatch.cursor)
+                            } stillOwnsSession: {
+                                self.ownsScopedRealtime(
+                                    coordinator: coordinator,
+                                    store: store,
+                                    userID: userID,
+                                    preferencesStore: preferencesStore,
+                                    preferencesBinding: preferencesBinding,
+                                    foldersStore: foldersStore,
+                                    foldersBinding: foldersBinding,
+                                    communityStore: expectedCommunityStore
+                                )
+                                    && self.synchronizedDraftStore === expectedDraftStore
+                                    && self.synchronizedDraftBinding == expectedDraftBinding
+                            } publish: {
+                                self.realtimeV2Sequence = dispatch.sequence
+                            }
+                            guard draftStillOwned else { return }
+
                         case let .syncInvalidated(dispatch):
                             guard dispatch.sequence > (realtimeV2Sequence ?? 0),
                                   dispatch.accountID == userID
@@ -1875,6 +2237,11 @@ public final class ApplicationSession {
                                 store.connectionState = .online
                             }
                             guard checkpointStillOwned else { return }
+                            await persistDurableRealtimeCheckpoint(
+                                sequence: sequence,
+                                cursor: cursor,
+                                store: store
+                            )
 
                         case let .typing(conversationID, isTyping):
                             store.setTyping(isTyping, conversationID: conversationID)
@@ -1911,8 +2278,12 @@ public final class ApplicationSession {
                               chatPreferencesBinding == preferencesBinding,
                               chatFoldersStore === foldersStore,
                               chatFoldersBinding == foldersBinding,
-                              communityStore === expectedCommunityStore
+                              communityStore === expectedCommunityStore,
+                              synchronizedDraftStore === expectedDraftStore,
+                              synchronizedDraftBinding == expectedDraftBinding
                         else { return }
+                        var draftRecoveryPlan: SynchronizedChatDraftRecoveryPlan?
+                        var draftLifecycleResetChatIDs: Set<UUID> = []
                         try ScopedReconciliationPublisher.publish(
                             bundle,
                             currentUserID: userID,
@@ -1920,10 +2291,66 @@ public final class ApplicationSession {
                             communityStore: expectedCommunityStore,
                             preferencesStore: preferencesStore,
                             foldersStore: foldersStore,
-                            foldersBinding: foldersBinding
+                            foldersBinding: foldersBinding,
+                            beforeCommit: {
+                                let retainedChatIDs = Set(bundle.chats.map { $0.chat.id })
+                                draftLifecycleResetChatIDs = store
+                                    .synchronizedDraftLifecycleResetChatIDs(
+                                        in: bundle,
+                                        currentUserID: userID
+                                    )
+                                draftRecoveryPlan = expectedDraftStore?.prepareForRecovery(
+                                    retainedChatIDs: retainedChatIDs,
+                                    lifecycleResetChatIDs: draftLifecycleResetChatIDs
+                                )
+                            }
                         )
+                        if let draftRecoveryPlan {
+                            store.applySynchronizedDraftRecoveryInvalidation(draftRecoveryPlan)
+                        } else {
+                            // Composer drafts are local even when the optional
+                            // server feature is disabled. A membership lifetime
+                            // reset is still a privacy boundary for that RAM.
+                            store.applyComposerLifecycleReset(
+                                chatIDs: draftLifecycleResetChatIDs
+                            )
+                        }
+                        if let expectedDraftStore, let expectedDraftBinding,
+                           let selectedChatID = store.selectedConversationID {
+                            guard synchronizedDraftStore === expectedDraftStore,
+                                  synchronizedDraftBinding == expectedDraftBinding
+                            else { return }
+                            // Drafts are intentionally outside the current
+                            // twelve-collection reconciliation bundle. A gap
+                            // invalidates every confirmed draft projection,
+                            // then performs at most one eager GET. Background
+                            // chats refresh lazily when opened, avoiding an
+                            // unbounded 301+ request pass and IP-rate livelock.
+                            _ = await expectedDraftStore.refresh(selectedChatID, force: true)
+                            guard ownsScopedRealtime(
+                                coordinator: coordinator,
+                                store: store,
+                                userID: userID,
+                                preferencesStore: preferencesStore,
+                                preferencesBinding: preferencesBinding,
+                                foldersStore: foldersStore,
+                                foldersBinding: foldersBinding,
+                                communityStore: expectedCommunityStore
+                            ),
+                                  synchronizedDraftStore === expectedDraftStore,
+                                  synchronizedDraftBinding == expectedDraftBinding
+                            else { return }
+                            store.applySynchronizedDraftProjection(for: selectedChatID)
+                        }
                         realtimeV2Sequence = bundle.boundary.sequence
                         try await coordinator.commitRealtimeV2Cursor(bundle.boundary.cursor)
+                        await persistDurableRealtimeCheckpoint(
+                            sequence: bundle.boundary.sequence,
+                            cursor: bundle.boundary.cursor,
+                            capturedAt: bundle.boundary.capturedAt,
+                            expiresAt: bundle.boundary.cursorExpiresAt,
+                            store: store
+                        )
                         retryDelaySeconds = 1
                         continue
                     }

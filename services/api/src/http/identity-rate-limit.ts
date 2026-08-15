@@ -13,11 +13,13 @@ export interface IdentityRateLimitGuards {
   relationshipMutation: preHandlerAsyncHookHandler;
   safetyReport: preHandlerAsyncHookHandler;
   chatFolderMutation: preHandlerAsyncHookHandler;
+  chatDraftMutation: preHandlerAsyncHookHandler;
 }
 
 function createAuthenticatedGuard(
   app: FastifyInstance,
-  policy: AuthenticatedLimitPolicy
+  policy: AuthenticatedLimitPolicy,
+  retryAfterMaximumSeconds?: number
 ): preHandlerAsyncHookHandler {
   // These bounded local stores supplement the network/IP limiter. The account
   // key aggregates all current device sessions while the session key keeps one
@@ -36,10 +38,33 @@ function createAuthenticatedGuard(
 
   return async function authenticatedRateLimit(request: FastifyRequest): Promise<void> {
     const deviceSession = await deviceSessionLimit(request);
-    if (!deviceSession.isAllowed && deviceSession.isExceeded) throw rateLimited();
+    if (!deviceSession.isAllowed && deviceSession.isExceeded) {
+      throw retryAfterMaximumSeconds === undefined
+        ? rateLimited()
+        : rateLimited("Too many requests", {
+            retryAfterSeconds: boundedRetryAfterSeconds(
+              deviceSession.ttlInSeconds,
+              retryAfterMaximumSeconds
+            )
+          });
+    }
     const account = await accountLimit(request);
-    if (!account.isAllowed && account.isExceeded) throw rateLimited();
+    if (!account.isAllowed && account.isExceeded) {
+      throw retryAfterMaximumSeconds === undefined
+        ? rateLimited()
+        : rateLimited("Too many requests", {
+            retryAfterSeconds: boundedRetryAfterSeconds(
+              account.ttlInSeconds,
+              retryAfterMaximumSeconds
+            )
+          });
+    }
   };
+}
+
+function boundedRetryAfterSeconds(ttlInSeconds: number, maximumSeconds: number): number {
+  const finiteTTL = Number.isFinite(ttlInSeconds) ? Math.ceil(ttlInSeconds) : maximumSeconds;
+  return Math.min(maximumSeconds, Math.max(1, finiteTTL));
 }
 
 export function createIdentityRateLimitGuards(app: FastifyInstance): IdentityRateLimitGuards {
@@ -68,6 +93,15 @@ export function createIdentityRateLimitGuards(app: FastifyInstance): IdentityRat
       accountMax: 40,
       deviceSessionMax: 30,
       timeWindow: "1 minute"
-    })
+    }),
+    // Draft PUT and DELETE share these identity buckets. A 750 ms client
+    // coalescing interval stays comfortably below the per-session ceiling,
+    // while several normal devices can still synchronize under one account.
+    // The larger route/IP ceiling remains an independent NAT-abuse boundary.
+    chatDraftMutation: createAuthenticatedGuard(app, {
+      accountMax: 300,
+      deviceSessionMax: 120,
+      timeWindow: "1 minute"
+    }, 60)
   };
 }

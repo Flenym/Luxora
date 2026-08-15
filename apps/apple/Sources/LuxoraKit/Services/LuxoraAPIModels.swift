@@ -207,6 +207,30 @@ struct APIUploadAttachment: Decodable, Sendable {
     let id: UUID
 }
 
+struct APISearchAttachment: Decodable, Sendable {
+    let id: UUID
+    let kind: String
+    let fileName: String
+    let mimeType: String
+    let sizeBytes: Int
+    let downloadPath: String
+    let safetyStatus: String
+    let createdAt: Date
+
+    var globalSearchResult: GlobalFileSearchResult {
+        GlobalFileSearchResult(
+            id: id,
+            kind: kind,
+            fileName: fileName,
+            mimeType: mimeType,
+            sizeBytes: sizeBytes,
+            downloadPath: downloadPath,
+            safetyStatus: safetyStatus,
+            createdAt: createdAt
+        )
+    }
+}
+
 struct APIUploadSession: Decodable, Sendable {
     enum Status: String, Decodable, Sendable {
         case active
@@ -605,6 +629,16 @@ struct APIMessage: Decodable, Sendable {
             )
         )
     }
+
+    var globalSearchResult: GlobalMessageSearchResult {
+        GlobalMessageSearchResult(
+            id: id,
+            conversationID: chatId,
+            sender: sender.participant,
+            text: deletedAt == nil ? (body ?? "") : LuxoraL10n.text("model.message_deleted"),
+            createdAt: createdAt
+        )
+    }
 }
 
 struct APIMessagePin: Decodable, Sendable {
@@ -713,6 +747,7 @@ struct APICapabilities: Decodable, Sendable {
         let calls: Bool
         let passkeys: Bool
         let push: Bool
+        let drafts: Bool?
     }
 
     struct Limits: Decodable, Sendable {
@@ -724,6 +759,7 @@ struct APICapabilities: Decodable, Sendable {
         let maxChatFolderOverrides: Int
         let chatFolderIdempotencyTtlSeconds: Int
         let maxChatFolderActiveCommandReceipts: Int
+        let maxDraftCodePoints: Int?
     }
 
     struct Compatibility: Decodable, Sendable {
@@ -765,7 +801,9 @@ struct APICapabilities: Decodable, Sendable {
               limits.maxChatFolderOverrides == ChatFolderContract.maximumOverrides,
               limits.chatFolderIdempotencyTtlSeconds == ChatFolderContract.idempotencyTTLSeconds,
               limits.maxChatFolderActiveCommandReceipts
-                == ChatFolderContract.maximumActiveCommandReceipts
+                == ChatFolderContract.maximumActiveCommandReceipts,
+              !((features.drafts ?? false)
+                && limits.maxDraftCodePoints != SynchronizedChatDraft.maximumTextCodePoints)
         else {
             throw LuxoraAPIError.incompatibleServer
         }
@@ -783,6 +821,13 @@ struct APICapabilities: Decodable, Sendable {
         ),
               let selectedRealtime = LuxoraRealtimeProtocolVersion(rawValue: selectedRaw)
         else { throw LuxoraAPIError.incompatibleServer }
+        if features.drafts ?? false {
+            guard features.realtime,
+                  features.reconciliation,
+                  versions.reconciliation.contains(2),
+                  selectedRealtime == .scopedV2
+            else { throw LuxoraAPIError.incompatibleServer }
+        }
 
         return ServerCapabilities(
             trust: .init(
@@ -804,7 +849,8 @@ struct APICapabilities: Decodable, Sendable {
                 serverSearchConfigured: features.serverSearchConfigured,
                 calls: features.calls,
                 passkeys: features.passkeys,
-                push: features.push
+                push: features.push,
+                drafts: features.drafts ?? false
             ),
             limits: .init(
                 maxMessageCodePoints: limits.maxMessageCodePoints,
@@ -814,7 +860,8 @@ struct APICapabilities: Decodable, Sendable {
                 maxChatFolderTitleLength: limits.maxChatFolderTitleLength,
                 maxChatFolderOverrides: limits.maxChatFolderOverrides,
                 chatFolderIdempotencyTTLSeconds: limits.chatFolderIdempotencyTtlSeconds,
-                maxChatFolderActiveCommandReceipts: limits.maxChatFolderActiveCommandReceipts
+                maxChatFolderActiveCommandReceipts: limits.maxChatFolderActiveCommandReceipts,
+                maxDraftCodePoints: (features.drafts ?? false) ? limits.maxDraftCodePoints : nil
             ),
             realtimeProtocolVersion: selectedRealtime
         )

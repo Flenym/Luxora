@@ -277,6 +277,27 @@ export interface ChatFolderCommandReceiptRecord {
   expiresAt: string;
 }
 
+export interface ChatDraftRecord {
+  userId: string;
+  chatId: string;
+  text: string | null;
+  replyToMessageId: string | null;
+  revision: number;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export interface ChatDraftCommandReceiptRecord {
+  userId: string;
+  clientNonce: string;
+  operation: "put" | "delete";
+  chatId: string;
+  fingerprint: string;
+  responseJson: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface MessageRecord {
   id: string;
   chatId: string;

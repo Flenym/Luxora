@@ -1,17 +1,100 @@
 # Luxora — контекст разговора и передачи проекта
 
-> Актуальность снимка: **11 августа 2026, активная рабочая сессия MSK (UTC+3)**.
+> Актуальность снимка: **15 августа 2026, активная рабочая сессия MSK (UTC+3)**.
 > Владелец и разработчик продукта: **Flenym**.  
 > Единственная пользовательская версия: **Beta-0.1**.  
 > Этот файл специально создан для переноса работы в новый сеанс Codex и на другой компьютер. Он описывает историю, намерения, принятые решения и фактическую правду репозитория на момент снимка. Состояние кода после указанного времени необходимо перепроверять командами, а не считать неизменным.
 
-## 0A. Активный checkpoint 11 августа 2026
+## 0A. Активный checkpoint 15 августа 2026 — прочитать первым
 
-### 0A.1. Exact-tree checkpoint — прочитать первым
+Этот блок имеет приоритет над любым разделом ниже, даже если исторический
+заголовок или предложение использует слова «current», «текущий» или
+«exact-tree». Перед новой работой всё равно сначала проверить `git status`,
+Docker и тестовые артефакты: общий workspace изменяется несколькими агентами.
 
-Этот подраздел имеет приоритет над всеми числами и статусами ниже. Он записан
-во время продолжающейся рабочей сессии: строки со словом **PENDING** нельзя
-трактовать как завершённые release gates.
+- Current exact-tree server regression: protocol **11 файлов / 89 тестов PASS**,
+  API **71 файл / 626 тестов PASS**, production/test typecheck PASS. Migration
+  `025` добавляет server-synchronized drafts: strict GET/PUT/DELETE,
+  10,000-code-point/well-formed-Unicode bounds, CAS/tombstones, stable nonces,
+  encrypted-at-rest text and receipts, bounded rate limits, membership lifecycle
+  purge and owner-only V2 `chat.draft.changed`. Remove/re-add не восстанавливает
+  старый draft или nonce; per-audience outbox order и poison blocking доказаны.
+  Сервер может расшифровать сообщения и drafts: **это не E2EE**. Reconciliation
+  snapshot остаётся ровно из 12 collections; drafts восстанавливаются отдельным
+  авторизованным lazy GET.
+- Exact local runtime promoted: container `luxora-phone-live` использует
+  `luxora-api@sha256:f9dbff7ffb5a22d0400fdf9c1a97e379696505f2d5a54c64c787c99c52620e6d`,
+  healthy на `127.0.0.1:8080`, migration `025`; loopback OTP console на 8081
+  healthy. Runtime — UID/GID 65532, read-only root, `cap-drop=ALL`,
+  `no-new-privileges`, one loopback listener; после cutover error-level logs 0.
+  Trivy 0.73 для exact image: **0 High / 0 Critical / 0 secrets**. Это local
+  preview evidence, не cloud production proof.
+- Restored-m024 rehearsal exact image прошёл migration `025`, baseline counts,
+  integrity/FK, capabilities, hardening и fixture-free Swift draft HTTP+V2 1/1.
+  Первый verified backup/rehearsal source:
+  `/Users/vikavavilina/Documents/egor/Luxora-local-backups/Beta-0.1/pre-live-m025-promotion-20260815T121732Z`,
+  `SHA256SUMS` digest
+  `6966e7b0ab464c573acfba886b8236ec5c737caca492531dd440148ab868d86b`.
+  Final pre-cutover sealed backup:
+  `/Users/vikavavilina/Documents/egor/Luxora-local-backups/Beta-0.1/pre-live-m025-final-cutover-20260815T122438Z`;
+  7 files, verifier/restore PASS, `SHA256SUMS` digest
+  `87c0ac8dfc63f4626a07f6bec084a55d4d1e412a2cdf1fa155d38d5f23ed30ae`.
+  Final-stop DB/blobs/uploads byte-for-byte совпали с первым backup, counts всех
+  69 таблиц совпали. Final pre-smoke baseline: 47 users, 57 sessions, 179 refresh
+  rows, 19 chats, 25 members, 19 messages, 1 folder, 131 events/131 outbox, 2
+  attachments, 1 upload, 1 chunk и 0 draft rows. Postpromotion Swift draft
+  HTTP+V2 прошёл
+  **1/1 за 0.557 s**; ожидаемый synthetic smoke дал 48/59/181 users/sessions/
+  refresh, 20 chats, 26 members, один draft tombstone, 2 encrypted receipts и
+  134/134 events/outbox. Затем integrity/FK, outbox pending/failed остались
+  чистыми. Protected final cutover window — около 103 s; новый image стал
+  healthy через 7 s после запуска.
+- Migration `025` уже касалась live volume. Никогда не запускать на нём
+  `47e66d…` или более старый image. Data rollback допускается только через
+  проверку final m024 archive, restore в **новый** volume и явное принятие потери
+  данных после `2026-08-15T12:24:58Z`; иначе нужен forward fix, совместимый с
+  migration `025`.
+- Current-source Apple verification: **351 XCTest**, 6 ожидаемых live-only
+  skips, 0 failures; Swift Testing **11/11 PASS**. Focused drafts **48/48**,
+  Messenger/reconciliation **26/26**, capabilities **11/11**, Debug automation
+  **5/5**. Candidate и postpromotion fixture-free Swift draft HTTP+V2 — по 1/1.
+- Post-patch v15 iPhone 17 Pro/iOS 26.5 UI journey: **1/1 PASS**, 75.079 s,
+  `/tmp/LuxoraDraftsUI.PostPatch.EDyOo5/DraftsUI-PostPatch.xcresult`. В build
+  log, activities и xcresult binary tree нет `Invalid frame dimension`; три
+  PNG `1206×2622` повторно экспортированы, просмотрены и совпадают с SHA.
+  Скриншоты используют DEBUG-only server-shaped transport, а не live account.
+  v14 global search отдельно имеет production-target UI 1/1 и fixture-free
+  Swift→Docker 1/1; public/global catalog, multi-page live search, file open и
+  exact message jump всё ещё открыты.
+- Общий процент готовности намеренно не фиксируется. Production SMS/database/
+  broker, real APNs delivery, media processing, voice/round video, calls, E2EE,
+  full offline/encrypted local DB, real-device/TestFlight/App Store, 62/62 pixel
+  closure, off-host DR и pentest остаются незакрытыми gates.
+- До финального handoff commit базой `main` был `2026dc4`; рабочее дерево
+  содержало намеренные незакоммиченные server/Apple/evidence/docs изменения, их
+  нельзя reset/recreate. После передачи использовать фактический `git log -1`,
+  а не считать этот base финальной вершиной. Read-only pre-handoff audit видел
+  857 intended files (49 modified tracked + 32 untracked before commit),
+  263,078,662 bytes, max file 6,019,929 bytes, 0 files от 50/100 MiB, 0
+  Windows-invalid paths/casefold collisions, clean `git diff --check` и 0 Trivy
+  secret findings при исключённых ignored `.env`/runtime/build путях. Перед
+  commit всё перепроверить. Существующий transfer bundle checksum-valid, но
+  содержит только `2026dc4` и **не включает dirty tree**; после final commit его
+  нужно пересоздать.
+- Official `gh` 2.97.0 установлен и checksum-verified; keyring auth активен для
+  account `Flenym`. На момент проверки remote ещё отсутствовал. Root должен
+  создать только private `Flenym/Luxora`, push текущего final commit и отдельно
+  подтвердить `visibility=PRIVATE`/remote branch; до этого публикация считается
+  **pending**, а не завершённой. Public fallback запрещён. Никогда не выводить
+  OTP, `.env`, bearer/refresh material, GitHub credentials, encryption keys,
+  реальные телефоны или другие приватные данные.
+
+## 0B. Исторический checkpoint 11 августа 2026
+
+### 0B.1. Exact-tree checkpoint 11 августа — история
+
+Все слова «current» и «текущий» в этом подразделе относятся только к снимку 11
+августа. Активный checkpoint 0A выше имеет безусловный приоритет.
 
 - Exact-tree server regression зелёный: protocol **10 файлов / 85 тестов PASS**,
   API **68 файлов / 606 тестов PASS**, production/test typecheck также PASS.
@@ -23,11 +106,10 @@
   replay/live/outbox delivery `sync.invalidated`, сохраняет обычные domain
   events и честно публикует capability `false`.
 - Два independently-built no-cache runtime artifacts созданы из одного frozen
-  source context и имеют одинаковый проверенный runtime payload. Primary:
-  `luxora-api:beta-0.1-sync-primary-20260811t1405z`, image ID
+  source context и имеют одинаковый проверенный runtime payload. Primary image
+  ID:
   `sha256:47e66d5d490d770d79a62708be5061519e5d04b63888e78dfd7934e63f4a046a`.
-  Единственный schema-compatible fallback:
-  `luxora-api:beta-0.1-sync-fallback-20260811t1405z`, image ID
+  Единственный schema-compatible fallback image ID:
   `sha256:f907528e5f0d39656989e5c77cbae8cf4bcabdb97216d14de8bf3bc27063c3d0`,
   только с explicit flag `false`. Оба прошли Trivy: **0 High / 0 Critical / 0
   secrets**; primary fresh smoke и fallback migration-024 clone rehearsal PASS.
@@ -76,19 +158,18 @@
   high-confidence secrets, файлов от 50 MiB, Windows-incompatible имён или
   case-fold collisions; ignored `.env`, runtime DB, caches и dependencies не
   добавлялись. Финальный локальный checkpoint — вершина `main` (`git log -1`).
-  Main-only bundle для Windows находится рядом с проектом по пути
-  `/Users/vikavavilina/Documents/egor/Luxora-Beta-0.1-transfer.bundle`, его
-  digest — в одноимённом `.sha256`; оба нужно перепроверить перед переносом.
+  Main-only bundle для Windows находился рядом с проектом вне repository, его
+  digest — в соседнем `.sha256`; оба нужно перепроверить перед переносом.
   Remote и команда `gh` отсутствуют. GitHub connector аутентифицирован как
   `Flenym` и возвращает пустой список repositories, но не предоставляет
   create-repository. **BLOCKED только private publish:** нужен существующий
   private remote либо интерактивно авторизованный `gh`; public fallback
   запрещён.
 
-### 0A.2. Более ранний checkpoint того же дня — история
+### 0B.2. Более ранний checkpoint того же дня — история
 
 Нижеследующие детали сохранены как история работы до exact-tree checkpoint
-0A.1. При расхождении приоритет имеет 0A.1; незавершённые live-прогоны нужно
+0B.1. При расхождении приоритет имеет 0A; незавершённые live-прогоны нужно
 перепроверить по `TODO.md`, Git diff и сохранённым xcresult/скриншотам.
 
 - Текущий живой API уже безопасно переключён на контейнер
@@ -1021,14 +1102,19 @@ Docker, документацию и редактирование Swift source. �
 Flenym хочет, чтобы работа продолжалась, а не завершалась созданием этих файлов.
 Текущая цель после передачи:
 
-1. повторно подтвердить current-tree phone-auth backend и закрыть оставшиеся
-   production-provider/retention/2FA/profile gates;
-2. подключить его к iPhone live;
-3. закончить уточнённый onboarding;
-4. продолжать server-first roadmap;
-5. постепенно закрывать 62 iPhone references только реальными routes/states;
-6. в конце безопасно опубликовать приватный GitHub repository и передать новый
-   clean-clone контекст.
+1. сохранить зелёный migration-025/drafts checkpoint и повторять точные
+   affected/full/live/UI gates после каждого source change;
+2. закрыть оставшиеся phone-auth failure/recovery/production-provider gates,
+   device compromise/recovery, privacy/block/report и account lifecycle;
+3. довести pagination и local durability до encrypted indexed DB с offline,
+   quota/eviction, local drafts/media/mutation queues и process-death tests;
+4. продолжать server-first roadmap: media/voice/round video, search/contacts,
+   real push/jobs, calls, затем audited E2EE и production operations/DR;
+5. постепенно закрывать 62 iPhone references только реальными routes/states с
+   live/Xcode/accessibility evidence;
+6. после финального audit/commit пересоздать transfer bundle, создать через уже
+   авторизованный `gh` только private `Flenym/Luxora`, push и проверить private
+   visibility/remote branch перед заявлением об успешной публикации.
 
 Самодостаточная рабочая инструкция для следующего Codex находится в
 [`CONTINUE_LUXORA_PROMPT.md`](CONTINUE_LUXORA_PROMPT.md).

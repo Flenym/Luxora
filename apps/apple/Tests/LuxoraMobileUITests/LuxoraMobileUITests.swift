@@ -408,6 +408,13 @@ final class LuxoraMobileUITests: XCTestCase {
         let composer = app.descendants(matching: .any)["message-composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 3))
         composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        let dismissKeyboard = app.buttons["message-composer-keyboard-dismiss"]
+        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3))
+        attachScreenshot("composer-keyboard-dismiss-inline", from: app)
+        dismissKeyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+        composer.tap()
         composer.typeText("Обновление списка")
         app.buttons["message-send"].tap()
         XCTAssertTrue(app.staticTexts["Обновление списка"].waitForExistence(timeout: 3))
@@ -494,6 +501,94 @@ final class LuxoraMobileUITests: XCTestCase {
         app.buttons["message-attachment"].tap()
         XCTAssertTrue(app.staticTexts["Медиа и файлы"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Сервер принимает загрузки, но отправка вложений на iPhone ещё не включена."].exists)
+    }
+
+    @MainActor
+    func testSynchronizedDraftLoadingAutosaveCrossChatRestoreRateLimitRetryKeyboardAndSend() {
+        let primaryDraft = "Черновик для синхронизации"
+        let teamDraft = "Отдельный черновик команды"
+        let app = messengerApp()
+        app.launchEnvironment["LUXORA_UI_TEST_DRAFT_SCENARIO"] = "autosave-rate-limit-once"
+        app.launch()
+
+        let primaryRow = app.buttons["inbox-row-\(primaryConversationID)"]
+        XCTAssertTrue(primaryRow.waitForExistence(timeout: 8))
+        primaryRow.tap()
+
+        var loading = app.descendants(matching: .any)["message-draft-sync-loading"]
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertTrue(loading.waitForNonExistence(timeout: 4))
+
+        var composer = app.descendants(matching: .any)["message-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 3))
+        focusAndType(primaryDraft, into: composer)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(loading.exists, "Autosave должен быть видимо активен во время ввода")
+        let dismissKeyboard = app.buttons["message-composer-keyboard-dismiss"]
+        XCTAssertTrue(dismissKeyboard.waitForExistence(timeout: 3))
+        XCTAssertTrue(dismissKeyboard.isHittable)
+        dismissKeyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+
+        let failure = app.descendants(matching: .any)["message-draft-sync-failure"]
+        // Retry-After is intentionally short. Poll without XCTest's one-second
+        // existence cadence so the production failure state remains observable.
+        XCTAssertTrue(waitUntil(timeout: 5) { failure.exists })
+        XCTAssertTrue(
+            app.staticTexts["Слишком много сохранений. Автоповтор через 3 с."].exists
+        )
+        let retry = app.buttons["message-draft-sync-retry"]
+        XCTAssertTrue(retry.exists)
+        XCTAssertTrue(retry.isHittable)
+        composer = app.descendants(matching: .any)["message-composer"]
+        XCTAssertEqual(composer.value as? String, primaryDraft)
+        attachScreenshot("drafts-01-rate-limit-retry", from: app, settleTime: 0)
+
+        retry.tap()
+        XCTAssertTrue(failure.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(loading.waitForNonExistence(timeout: 5))
+        composer = app.descendants(matching: .any)["message-composer"]
+        XCTAssertEqual(composer.value as? String, primaryDraft)
+
+        app.navigationBars.buttons["Чаты"].tap()
+        let teamRow = app.buttons["inbox-row-\(writableTeamConversationID)"]
+        XCTAssertTrue(teamRow.waitForExistence(timeout: 4))
+        teamRow.tap()
+        loading = app.descendants(matching: .any)["message-draft-sync-loading"]
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertTrue(loading.waitForNonExistence(timeout: 4))
+
+        composer = app.descendants(matching: .any)["message-composer"]
+        focusAndType(teamDraft, into: composer)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(loading.exists, "Autosave команды должен быть видимо активен во время ввода")
+        app.buttons["message-composer-keyboard-dismiss"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(loading.waitForNonExistence(timeout: 4))
+        XCTAssertFalse(app.descendants(matching: .any)["message-draft-sync-failure"].exists)
+
+        app.navigationBars.buttons["Чаты"].tap()
+        XCTAssertTrue(primaryRow.waitForExistence(timeout: 4))
+        primaryRow.tap()
+        loading = app.descendants(matching: .any)["message-draft-sync-loading"]
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertTrue(loading.waitForNonExistence(timeout: 4))
+
+        composer = app.descendants(matching: .any)["message-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 3))
+        XCTAssertEqual(composer.value as? String, primaryDraft)
+        XCTAssertNotEqual(composer.value as? String, teamDraft)
+        XCTAssertTrue(app.buttons["message-send"].isEnabled)
+        attachScreenshot("drafts-02-cross-chat-restored", from: app)
+
+        app.buttons["message-send"].tap()
+        XCTAssertTrue(app.staticTexts[primaryDraft].waitForExistence(timeout: 4))
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertTrue(loading.waitForNonExistence(timeout: 4))
+        XCTAssertFalse(app.buttons["message-send"].isEnabled)
+        composer = app.descendants(matching: .any)["message-composer"]
+        XCTAssertNotEqual(composer.value as? String, primaryDraft)
+        attachScreenshot("drafts-03-sent-and-cleared", from: app)
     }
 
     @MainActor
@@ -758,11 +853,45 @@ final class LuxoraMobileUITests: XCTestCase {
         assertRootShellHidden(in: app)
 
         app.buttons["search-scope-Медиа"].tap()
-        XCTAssertTrue(app.staticTexts["Поиск по медиа пока недоступен."].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Введите запрос"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Медиа"].exists)
 
         app.buttons["search-close"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["chats-screen"].waitForExistence(timeout: 3))
         assertRootShellVisible(in: app)
+    }
+
+    @MainActor
+    func testGlobalSearchFindsServerShapedPeopleAndMessagesAndOpensTheirChat() {
+        var app = messengerApp(destination: "search")
+        app.launch()
+
+        XCTAssertTrue(app.descendants(matching: .any)["search-screen"].waitForExistence(timeout: 8))
+        app.buttons["search-scope-Люди"].tap()
+        focusAndType("Арина", into: app.textFields["search-query"])
+
+        let person = app.buttons["search-person-39e8abf7-08d7-4610-8ea1-248c3cabf27f"]
+        XCTAssertTrue(person.waitForExistence(timeout: 5))
+        XCTAssertTrue(person.isHittable)
+        attachScreenshot("search-01-people-results", from: app)
+        person.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["conversation-screen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Арина Волкова"].exists)
+        app.terminate()
+
+        app = messengerApp(destination: "search")
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["search-screen"].waitForExistence(timeout: 8))
+        app.buttons["search-scope-Сообщения"].tap()
+        focusAndType("навигация", into: app.textFields["search-query"])
+
+        let message = app.buttons["search-message-8c5f373e-ff2d-44ed-948f-79b5306fe695"]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertTrue(message.isHittable)
+        attachScreenshot("search-02-message-results", from: app)
+        message.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["conversation-screen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Новая навигация стала спокойнее ✦"].waitForExistence(timeout: 3))
     }
 
     @MainActor
@@ -976,13 +1105,19 @@ final class LuxoraMobileUITests: XCTestCase {
     }
 
     @MainActor
-    private func attachScreenshot(_ name: String, from app: XCUIApplication) {
+    private func attachScreenshot(
+        _ name: String,
+        from app: XCUIApplication,
+        settleTime: TimeInterval = 2.0
+    ) {
         XCTAssertEqual(app.state, .runningForeground)
         // The authentication flow deliberately fades through an empty transition
         // surface. Element existence can become true a frame before the new screen
         // is visible, so let that short production animation finish before evidence
         // is captured.
-        Thread.sleep(forTimeInterval: 2.0)
+        if settleTime > 0 {
+            Thread.sleep(forTimeInterval: settleTime)
+        }
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways

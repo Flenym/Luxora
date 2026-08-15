@@ -53,8 +53,9 @@ describe("versioned capability and realtime golden fixtures", () => {
     expect(oneVersionBack.features.syncInvalidation).toBe(false);
     expect({
       ...oneVersionBack,
-      features: { ...oneVersionBack.features, syncInvalidation: true }
+      features: { ...oneVersionBack.features, syncInvalidation: true, drafts: true }
     }).toEqual(current);
+    expect(oneVersionBack.features.drafts).toBe(false);
 
     const additive = readFixture("capabilities/v1/additive-response.json");
     expect(CapabilitiesResponseV1Schema.parse(additive)).toEqual(current);

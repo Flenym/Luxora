@@ -3,6 +3,211 @@ import XCTest
 @testable import LuxoraKit
 
 final class LiveBackendIntegrationTests: XCTestCase {
+    func testSynchronizedDraftHTTPAndRealtimeAgainstLiveDocker() async throws {
+        guard ProcessInfo.processInfo.environment["LUXORA_LIVE_TEST"] == "1" else {
+            throw XCTSkip("Set LUXORA_LIVE_TEST=1 while the local API is running")
+        }
+
+        let configuration = LuxoraClientConfiguration.development
+        let api = LuxoraAPIClient(configuration: configuration)
+        let realtime = LuxoraRealtimeClient(configuration: configuration)
+        let suffix = UUID().uuidString
+            .replacingOccurrences(of: "-", with: "")
+            .prefix(10)
+            .lowercased()
+        let username = "draft_swift_\(suffix)"
+        let password = "LuxoraDrafts!2026"
+        let primary = try await api.register(
+            username: username,
+            displayName: "Swift Draft Primary",
+            password: password,
+            deviceName: "Swift draft primary"
+        )
+        let secondary = try await api.login(
+            username: username,
+            password: password,
+            deviceName: "Swift draft secondary"
+        )
+        defer {
+            Task {
+                try? await api.revokeCurrentSession(token: primary.tokens.accessToken)
+                try? await api.revokeCurrentSession(token: secondary.tokens.accessToken)
+            }
+        }
+
+        let capabilities = try await api.capabilities()
+        XCTAssertTrue(capabilities.features.drafts)
+        XCTAssertEqual(
+            capabilities.limits.maxDraftCodePoints,
+            SynchronizedChatDraft.maximumTextCodePoints
+        )
+        XCTAssertEqual(capabilities.realtimeProtocolVersion, .scopedV2)
+
+        let chat = try await api.createDirectChat(
+            userID: primary.user.id,
+            token: primary.tokens.accessToken
+        )
+        let initial = try await api.chatDraft(
+            chatID: chat.id,
+            token: primary.tokens.accessToken
+        )
+        XCTAssertNil(initial.draft)
+        XCTAssertEqual(initial.revision, 0)
+
+        let probe = LiveScopedRealtimeProbe()
+        let ready = expectation(description: "Draft v2 ready")
+        let checkpoint = expectation(description: "Draft v2 checkpoint")
+        let changed = expectation(description: "Draft v2 changed")
+        let streamTask = Task {
+            do {
+                for try await signal in realtime.scopedSignals(
+                    token: secondary.tokens.accessToken,
+                    resumeCursor: nil
+                ) {
+                    switch signal {
+                    case .ready:
+                        ready.fulfill()
+                    case .checkpoint:
+                        checkpoint.fulfill()
+                    case let .chatDraft(dispatch):
+                        await probe.recordDraft(dispatch)
+                        changed.fulfill()
+                        return
+                    default:
+                        break
+                    }
+                }
+            } catch {
+                // Expectations remain the deterministic source of failure.
+            }
+        }
+        await fulfillment(of: [ready, checkpoint], timeout: 5)
+
+        let command = ChatDraftPutCommand(
+            content: SynchronizedChatDraftContent(text: "Swift draft \(suffix)"),
+            expectedRevision: 0,
+            clientNonce: .clientNonceV4()
+        )
+        let created = try await api.putChatDraft(
+            chatID: chat.id,
+            command: command,
+            token: primary.tokens.accessToken
+        )
+        XCTAssertEqual(created.state.revision, 1)
+        XCTAssertEqual(created.state.draft?.content, command.content)
+        XCTAssertFalse(created.replayed)
+        await fulfillment(of: [changed], timeout: 5)
+        streamTask.cancel()
+
+        let observedDraft = await probe.draft
+        let dispatch = try XCTUnwrap(observedDraft)
+        XCTAssertEqual(dispatch.accountID, primary.user.id)
+        XCTAssertEqual(dispatch.chatID, chat.id)
+        XCTAssertEqual(dispatch.state, created.state)
+        XCTAssertTrue(RealtimeCursorValidator.isValid(dispatch.cursor))
+
+        let exactReplay = try await api.putChatDraft(
+            chatID: chat.id,
+            command: command,
+            token: primary.tokens.accessToken
+        )
+        XCTAssertEqual(exactReplay.state, created.state)
+        XCTAssertTrue(exactReplay.replayed)
+
+        let secondSessionProjection = try await api.chatDraft(
+            chatID: chat.id,
+            token: secondary.tokens.accessToken
+        )
+        XCTAssertEqual(secondSessionProjection, created.state)
+
+        let deleted = try await api.deleteChatDraft(
+            chatID: chat.id,
+            command: ChatDraftDeleteCommand(
+                expectedRevision: created.state.revision,
+                clientNonce: .clientNonceV4()
+            ),
+            token: secondary.tokens.accessToken
+        )
+        XCTAssertNil(deleted.state.draft)
+        XCTAssertEqual(deleted.state.revision, 2)
+        XCTAssertFalse(deleted.replayed)
+        let final = try await api.chatDraft(chatID: chat.id, token: primary.tokens.accessToken)
+        XCTAssertEqual(final, deleted.state)
+    }
+
+    func testGlobalPeopleAndMessageSearchAgainstLiveDocker() async throws {
+        guard ProcessInfo.processInfo.environment["LUXORA_LIVE_TEST"] == "1" else {
+            throw XCTSkip("Set LUXORA_LIVE_TEST=1 while the local API is running")
+        }
+
+        let api = LuxoraAPIClient(configuration: .development)
+        let suffix = UUID().uuidString
+            .replacingOccurrences(of: "-", with: "")
+            .prefix(10)
+            .lowercased()
+        let password = "LuxoraSearch!2026"
+        let seeker = try await api.register(
+            username: "search_a_\(suffix)",
+            displayName: "Искатель \(suffix)",
+            password: password,
+            deviceName: "Swift search seeker"
+        )
+        let peer = try await api.register(
+            username: "search_b_\(suffix)",
+            displayName: "Собеседник \(suffix)",
+            password: password,
+            deviceName: "Swift search peer"
+        )
+        defer {
+            Task {
+                try? await api.revokeCurrentSession(token: seeker.tokens.accessToken)
+                try? await api.revokeCurrentSession(token: peer.tokens.accessToken)
+            }
+        }
+
+        let hiddenBeforeAcceptance = try await api.searchUsersPage(
+            query: peer.user.username,
+            cursor: nil,
+            token: seeker.tokens.accessToken
+        )
+        XCTAssertTrue(hiddenBeforeAcceptance.items.isEmpty)
+
+        let request = try await api.createMessageRequest(
+            recipientUserID: peer.user.id,
+            body: "Запрос на приватный поиск",
+            clientNonce: .clientNonceV4(),
+            token: seeker.tokens.accessToken
+        )
+        _ = try await api.acceptMessageRequest(id: request.id, token: peer.tokens.accessToken)
+
+        let people = try await api.searchUsersPage(
+            query: peer.user.username,
+            cursor: nil,
+            token: seeker.tokens.accessToken
+        )
+        XCTAssertEqual(people.items.map(\.id), [peer.user.id])
+        XCTAssertNil(people.nextCursor)
+
+        let savedChat = try await api.createDirectChat(
+            userID: seeker.user.id,
+            token: seeker.tokens.accessToken
+        )
+        let canary = "поиск-\(suffix)"
+        let sent = try await api.sendMessage(
+            chatID: savedChat.id,
+            clientNonce: .clientNonceV4(),
+            body: canary,
+            token: seeker.tokens.accessToken
+        )
+        let messages = try await api.searchMessagesPage(
+            query: canary,
+            cursor: nil,
+            token: seeker.tokens.accessToken
+        )
+        XCTAssertEqual(messages.items.map(\.id), [sent.id])
+        XCTAssertNil(messages.nextCursor)
+    }
+
     func testScopedRealtimeV2PreferencesCursorAndAuthoritativeRecoveryAgainstLiveDocker() async throws {
         guard ProcessInfo.processInfo.environment["LUXORA_LIVE_TEST"] == "1" else {
             throw XCTSkip("Set LUXORA_LIVE_TEST=1 while the local API is running")
@@ -417,6 +622,7 @@ private actor LiveScopedRealtimeProbe {
     private(set) var checkpointSequence: Int?
     private(set) var checkpointCursor: String?
     private(set) var preference: ChatPreferencesRealtimeDispatch?
+    private(set) var draft: ChatDraftRealtimeDispatch?
     private(set) var syncReason: RealtimeV2SyncRequiredReason?
     private(set) var recoveryPath: String?
 
@@ -427,6 +633,10 @@ private actor LiveScopedRealtimeProbe {
 
     func recordPreference(_ dispatch: ChatPreferencesRealtimeDispatch) {
         preference = dispatch
+    }
+
+    func recordDraft(_ dispatch: ChatDraftRealtimeDispatch) {
+        draft = dispatch
     }
 
     func recordSyncRequired(reason: RealtimeV2SyncRequiredReason, path: String) {

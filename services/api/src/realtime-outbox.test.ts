@@ -589,7 +589,100 @@ describe("transactional realtime outbox", () => {
     }
   });
 
-  it("backs off then dead-letters an unreadable event without blocking later rows", () => {
+  it("does not claim past an earlier same-audience head held by another worker", () => {
+    const database = temporaryDatabase();
+    const store = new SqliteStore(database.path);
+    try {
+      const accountA = createUser(store);
+      const accountB = createUser(store);
+      const firstA = appendTestEvent(store, accountA);
+      const secondA = appendTestEvent(store, accountA);
+      const firstB = appendTestEvent(store, accountB);
+
+      expect(store.claimRealtimeOutbox(
+        "audience-head-worker",
+        AT,
+        "2026-08-03T12:00:30.000Z",
+        1
+      )).toEqual([{ ok: true, event: firstA, attemptCount: 1 }]);
+      expect(store.claimRealtimeOutbox(
+        "competing-worker",
+        AT,
+        "2026-08-03T12:00:30.000Z",
+        10
+      )).toEqual([{ ok: true, event: firstB, attemptCount: 1 }]);
+      expect(store.claimRealtimeOutbox(
+        "third-worker",
+        AT,
+        "2026-08-03T12:00:30.000Z",
+        10
+      )).toEqual([]);
+      expect(secondA.sequence).toBeGreaterThan(firstA.sequence);
+    } finally {
+      store.close();
+      database.remove();
+    }
+  });
+
+  it("retries one audience in order while another audience continues", () => {
+    const database = temporaryDatabase();
+    const store = new SqliteStore(database.path);
+    try {
+      let nowMs = Date.parse(AT);
+      const accountA = createUser(store);
+      const accountB = createUser(store);
+      const firstA = appendTestEvent(store, accountA);
+      const secondA = appendTestEvent(store, accountA);
+      const firstB = appendTestEvent(store, accountB);
+      const delegate = new RecordingPublisher(1);
+      const publisher = new RealtimeOutboxPublisher(store, delegate, {
+        workerId: "ordered-retry-worker",
+        clock: () => new Date(nowMs),
+        retryBaseMs: 1_000,
+        retryMaxMs: 1_000
+      });
+
+      expect(publisher.drainDue()).toEqual({
+        claimed: 2,
+        published: 1,
+        retried: 1,
+        failed: 0
+      });
+      expect(delegate.events.map(({ sequence }) => sequence)).toEqual([firstB.sequence]);
+      expect(store.claimRealtimeOutbox(
+        "future-head-competing-worker",
+        new Date(nowMs).toISOString(),
+        new Date(nowMs + 30_000).toISOString(),
+        10
+      )).toEqual([]);
+
+      nowMs += 999;
+      expect(publisher.drainDue()).toEqual({
+        claimed: 0,
+        published: 0,
+        retried: 0,
+        failed: 0
+      });
+      nowMs += 1;
+      expect(publisher.drainDue()).toEqual({
+        claimed: 2,
+        published: 2,
+        retried: 0,
+        failed: 0
+      });
+      expect(delegate.events.map(({ sequence }) => sequence)).toEqual([
+        firstB.sequence,
+        firstA.sequence,
+        secondA.sequence
+      ]);
+      publisher.close();
+    } finally {
+      store.close();
+      database.remove();
+    }
+  });
+
+  it("blocks a same-audience successor until an unreadable head is durably dead-lettered", () => {
     const database = temporaryDatabase();
     let store: SqliteStore | undefined;
     try {
@@ -621,12 +714,13 @@ describe("transactional realtime outbox", () => {
         }
       });
 
-      expect(publisher.drainDue()).toEqual({ claimed: 2, published: 1, retried: 1, failed: 0 });
-      expect(delegate.events.map(({ sequence }) => sequence)).toEqual([readable.sequence]);
+      expect(publisher.drainDue()).toEqual({ claimed: 1, published: 0, retried: 1, failed: 0 });
+      expect(delegate.events).toEqual([]);
       expect(observedFailures.map(({ stage }) => stage)).toEqual(["decode"]);
 
       nowMs += 1_000;
-      expect(publisher.drainDue()).toEqual({ claimed: 1, published: 0, retried: 0, failed: 1 });
+      expect(publisher.drainDue()).toEqual({ claimed: 2, published: 1, retried: 0, failed: 1 });
+      expect(delegate.events.map(({ sequence }) => sequence)).toEqual([readable.sequence]);
       expect(observedFailures.map(({ stage }) => stage)).toEqual(["decode", "decode"]);
       expect(publisher.drainDue()).toEqual({ claimed: 0, published: 0, retried: 0, failed: 0 });
       publisher.close();
@@ -652,7 +746,7 @@ describe("transactional realtime outbox", () => {
         },
         {
           event_sequence: readable.sequence,
-          published_at: AT,
+          published_at: new Date(nowMs).toISOString(),
           failed_at: null,
           failure_code: null
         }

@@ -551,11 +551,14 @@ describe("chat-folder convergence across independent SQLite writers", () => {
 
     const { store, service } = openService(fixture);
     try {
-      const firstRetry = capture(() => service.create(fixture.account.id, losingInput));
-      const secondRetry = capture(() => service.create(fixture.account.id, losingInput));
+      const { firstRetry, secondRetry, winningRetry } = withFixedClock(RACE_TIME, () => ({
+        firstRetry: capture(() => service.create(fixture.account.id, losingInput)),
+        secondRetry: capture(() => service.create(fixture.account.id, losingInput)),
+        winningRetry: service.create(fixture.account.id, winningInput)
+      }));
       expect(firstRetry).toEqual(conflict);
       expect(secondRetry).toEqual(conflict);
-      expect(service.create(fixture.account.id, winningInput)).toMatchObject({
+      expect(winningRetry).toMatchObject({
         folder: { id: success.value.folder.id, title: winningInput.title },
         stateRevision: 1,
         replayed: true

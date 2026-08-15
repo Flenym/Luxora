@@ -5,6 +5,9 @@ export const IDENTITY_ACCESS_CONTRACT_VERSION = 1 as const;
 export const IA1_PROTOCOL_VERSION = 2 as const;
 export const RELEASE_LABEL = "Beta-0.1" as const;
 export const MAX_MESSAGE_LENGTH = 10_000;
+export const MAX_DRAFT_LENGTH = MAX_MESSAGE_LENGTH;
+export const CHAT_DRAFT_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
+export const MAX_CHAT_DRAFT_ACTIVE_COMMAND_RECEIPTS = 2_048;
 export const MAX_MESSAGE_REQUEST_LENGTH = 1_000;
 export const MAX_CHAT_TITLE_LENGTH = 120;
 export const MAX_CHAT_FOLDERS = 10;
@@ -1217,6 +1220,74 @@ export const PatchChatPreferencesSchema = z.object({
   { message: "At least one chat preference must be changed" }
 );
 
+const DraftRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const ActiveDraftRevisionSchema = DraftRevisionSchema.refine(
+  (revision) => revision > 0,
+  "An active draft revision must be positive"
+);
+
+const LoneSurrogatePattern = /[\uD800-\uDFFF]/u;
+
+export const DraftTextSchema = z.string()
+  .refine((text) => !LoneSurrogatePattern.test(text), "Draft text must be well-formed Unicode")
+  .refine(
+    (text) => [...text].length <= MAX_DRAFT_LENGTH,
+    `Draft text must contain at most ${MAX_DRAFT_LENGTH} Unicode code points`
+  );
+
+export const ChatDraftSchema = z.object({
+  chatId: IdSchema,
+  text: DraftTextSchema,
+  replyToMessageId: IdSchema.nullable(),
+  revision: ActiveDraftRevisionSchema,
+  updatedAt: TimestampSchema
+}).strict().refine(
+  (draft) => draft.text.length > 0 || draft.replyToMessageId !== null,
+  { message: "A draft must contain text or a reply target" }
+);
+
+export const PutChatDraftRequestSchema = z.object({
+  text: DraftTextSchema,
+  replyToMessageId: IdSchema.nullable().default(null),
+  expectedRevision: DraftRevisionSchema,
+  clientNonce: IdSchema
+}).strict().refine(
+  (draft) => draft.text.length > 0 || draft.replyToMessageId !== null,
+  { message: "A draft must contain text or a reply target" }
+);
+
+export const DeleteChatDraftRequestSchema = z.object({
+  expectedRevision: ActiveDraftRevisionSchema,
+  clientNonce: IdSchema
+}).strict();
+
+const ChatDraftStateShape = {
+  draft: ChatDraftSchema.nullable(),
+  revision: DraftRevisionSchema
+};
+
+function validateDraftStateRevision(
+  state: { draft: z.infer<typeof ChatDraftSchema> | null; revision: number },
+  context: z.RefinementCtx
+): void {
+  if (state.draft !== null && state.draft.revision !== state.revision) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Draft and state revisions must match",
+      path: ["revision"]
+    });
+  }
+}
+
+export const ChatDraftStateResponseSchema = z.object(ChatDraftStateShape)
+  .strict()
+  .superRefine(validateDraftStateRevision);
+
+export const ChatDraftMutationResponseSchema = z.object({
+  ...ChatDraftStateShape,
+  replayed: z.boolean()
+}).strict().superRefine(validateDraftStateRevision);
+
 const ChatFolderRevisionSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const ChatFolderStateRevisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const ChatFolderPositionSchema = z.number().int().nonnegative().max(9_999);
@@ -1587,6 +1658,9 @@ export const CapabilitiesResponseV1Schema = z.object({
     // instead of rejecting an otherwise compatible response.
     syncInvalidation: z.boolean().default(false),
     chatFolders: z.literal(true),
+    // Old Beta-0.1 servers omit this additive field. Clients must keep local
+    // drafts device-only unless the server explicitly advertises support.
+    drafts: z.boolean().default(false),
     mediaUploads: z.literal(true),
     serverSearchConfigured: z.boolean(),
     calls: z.literal(false),
@@ -1595,6 +1669,11 @@ export const CapabilitiesResponseV1Schema = z.object({
   }),
   limits: z.object({
     maxMessageCodePoints: z.literal(MAX_MESSAGE_LENGTH),
+    maxDraftCodePoints: z.literal(MAX_DRAFT_LENGTH).default(MAX_DRAFT_LENGTH),
+    chatDraftIdempotencyTtlSeconds: z.literal(CHAT_DRAFT_IDEMPOTENCY_TTL_SECONDS)
+      .default(CHAT_DRAFT_IDEMPOTENCY_TTL_SECONDS),
+    maxChatDraftActiveCommandReceipts: z.literal(MAX_CHAT_DRAFT_ACTIVE_COMMAND_RECEIPTS)
+      .default(MAX_CHAT_DRAFT_ACTIVE_COMMAND_RECEIPTS),
     maxMessageRequestCodePoints: z.literal(MAX_MESSAGE_REQUEST_LENGTH),
     maxChatTitleLength: z.literal(MAX_CHAT_TITLE_LENGTH),
     maxChatFolders: z.literal(MAX_CHAT_FOLDERS),
@@ -1661,6 +1740,7 @@ export function createCapabilitiesResponseV1(
       reconciliation: true,
       syncInvalidation: syncInvalidationAvailable,
       chatFolders: true,
+      drafts: true,
       mediaUploads: true,
       serverSearchConfigured,
       calls: false,
@@ -1669,6 +1749,9 @@ export function createCapabilitiesResponseV1(
     },
     limits: {
       maxMessageCodePoints: MAX_MESSAGE_LENGTH,
+      maxDraftCodePoints: MAX_DRAFT_LENGTH,
+      chatDraftIdempotencyTtlSeconds: CHAT_DRAFT_IDEMPOTENCY_TTL_SECONDS,
+      maxChatDraftActiveCommandReceipts: MAX_CHAT_DRAFT_ACTIVE_COMMAND_RECEIPTS,
       maxMessageRequestCodePoints: MAX_MESSAGE_REQUEST_LENGTH,
       maxChatTitleLength: MAX_CHAT_TITLE_LENGTH,
       maxChatFolders: MAX_CHAT_FOLDERS,
@@ -2263,6 +2346,39 @@ export const ChatFoldersRealtimeEventSchema = z.object({
   changedAt: TimestampSchema
 }).strict();
 
+export const ChatDraftRealtimeEventSchema = z.object({
+  type: z.literal("chat.draft.changed"),
+  audience: z.literal("account_sessions"),
+  accountId: IdSchema,
+  chatId: IdSchema,
+  draft: ChatDraftSchema.nullable(),
+  revision: ActiveDraftRevisionSchema,
+  changedAt: TimestampSchema
+}).strict().superRefine((event, context) => {
+  if (event.draft === null) return;
+  if (event.draft.chatId !== event.chatId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Realtime draft must belong to the event chat",
+      path: ["draft", "chatId"]
+    });
+  }
+  if (event.draft.revision !== event.revision) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Realtime draft and state revisions must match",
+      path: ["revision"]
+    });
+  }
+  if (event.draft.updatedAt !== event.changedAt) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Realtime draft timestamp must match the event timestamp",
+      path: ["changedAt"]
+    });
+  }
+});
+
 export const SyncInvalidationReasonSchema = z.enum([
   "profile_updated",
   "avatar_updated",
@@ -2285,6 +2401,7 @@ export const DurableRealtimeEventSchema = z.union([
   ChatMembershipRealtimeEventSchema,
   ChatPreferencesRealtimeEventSchema,
   ChatFoldersRealtimeEventSchema,
+  ChatDraftRealtimeEventSchema,
   SyncInvalidatedRealtimeEventSchema
 ]);
 
@@ -2537,6 +2654,11 @@ export type ChatRole = z.infer<typeof ChatRoleSchema>;
 export type Chat = z.infer<typeof ChatSchema>;
 export type ChatPreferences = z.infer<typeof ChatPreferencesSchema>;
 export type PatchChatPreferences = z.infer<typeof PatchChatPreferencesSchema>;
+export type ChatDraft = z.infer<typeof ChatDraftSchema>;
+export type PutChatDraftRequest = z.infer<typeof PutChatDraftRequestSchema>;
+export type DeleteChatDraftRequest = z.infer<typeof DeleteChatDraftRequestSchema>;
+export type ChatDraftStateResponse = z.infer<typeof ChatDraftStateResponseSchema>;
+export type ChatDraftMutationResponse = z.infer<typeof ChatDraftMutationResponseSchema>;
 export type ChatFolderRules = z.infer<typeof ChatFolderRulesSchema>;
 export type ChatFolderOverrideMode = z.infer<typeof ChatFolderOverrideModeSchema>;
 export type ChatFolderOverride = z.infer<typeof ChatFolderOverrideSchema>;
@@ -2601,6 +2723,7 @@ export type IA1RealtimeEvent = z.infer<typeof IA1RealtimeEventSchema>;
 export type ChatMembershipRealtimeEvent = z.infer<typeof ChatMembershipRealtimeEventSchema>;
 export type ChatPreferencesRealtimeEvent = z.infer<typeof ChatPreferencesRealtimeEventSchema>;
 export type ChatFoldersRealtimeEvent = z.infer<typeof ChatFoldersRealtimeEventSchema>;
+export type ChatDraftRealtimeEvent = z.infer<typeof ChatDraftRealtimeEventSchema>;
 export type SyncInvalidationReason = z.infer<typeof SyncInvalidationReasonSchema>;
 export type SyncInvalidatedRealtimeEvent = z.infer<typeof SyncInvalidatedRealtimeEventSchema>;
 export type DurableRealtimeEvent = z.infer<typeof DurableRealtimeEventSchema>;

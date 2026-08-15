@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import {
   ChatMemberListResponseSchema,
@@ -33,6 +33,27 @@ class RealtimeClient {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     throw new Error(`Timed out waiting for realtime message; received ${JSON.stringify(this.messages)}`);
+  }
+}
+
+async function withFixedClock<T>(iso: string, operation: () => Promise<T>): Promise<T> {
+  const NativeDate = globalThis.Date;
+  const fixedMilliseconds = new NativeDate(iso).getTime();
+  class FixedDate extends NativeDate {
+    constructor(value?: string | number) {
+      if (arguments.length === 0) super(fixedMilliseconds);
+      else super(value as string | number);
+    }
+
+    static override now(): number {
+      return fixedMilliseconds;
+    }
+  }
+  globalThis.Date = FixedDate as DateConstructor;
+  try {
+    return await operation();
+  } finally {
+    globalThis.Date = NativeDate;
   }
 }
 
@@ -80,6 +101,15 @@ describe("chat membership lifecycle", () => {
   }
 
   async function connect(address: string, identity: Identity, version: 1 | 2): Promise<RealtimeClient> {
+    return (await connectWithReady(address, identity, version)).client;
+  }
+
+  async function connectWithReady(
+    address: string,
+    identity: Identity,
+    version: 1 | 2,
+    resume: { resumeCursor?: string } = {}
+  ): Promise<{ client: RealtimeClient; ready: any }> {
     const socket = new WebSocket(`${address.replace("http", "ws")}/v${version}/realtime`);
     sockets.push(socket);
     const client = new RealtimeClient(socket);
@@ -88,9 +118,9 @@ describe("chat membership lifecycle", () => {
       socket.once("error", reject);
     });
     await client.waitFor((message) => message.type === "hello");
-    client.send({ type: "authenticate", accessToken: identity.accessToken });
-    await client.waitFor((message) => message.type === "ready");
-    return client;
+    client.send({ type: "authenticate", accessToken: identity.accessToken, ...resume });
+    const ready = await client.waitFor((message) => message.type === "ready");
+    return { client, ready };
   }
 
   it("adds, lists, promotes and removes members with exact idempotent receipts", async () => {
@@ -355,6 +385,206 @@ describe("chat membership lifecycle", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(memberV1.messages.some((message) =>
       message.type === "dispatch" && message.event?.type === "chat.member.changed"
+    )).toBe(false);
+  });
+
+  it("replays removal across re-add without reviving an old-lifecycle active draft", async () => {
+    app = await buildApp({
+      config: testConfig({
+        dataEncryptionKeys: {
+          membership_replay: Buffer.alloc(32, 82).toString("base64url")
+        },
+        activeDataEncryptionKeyId: "membership_replay"
+      }),
+      logger: false
+    });
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const owner = await register("membership_replay_owner");
+    const member = await register("membership_replay_member");
+    const outsider = await register("membership_replay_outsider");
+    await establishAcceptedRelationship(app, owner, member);
+    const chatId = await createGroup(owner, [member.id]);
+
+    const memberAtBoundary = await connectWithReady(address, member, 2);
+    const outsiderAtBoundary = await connectWithReady(address, outsider, 2);
+    expect(memberAtBoundary.ready.cursor).toEqual(expect.any(String));
+    expect(outsiderAtBoundary.ready.cursor).toEqual(expect.any(String));
+    for (const { client } of [memberAtBoundary, outsiderAtBoundary]) {
+      const closed = new Promise<void>((resolve) => client.socket.once("close", () => resolve()));
+      client.socket.close();
+      await closed;
+    }
+
+    const oldDraftText = "OLD_LIFECYCLE_DIRTY_DRAFT_CANARY";
+    const futureDraftClock = new Date(Date.now() + 60_000).toISOString();
+    const putDraft = await withFixedClock(futureDraftClock, () => app!.inject({
+      method: "PUT",
+      url: `/v1/chats/${chatId}/draft`,
+      headers: auth(member),
+      payload: {
+        text: oldDraftText,
+        expectedRevision: 0,
+        clientNonce: randomUUID()
+      }
+    }));
+    expect(putDraft.statusCode, putDraft.body).toBe(200);
+    const oldDraftChangedAt = putDraft.json().draft.updatedAt as string;
+
+    const remove = await app.inject({
+      method: "DELETE",
+      url: `/v1/chats/${chatId}/members/${member.id}`,
+      headers: auth(owner),
+      payload: { expectedRevision: 1, clientNonce: randomUUID() }
+    });
+    expect(remove.statusCode, remove.body).toBe(200);
+    const removedMembership = ChatMembershipMutationResponseSchema.parse(remove.json()).membership;
+    const removedStoredEvent = app.luxora.store.replayEvents(
+      member.id,
+      memberAtBoundary.ready.sequence as number,
+      app.luxora.store.getLatestSequence(),
+      20
+    ).find(({ event }) =>
+      event.type === "chat.member.changed" && event.audience === "removed_account"
+    );
+    expect(removedStoredEvent).toBeDefined();
+
+    // A deliberately misaddressed durable row proves replay authorization
+    // remains bound to the removed account instead of trusting the row target.
+    app.luxora.store.appendEvent(
+      outsider.id,
+      removedStoredEvent!.event,
+      removedStoredEvent!.createdAt
+    );
+
+    const readd = await app.inject({
+      method: "POST",
+      url: `/v1/chats/${chatId}/members`,
+      headers: auth(owner),
+      payload: {
+        userId: member.id,
+        role: "member",
+        clientNonce: randomUUID()
+      }
+    });
+    expect(readd.statusCode, readd.body).toBe(201);
+    const readdedMembership = ChatMembershipMutationResponseSchema.parse(readd.json()).membership;
+    expect(Date.parse(removedMembership.updatedAt)).toBeLessThan(
+      Date.parse(readdedMembership.joinedAt)
+    );
+    expect(Date.parse(oldDraftChangedAt)).toBeGreaterThan(
+      Date.parse(readdedMembership.joinedAt)
+    );
+
+    const postReaddDraftText = "POST_READD_ROLLBACK_DRAFT_CANARY";
+    const postReaddDraft = await withFixedClock("2001-01-01T00:00:00.000Z", () => app!.inject({
+      method: "PUT",
+      url: `/v1/chats/${chatId}/draft`,
+      headers: auth(member),
+      payload: {
+        text: postReaddDraftText,
+        expectedRevision: 2,
+        clientNonce: randomUUID()
+      }
+    }));
+    expect(postReaddDraft.statusCode, postReaddDraft.body).toBe(200);
+    const postReaddChangedAt = postReaddDraft.json().draft.updatedAt as string;
+    expect(Date.parse(postReaddChangedAt)).toBeGreaterThan(
+      Date.parse(readdedMembership.joinedAt)
+    );
+
+    const resumedMember = await connectWithReady(address, member, 2, {
+      resumeCursor: memberAtBoundary.ready.cursor as string
+    });
+    expect(resumedMember.ready).toMatchObject({ resumed: true, resumeMode: "scoped_cursor" });
+    await resumedMember.client.waitFor((message) => message.type === "sync.checkpoint");
+    const memberDispatches = resumedMember.client.messages.filter((message) =>
+      message.type === "dispatch"
+    );
+    expect(JSON.stringify(memberDispatches)).not.toContain(oldDraftText);
+    const activeDraftEvents = memberDispatches.filter((message) =>
+      message.event.type === "chat.draft.changed" && message.event.draft !== null
+    );
+    expect(activeDraftEvents).toHaveLength(1);
+    expect(activeDraftEvents[0]).toMatchObject({
+      event: {
+        accountId: member.id,
+        chatId,
+        draft: { text: postReaddDraftText, updatedAt: postReaddChangedAt },
+        changedAt: postReaddChangedAt
+      }
+    });
+
+    const removedEvent = memberDispatches.find((message) =>
+      message.event.type === "chat.member.changed" &&
+      message.event.audience === "removed_account" &&
+      message.event.change === "removed"
+    );
+    const tombstoneEvent = memberDispatches.find((message) =>
+      message.event.type === "chat.draft.changed" && message.event.draft === null
+    );
+    const addedEvent = memberDispatches.find((message) =>
+      message.event.type === "chat.member.changed" &&
+      message.event.audience === "member_account" &&
+      message.event.change === "added" &&
+      message.event.membership.revision === readdedMembership.revision
+    );
+    expect(removedEvent).toMatchObject({
+      event: {
+        membership: { userId: member.id, revision: removedMembership.revision },
+        changedAt: removedMembership.updatedAt
+      }
+    });
+    expect(tombstoneEvent).toMatchObject({
+      event: { accountId: member.id, chatId, draft: null }
+    });
+    expect(addedEvent).toMatchObject({
+      event: {
+        membership: {
+          userId: member.id,
+          revision: readdedMembership.revision,
+          joinedAt: readdedMembership.joinedAt
+        }
+      }
+    });
+    expect(removedEvent.sequence).toBeLessThan(tombstoneEvent.sequence);
+    expect(tombstoneEvent.sequence).toBeLessThan(addedEvent.sequence);
+    expect(addedEvent.sequence).toBeLessThan(activeDraftEvents[0].sequence);
+
+    const resumedOutsider = await connectWithReady(address, outsider, 2, {
+      resumeCursor: outsiderAtBoundary.ready.cursor as string
+    });
+    expect(resumedOutsider.ready).toMatchObject({ resumed: true, resumeMode: "scoped_cursor" });
+    await resumedOutsider.client.waitFor((message) => message.type === "sync.checkpoint");
+    const outsiderFrames = JSON.stringify(resumedOutsider.client.messages);
+    expect(outsiderFrames).not.toContain(chatId);
+    expect(outsiderFrames).not.toContain(oldDraftText);
+    expect(outsiderFrames).not.toContain(postReaddDraftText);
+    expect(resumedOutsider.client.messages.some((message) =>
+      message.type === "dispatch" && message.event?.type === "chat.member.changed"
+    )).toBe(false);
+
+    const activeSequence = activeDraftEvents[0].sequence as number;
+    const latestActiveStoredEvent = app.luxora.store.replayEvents(
+      member.id,
+      activeSequence - 1,
+      activeSequence,
+      1
+    )[0];
+    expect(latestActiveStoredEvent?.sequence).toBe(activeSequence);
+    resumedMember.client.messages.length = 0;
+    const authorizationFailureClosed = new Promise<number>((resolve) =>
+      resumedMember.client.socket.once("close", resolve)
+    );
+    const currentDraftRead = vi.spyOn(app.luxora.store, "getChatDraft")
+      .mockImplementation(() => { throw new Error("synthetic current draft read outage"); });
+    try {
+      expect(() => app!.luxora.hub.publish([latestActiveStoredEvent!])).not.toThrow();
+    } finally {
+      currentDraftRead.mockRestore();
+    }
+    expect(await authorizationFailureClosed).toBe(1011);
+    expect(resumedMember.client.messages.some((message) =>
+      message.type === "dispatch" || message.type === "sync.checkpoint"
     )).toBe(false);
   });
 });

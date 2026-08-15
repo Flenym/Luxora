@@ -37,6 +37,7 @@ public struct ServerCapabilities: Equatable, Sendable {
         public let calls: Bool
         public let passkeys: Bool
         public let push: Bool
+        public let drafts: Bool
 
         public init(
             phoneAuthentication: Bool,
@@ -52,7 +53,8 @@ public struct ServerCapabilities: Equatable, Sendable {
             serverSearchConfigured: Bool,
             calls: Bool,
             passkeys: Bool,
-            push: Bool
+            push: Bool,
+            drafts: Bool = false
         ) {
             self.phoneAuthentication = phoneAuthentication
             self.passwordAuthentication = passwordAuthentication
@@ -68,6 +70,7 @@ public struct ServerCapabilities: Equatable, Sendable {
             self.calls = calls
             self.passkeys = passkeys
             self.push = push
+            self.drafts = drafts
         }
     }
 
@@ -80,6 +83,7 @@ public struct ServerCapabilities: Equatable, Sendable {
         public let maxChatFolderOverrides: Int
         public let chatFolderIdempotencyTTLSeconds: Int
         public let maxChatFolderActiveCommandReceipts: Int
+        public let maxDraftCodePoints: Int?
 
         public init(
             maxMessageCodePoints: Int,
@@ -89,7 +93,8 @@ public struct ServerCapabilities: Equatable, Sendable {
             maxChatFolderTitleLength: Int = ChatFolderContract.maximumTitleCodePoints,
             maxChatFolderOverrides: Int = ChatFolderContract.maximumOverrides,
             chatFolderIdempotencyTTLSeconds: Int = ChatFolderContract.idempotencyTTLSeconds,
-            maxChatFolderActiveCommandReceipts: Int = ChatFolderContract.maximumActiveCommandReceipts
+            maxChatFolderActiveCommandReceipts: Int = ChatFolderContract.maximumActiveCommandReceipts,
+            maxDraftCodePoints: Int? = nil
         ) {
             self.maxMessageCodePoints = maxMessageCodePoints
             self.maxAttachmentsPerMessage = maxAttachmentsPerMessage
@@ -99,6 +104,7 @@ public struct ServerCapabilities: Equatable, Sendable {
             self.maxChatFolderOverrides = maxChatFolderOverrides
             self.chatFolderIdempotencyTTLSeconds = chatFolderIdempotencyTTLSeconds
             self.maxChatFolderActiveCommandReceipts = maxChatFolderActiveCommandReceipts
+            self.maxDraftCodePoints = maxDraftCodePoints
         }
     }
 
@@ -117,6 +123,17 @@ public struct ServerCapabilities: Equatable, Sendable {
         self.features = features
         self.limits = limits
         self.realtimeProtocolVersion = realtimeProtocolVersion
+    }
+
+    /// Synchronized drafts depend on account-scoped V2 ordering and its
+    /// reconciliation boundary. Treat an internally forged/inconsistent
+    /// capability value as disabled even though decoded server contracts are
+    /// rejected earlier in `APICapabilities.validated()`.
+    var supportsSynchronizedDrafts: Bool {
+        features.drafts
+            && features.realtime
+            && features.reconciliation
+            && realtimeProtocolVersion == .scopedV2
     }
 }
 

@@ -85,8 +85,8 @@ context containing `165` files. Its sorted path/content manifest SHA-256 is:
 
 | Mode/tag | linux/arm64 image ID | Runtime activation |
 |---|---|---|
-| `luxora-api:beta-0.1-sync-primary-20260811t1405z` | `sha256:47e66d5d490d770d79a62708be5061519e5d04b63888e78dfd7934e63f4a046a` | unset/default or explicit `SYNC_INVALIDATION_ENABLED=true` |
-| `luxora-api:beta-0.1-sync-fallback-20260811t1405z` | `sha256:f907528e5f0d39656989e5c77cbae8cf4bcabdb97216d14de8bf3bc27063c3d0` | explicit `SYNC_INVALIDATION_ENABLED=false` |
+| historical primary tag (retired; image ID is binding) | `sha256:47e66d5d490d770d79a62708be5061519e5d04b63888e78dfd7934e63f4a046a` | unset/default or explicit `SYNC_INVALIDATION_ENABLED=true` |
+| historical fallback tag (retired; image ID is binding) | `sha256:f907528e5f0d39656989e5c77cbae8cf4bcabdb97216d14de8bf3bc27063c3d0` | explicit `SYNC_INVALIDATION_ENABLED=false` |
 
 The two OCI IDs differ because independent no-cache builds preserved different
 filesystem/build timestamps. This is not source drift:

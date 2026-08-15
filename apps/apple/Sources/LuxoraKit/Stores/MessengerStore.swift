@@ -63,10 +63,20 @@ private struct MessengerMembershipFence {
 public final class MessengerStore {
     public private(set) var conversations: [Conversation]
     public private(set) var messagesByConversation: [UUID: [ChatMessage]]
-    public var selectedConversationID: UUID?
+    public var selectedConversationID: UUID? {
+        didSet {
+            guard oldValue != selectedConversationID else { return }
+            handleComposerConversationChange(from: oldValue)
+        }
+    }
     public var selectedFolder: ConversationFolder = .all
     public var searchQuery = ""
-    public var draft = ""
+    public var draft = "" {
+        didSet {
+            guard oldValue != draft else { return }
+            handleComposerDraftChange()
+        }
+    }
     public var presentedSheet: AppSheet?
     public var isInspectorPresented = false
     public var isSearchFocused = false
@@ -80,7 +90,13 @@ public final class MessengerStore {
     public private(set) var directConversationCreationState: RemoteContentState = .idle
     public private(set) var lastRemoteActionError: String?
     public private(set) var messageMetadataByID: [UUID: MessageRemoteMetadata] = [:]
-    public var composerMode: MessageComposerMode = .new
+    public var composerMode: MessageComposerMode = .new {
+        didSet {
+            guard oldValue != composerMode else { return }
+            handleComposerModeChange()
+        }
+    }
+    public internal(set) var synchronizedDraftStore: SynchronizedChatDraftStore?
     public private(set) var messageMutationStates: [MessageMutationKey: RemoteContentState] = [:]
     public private(set) var messageMutationFailure: MessageMutationFailure?
     public private(set) var profileUpdateState: RemoteContentState = .idle
@@ -133,9 +149,16 @@ public final class MessengerStore {
     @ObservationIgnored private var profileUpdateOperation: Task<CurrentUserProfileSnapshot, Error>?
     @ObservationIgnored private var profileUpdateGeneration: UInt = 0
     @ObservationIgnored private var membershipFences: [MessengerMembershipFenceKey: MessengerMembershipFence] = [:]
+    @ObservationIgnored private var conversationLifecycleGenerations: [UUID: UInt] = [:]
     @ObservationIgnored private var avatarUpdateOperation: Task<CurrentUserProfileSnapshot, Error>?
     @ObservationIgnored private var avatarUpdateGeneration: UInt = 0
-    @ObservationIgnored private var draftBeforeEditing = ""
+    @ObservationIgnored var draftBeforeEditing = ""
+    @ObservationIgnored var composerModeBeforeEditing: MessageComposerMode = .new
+    @ObservationIgnored var composerDraftsByConversation: [UUID: String] = [:]
+    @ObservationIgnored var composerModesByConversation: [UUID: MessageComposerMode] = [:]
+    @ObservationIgnored var unresolvedReplyIDsByConversation: [UUID: UUID] = [:]
+    @ObservationIgnored var composerDraftGenerations: [UUID: UInt] = [:]
+    @ObservationIgnored var isRestoringComposerState = false
     @ObservationIgnored private var messageMutationRetries: [MessageMutationKey: MessageMutationRetry] = [:]
     @ObservationIgnored private var messageRequestMutationRetries: [UUID: MessageRequestMutationRetry] = [:]
     @ObservationIgnored private var messageRequestCreationRetry: MessageRequestCreationRetry?
@@ -192,8 +215,17 @@ public final class MessengerStore {
     public var canSend: Bool {
         guard connectionState == .online,
               let selectedConversationID,
-              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              draft.unicodeScalars.count <= SynchronizedChatDraft.maximumTextCodePoints
         else { return false }
+        if unresolvedReplyIDsByConversation[selectedConversationID] != nil {
+            if case .edit = composerMode {
+                // The unresolved reply belongs to the underlying draft, not to
+                // the existing message currently being edited.
+            } else {
+                return false
+            }
+        }
         if let conversation = conversations.first(where: { $0.id == selectedConversationID }),
            conversation.kind == .channel,
            !Self.isPrivileged(conversation.serverRole) {
@@ -319,7 +351,13 @@ public final class MessengerStore {
                 conversationListState = conversations.isEmpty ? .idle : .loaded
                 return
             }
+            let previouslyKnownChatIDs = knownComposerProjectionChatIDs()
+                .union(conversations.map(\.id))
             let existing = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0) })
+            let retainedChatIDs = Set(remoteConversations.map(\.id))
+            let removedSelectedChat = selectedConversationID.map {
+                !retainedChatIDs.contains($0)
+            } ?? false
             conversations = remoteConversations.map { remote in
                 guard let local = existing[remote.id] else { return remote }
                 var merged = remote
@@ -336,6 +374,22 @@ public final class MessengerStore {
             } else if selectedConversationID == nil {
                 selectedConversationID = conversations.first?.id
             }
+            for removedChatID in previouslyKnownChatIDs.subtracting(retainedChatIDs) {
+                fenceConversationLifecycle(removedChatID)
+                let removedMessageIDs = Set(messagesByConversation[removedChatID, default: []].map(\.id))
+                messagesByConversation[removedChatID] = nil
+                messageStates[removedChatID] = nil
+                loadedConversationIDs.remove(removedChatID)
+                messageMetadataByID = messageMetadataByID.filter {
+                    !removedMessageIDs.contains($0.key)
+                }
+                scrubMessageMutationState(messageIDs: removedMessageIDs)
+                removeComposerDraft(for: removedChatID)
+            }
+            if removedSelectedChat {
+                draftBeforeEditing = ""
+                composerModeBeforeEditing = .new
+            }
             conversationListState = .loaded
             rescheduleMuteExpirations()
         } catch is CancellationError {
@@ -349,7 +403,10 @@ public final class MessengerStore {
     }
 
     public func loadMessages(for conversationID: UUID, force: Bool = false) async {
-        guard remoteMessageSnapshotLoader != nil || remoteMessageLoader != nil else { return }
+        guard conversations.contains(where: { $0.id == conversationID }),
+              remoteMessageSnapshotLoader != nil || remoteMessageLoader != nil
+        else { return }
+        let lifecycleGeneration = conversationLifecycleGenerations[conversationID] ?? 0
         let currentState = messageState(for: conversationID)
         if !force, currentState == .loading || currentState == .loaded { return }
 
@@ -362,6 +419,10 @@ public final class MessengerStore {
                     messageStates[conversationID] = loadedConversationIDs.contains(conversationID) ? .loaded : .idle
                     return
                 }
+                guard ownsConversationLifecycle(
+                    conversationID,
+                    generation: lifecycleGeneration
+                ) else { return }
                 applySnapshots(snapshots, to: conversationID)
             } else if let remoteMessageLoader {
                 let messages = try await remoteMessageLoader(conversationID)
@@ -369,19 +430,36 @@ public final class MessengerStore {
                     messageStates[conversationID] = loadedConversationIDs.contains(conversationID) ? .loaded : .idle
                     return
                 }
+                guard ownsConversationLifecycle(
+                    conversationID,
+                    generation: lifecycleGeneration
+                ) else { return }
                 messagesByConversation[conversationID] = messages.sorted { $0.sentAt < $1.sentAt }
             }
             guard !Task.isCancelled else {
                 messageStates[conversationID] = loadedConversationIDs.contains(conversationID) ? .loaded : .idle
                 return
             }
+            guard ownsConversationLifecycle(
+                conversationID,
+                generation: lifecycleGeneration
+            ) else { return }
             loadedConversationIDs.insert(conversationID)
             messageStates[conversationID] = .loaded
+            applySynchronizedDraftProjection(for: conversationID)
         } catch is CancellationError {
+            guard ownsConversationLifecycle(
+                conversationID,
+                generation: lifecycleGeneration
+            ) else { return }
             if !loadedConversationIDs.contains(conversationID) {
                 messageStates[conversationID] = .idle
             }
         } catch {
+            guard ownsConversationLifecycle(
+                conversationID,
+                generation: lifecycleGeneration
+            ) else { return }
             loadedConversationIDs.remove(conversationID)
             let message = error.localizedDescription
             messageStates[conversationID] = .failed(message)
@@ -668,8 +746,7 @@ public final class MessengerStore {
         }
         messagesByConversation[conversationID, default: []].append(message)
         messageMetadataByID[message.id] = MessageRemoteMetadata(replyToMessageID: replyTarget?.id)
-        draft = ""
-        composerMode = .new
+        clearComposerAfterSending(chatID: conversationID)
         updateConversationPreview(conversationID, text: body)
 
         startSend(
@@ -700,7 +777,7 @@ public final class MessengerStore {
     public func beginReply(to message: ChatMessage) {
         guard canReply(to: message) else { return }
         if case .edit = composerMode {
-            draft = draftBeforeEditing
+            restoreComposerAfterEditing()
         }
         composerMode = .reply(composerTarget(for: message))
     }
@@ -711,6 +788,7 @@ public final class MessengerStore {
             // Preserve the draft that existed before entering the first edit.
         } else {
             draftBeforeEditing = draft
+            composerModeBeforeEditing = composerMode
         }
         composerMode = .edit(composerTarget(for: message))
         draft = message.text
@@ -718,7 +796,8 @@ public final class MessengerStore {
 
     public func cancelComposerMode() {
         if case .edit = composerMode {
-            draft = draftBeforeEditing
+            restoreComposerAfterEditing()
+            return
         }
         composerMode = .new
     }
@@ -1067,6 +1146,7 @@ public final class MessengerStore {
     }
 
     func applyRealtimeMessage(_ message: ChatMessage) {
+        guard conversations.contains(where: { $0.id == message.conversationID }) else { return }
         var messages = messagesByConversation[message.conversationID, default: []]
         if let index = messages.firstIndex(where: { $0.id == message.id || $0.clientID == message.clientID }) {
             messages[index] = message
@@ -1077,6 +1157,7 @@ public final class MessengerStore {
         messagesByConversation[message.conversationID] = messages
         updateConversationPreview(message.conversationID, text: message.text)
         messageStates[message.conversationID] = .loaded
+        applySynchronizedDraftProjection(for: message.conversationID)
     }
 
     func applyRealtimeConversation(_ remote: Conversation) {
@@ -1132,6 +1213,8 @@ public final class MessengerStore {
     }
 
     func applyConfirmedConversationRemoval(_ chatID: UUID) {
+        let removedSelectedChat = selectedConversationID == chatID
+        fenceConversationLifecycle(chatID)
         let removedMessageIDs = Set(messagesByConversation[chatID, default: []].map(\.id))
         conversations.removeAll { $0.id == chatID }
         messagesByConversation[chatID] = nil
@@ -1140,15 +1223,100 @@ public final class MessengerStore {
         messageMetadataByID = messageMetadataByID.filter {
             !removedMessageIDs.contains($0.key)
         }
+        scrubMessageMutationState(messageIDs: removedMessageIDs)
         if selectedConversationID == chatID {
             selectedConversationID = conversations.first(where: { !$0.isArchived })?.id
                 ?? conversations.first?.id
+        }
+        // The selection didSet stores the old active composer before restoring
+        // the replacement chat. Purge after that transition so removed-chat
+        // private text cannot be resurrected in the per-chat maps.
+        removeComposerDraft(for: chatID)
+        if removedSelectedChat {
+            draftBeforeEditing = ""
+            composerModeBeforeEditing = .new
         }
         rescheduleMuteExpirations()
     }
 
     func applyRealtimeMessageSnapshot(_ snapshot: RemoteMessageSnapshot) {
         applySnapshot(snapshot)
+        applySynchronizedDraftProjection(for: snapshot.message.conversationID)
+    }
+
+    /// Produces only server-confirmed rows for the durable cache. Optimistic
+    /// `.sending`/`.failed` rows belong exclusively to the stable-nonce outbox
+    /// and must never be mistaken for server truth after a restart.
+    func durableConfirmedProjection() -> (
+        conversations: [Conversation],
+        messages: [DurableConversationMessages]
+    ) {
+        let messages = messagesByConversation.map { conversationID, messages in
+            DurableConversationMessages(
+                conversationID: conversationID,
+                snapshots: messages.compactMap { message in
+                    guard message.delivery != .sending, message.delivery != .failed else {
+                        return nil
+                    }
+                    return DurableConfirmedMessageSnapshot(
+                        message: message,
+                        metadata: metadata(for: message.id)
+                    )
+                }
+            )
+        }
+        return (conversations, messages)
+    }
+
+    /// Rehydrates outbox rows as optimistic messages without starting network
+    /// work. ApplicationSession starts one ordered replay after the production
+    /// remote closures and session fence are installed.
+    func restoreDurablePendingTextOutbox(_ pendingMessages: [DurablePendingTextMessage]) {
+        for pending in pendingMessages.sorted(by: { $0.ordinal < $1.ordinal }) {
+            guard conversations.contains(where: { $0.id == pending.conversationID }) else {
+                continue
+            }
+            let existing = messagesByConversation[pending.conversationID, default: []]
+            guard !existing.contains(where: { $0.clientID == pending.clientNonce }) else {
+                continue
+            }
+            let optimistic = ChatMessage(
+                id: pending.clientNonce,
+                clientID: pending.clientNonce,
+                conversationID: pending.conversationID,
+                author: currentUser,
+                text: pending.body,
+                sentAt: pending.enqueuedAt,
+                delivery: .sending,
+                isOutgoing: true
+            )
+            messagesByConversation[pending.conversationID, default: []].append(optimistic)
+            messagesByConversation[pending.conversationID]?.sort { $0.sentAt < $1.sentAt }
+            messageMetadataByID[optimistic.id] = MessageRemoteMetadata(
+                replyToMessageID: pending.replyToMessageID
+            )
+            resolveReplyPreviews(in: pending.conversationID)
+            updateConversationPreview(pending.conversationID, text: pending.body)
+        }
+    }
+
+    func applyDurableOutboxConfirmation(_ snapshot: DurableConfirmedMessageSnapshot) {
+        replaceOptimisticSnapshot(
+            snapshot.message.clientID,
+            in: snapshot.message.conversationID,
+            with: snapshot.remoteSnapshot
+        )
+    }
+
+    func applyDurableOutboxFailure(clientNonce: UUID, detail: String?) {
+        for (conversationID, messages) in messagesByConversation {
+            guard let message = messages.first(where: { $0.clientID == clientNonce }) else {
+                continue
+            }
+            updateDelivery(message.id, in: conversationID, to: .failed)
+            lastRemoteActionError = detail
+            return
+        }
     }
 
     func applyRealtimePin(chatID: UUID, messageID: UUID, active: Bool) {
@@ -1330,9 +1498,11 @@ public final class MessengerStore {
         avatarUpdateOperation = nil
         avatarUpdateState = .idle
         if case .edit = composerMode {
-            draft = draftBeforeEditing
+            restoreComposerAfterEditing(synchronize: false)
         }
+        isRestoringComposerState = true
         composerMode = .new
+        isRestoringComposerState = false
         messageMutationStates = messageMutationStates.mapValues { state in
             state == .loading ? .idle : state
         }
@@ -1380,6 +1550,37 @@ public final class MessengerStore {
         else { throw LuxoraAPIError.invalidResponse }
     }
 
+    /// Finds stable chat IDs whose current-account membership belongs to a
+    /// different lifetime than the locally fenced membership. Role/revision
+    /// changes within the same `joinedAt` lifetime intentionally do not count:
+    /// local dirty text remains eligible for the normal CAS rebase in that
+    /// case. A changed join instant, or a newly present membership after an
+    /// observed removal, is a hard privacy boundary.
+    func synchronizedDraftLifecycleResetChatIDs(
+        in bundle: LuxoraReconciliationBundle,
+        currentUserID: UUID
+    ) -> Set<UUID> {
+        guard currentUser.id == currentUserID else { return [] }
+        var resetChatIDs: Set<UUID> = []
+        for chatState in bundle.chats {
+            guard let membership = chatState.members.first(where: {
+                $0.membership.userId == currentUserID
+                    && $0.membership.chatId == chatState.chat.id
+            })?.membership,
+                  let previous = membershipFences[
+                      MessengerMembershipFenceKey(
+                          chatID: chatState.chat.id,
+                          userID: currentUserID
+                      )
+                  ]
+            else { continue }
+            if previous.isRemoved || previous.joinedAt != membership.joinedAt {
+                resetChatIDs.insert(chatState.chat.id)
+            }
+        }
+        return resetChatIDs
+    }
+
     func applyReconciliation(
         _ bundle: LuxoraReconciliationBundle,
         currentUserID: UUID
@@ -1392,6 +1593,30 @@ public final class MessengerStore {
               outgoing.allSatisfy({ $0.direction == .outgoing })
         else { throw LuxoraAPIError.invalidResponse }
 
+        let previousConversationIDs = Set(conversations.map(\.id))
+            .union(knownComposerProjectionChatIDs())
+        let previousMessageIDsByChat = messagesByConversation.mapValues { Set($0.map(\.id)) }
+        let activeEditBeforeReconciliation: (
+            chatID: UUID,
+            target: MessageComposerTarget,
+            editBody: String,
+            underlyingDraft: String,
+            underlyingMode: MessageComposerMode
+        )? = {
+            guard let selectedConversationID,
+                  case let .edit(target) = composerMode
+            else { return nil }
+            return (
+                selectedConversationID,
+                target,
+                draft,
+                draftBeforeEditing,
+                composerModeBeforeEditing
+            )
+        }()
+        let removedSelectedChat = selectedConversationID.map { selectedID in
+            !bundle.chats.contains(where: { $0.chat.id == selectedID })
+        } ?? false
         let existingConversations = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0) })
         var rebuiltConversations: [Conversation] = []
         var rebuiltMessages: [UUID: [ChatMessage]] = [:]
@@ -1473,6 +1698,41 @@ public final class MessengerStore {
             selectedConversationID = rebuiltConversations.first(where: { !$0.isArchived })?.id
                 ?? rebuiltConversations.first?.id
         }
+        let retainedConversationIDs = Set(rebuiltConversations.map(\.id))
+        for removedChatID in previousConversationIDs.subtracting(retainedConversationIDs) {
+            // This must stay after the selectedConversationID transition: its
+            // didSet first snapshots the old composer and could otherwise
+            // recreate a draft for a chat that disappeared from the snapshot.
+            fenceConversationLifecycle(removedChatID)
+            scrubMessageMutationState(
+                messageIDs: previousMessageIDsByChat[removedChatID] ?? []
+            )
+            removeComposerDraft(for: removedChatID)
+        }
+        if removedSelectedChat {
+            draftBeforeEditing = ""
+            composerModeBeforeEditing = .new
+        }
+        if let activeEditBeforeReconciliation,
+           selectedConversationID == activeEditBeforeReconciliation.chatID,
+           let retainedMessage = messagesByConversation[
+               activeEditBeforeReconciliation.chatID
+           ]?.first(where: { $0.id == activeEditBeforeReconciliation.target.id }),
+           canEdit(retainedMessage) {
+            draftBeforeEditing = activeEditBeforeReconciliation.underlyingDraft
+            composerModeBeforeEditing = activeEditBeforeReconciliation.underlyingMode
+            let refreshedTarget = composerTarget(for: retainedMessage)
+            let conflictSafeTarget = MessageComposerTarget(
+                id: refreshedTarget.id,
+                authorName: refreshedTarget.authorName,
+                preview: refreshedTarget.preview,
+                revision: activeEditBeforeReconciliation.target.revision
+            )
+            isRestoringComposerState = true
+            composerMode = .edit(conflictSafeTarget)
+            draft = activeEditBeforeReconciliation.editBody
+            isRestoringComposerState = false
+        }
         for conversationID in rebuiltMessages.keys {
             resolveReplyPreviews(in: conversationID)
         }
@@ -1525,6 +1785,7 @@ public final class MessengerStore {
     }
 
     private func replaceOptimisticMessage(_ clientID: UUID, in conversationID: UUID, with message: ChatMessage) {
+        guard conversations.contains(where: { $0.id == conversationID }) else { return }
         guard let index = messagesByConversation[conversationID]?.firstIndex(where: { $0.clientID == clientID }) else {
             applyRealtimeMessage(message)
             return
@@ -1542,6 +1803,9 @@ public final class MessengerStore {
         in conversationID: UUID,
         with snapshot: RemoteMessageSnapshot
     ) {
+        guard conversations.contains(where: { $0.id == conversationID }),
+              snapshot.message.conversationID == conversationID
+        else { return }
         guard let index = messagesByConversation[conversationID]?.firstIndex(where: { $0.clientID == clientID }) else {
             applySnapshot(snapshot)
             return
@@ -1742,31 +2006,55 @@ public final class MessengerStore {
         body: String,
         replyToMessageID: UUID?
     ) {
+        let lifecycleGeneration = conversationLifecycleGenerations[conversationID] ?? 0
         let operationID = UUID()
         let task = Task { [weak self] in
             defer { self?.remoteOperations[operationID] = nil }
             do {
                 if let snapshotSender = self?.remoteMessageSnapshotSender {
                     let confirmed = try await snapshotSender(conversationID, clientID, body, replyToMessageID)
-                    self?.replaceOptimisticSnapshot(clientID, in: conversationID, with: confirmed)
+                    guard let self,
+                          !Task.isCancelled,
+                          ownsConversationLifecycle(
+                              conversationID,
+                              generation: lifecycleGeneration
+                          )
+                    else { return }
+                    replaceOptimisticSnapshot(clientID, in: conversationID, with: confirmed)
                 } else if let sender = self?.remoteMessageSender {
                     let confirmed = try await sender(conversationID, clientID, body)
-                    self?.replaceOptimisticMessage(clientID, in: conversationID, with: confirmed)
+                    guard let self,
+                          !Task.isCancelled,
+                          ownsConversationLifecycle(
+                              conversationID,
+                              generation: lifecycleGeneration
+                          )
+                    else { return }
+                    replaceOptimisticMessage(clientID, in: conversationID, with: confirmed)
                 } else {
                     throw MessageMutationUnavailableError()
                 }
             } catch is CancellationError {
                 return
             } catch {
-                self?.updateDelivery(messageID, in: conversationID, to: .failed)
-                self?.lastRemoteActionError = error.localizedDescription
+                guard let self,
+                      ownsConversationLifecycle(
+                          conversationID,
+                          generation: lifecycleGeneration
+                      )
+                else { return }
+                updateDelivery(messageID, in: conversationID, to: .failed)
+                lastRemoteActionError = error.localizedDescription
             }
         }
         remoteOperations[operationID] = task
     }
 
     private func startEdit(messageID: UUID, body: String, expectedRevision: Int?) {
-        guard let remoteMessageEditor else { return }
+        guard let remoteMessageEditor,
+              let (conversationID, _) = message(withID: messageID)
+        else { return }
+        let lifecycleGeneration = conversationLifecycleGenerations[conversationID] ?? 0
         let key = MessageMutationKey(messageID: messageID, kind: .edit)
         guard messageMutationStates[key] != .loading else { return }
         messageMutationStates[key] = .loading
@@ -1778,26 +2066,40 @@ public final class MessengerStore {
             defer { self?.remoteOperations[operationID] = nil }
             do {
                 let snapshot = try await remoteMessageEditor(messageID, body, expectedRevision)
-                guard let self, !Task.isCancelled else { return }
+                guard let self,
+                      !Task.isCancelled,
+                      ownsConversationLifecycle(
+                          conversationID,
+                          generation: lifecycleGeneration
+                      )
+                else { return }
                 applySnapshot(snapshot)
                 messageMutationStates[key] = .loaded
                 messageMutationRetries[key] = nil
                 messageMutationFailure = nil
                 if case let .edit(target) = composerMode, target.id == messageID {
-                    composerMode = .new
-                    draft = draftBeforeEditing
+                    restoreComposerAfterEditing()
                 }
             } catch is CancellationError {
                 self?.messageMutationStates[key] = .idle
             } catch {
-                self?.recordMutationFailure(key: key, error: error)
+                guard let self,
+                      ownsConversationLifecycle(
+                          conversationID,
+                          generation: lifecycleGeneration
+                      )
+                else { return }
+                recordMutationFailure(key: key, error: error)
             }
         }
         remoteOperations[operationID] = task
     }
 
     private func startDelete(messageID: UUID) {
-        guard let remoteMessageDeleter else { return }
+        guard let remoteMessageDeleter,
+              let (conversationID, _) = message(withID: messageID)
+        else { return }
+        let lifecycleGeneration = conversationLifecycleGenerations[conversationID] ?? 0
         let key = MessageMutationKey(messageID: messageID, kind: .delete)
         guard messageMutationStates[key] != .loading else { return }
         messageMutationStates[key] = .loading
@@ -1809,7 +2111,13 @@ public final class MessengerStore {
             defer { self?.remoteOperations[operationID] = nil }
             do {
                 let snapshot = try await remoteMessageDeleter(messageID)
-                guard let self, !Task.isCancelled else { return }
+                guard let self,
+                      !Task.isCancelled,
+                      ownsConversationLifecycle(
+                          conversationID,
+                          generation: lifecycleGeneration
+                      )
+                else { return }
                 applySnapshot(snapshot)
                 messageMutationStates[key] = .loaded
                 messageMutationRetries[key] = nil
@@ -1820,7 +2128,13 @@ public final class MessengerStore {
             } catch is CancellationError {
                 self?.messageMutationStates[key] = .idle
             } catch {
-                self?.recordMutationFailure(key: key, error: error)
+                guard let self,
+                      ownsConversationLifecycle(
+                          conversationID,
+                          generation: lifecycleGeneration
+                      )
+                else { return }
+                recordMutationFailure(key: key, error: error)
             }
         }
         remoteOperations[operationID] = task
@@ -1883,6 +2197,9 @@ public final class MessengerStore {
     }
 
     private func applySnapshots(_ snapshots: [RemoteMessageSnapshot], to conversationID: UUID) {
+        guard conversations.contains(where: { $0.id == conversationID }),
+              snapshots.allSatisfy({ $0.message.conversationID == conversationID })
+        else { return }
         let existingByID = Dictionary(
             uniqueKeysWithValues: messagesByConversation[conversationID, default: []].map { ($0.id, $0) }
         )
@@ -1912,6 +2229,7 @@ public final class MessengerStore {
 
     private func applySnapshot(_ snapshot: RemoteMessageSnapshot) {
         let conversationID = snapshot.message.conversationID
+        guard conversations.contains(where: { $0.id == conversationID }) else { return }
         var messages = messagesByConversation[conversationID, default: []]
         var message = snapshot.message
         if let index = messages.firstIndex(where: {
@@ -2013,6 +2331,33 @@ public final class MessengerStore {
             conversations.append(conversation)
         }
         rescheduleMuteExpirations()
+    }
+
+    private func fenceConversationLifecycle(_ conversationID: UUID) {
+        conversationLifecycleGenerations[conversationID] =
+            (conversationLifecycleGenerations[conversationID] ?? 0) &+ 1
+    }
+
+    private func ownsConversationLifecycle(
+        _ conversationID: UUID,
+        generation: UInt
+    ) -> Bool {
+        (conversationLifecycleGenerations[conversationID] ?? 0) == generation
+            && conversations.contains(where: { $0.id == conversationID })
+    }
+
+    private func scrubMessageMutationState(messageIDs: Set<UUID>) {
+        guard !messageIDs.isEmpty else { return }
+        messageMutationStates = messageMutationStates.filter {
+            !messageIDs.contains($0.key.messageID)
+        }
+        messageMutationRetries = messageMutationRetries.filter {
+            !messageIDs.contains($0.key.messageID)
+        }
+        if let failure = messageMutationFailure,
+           messageIDs.contains(failure.key.messageID) {
+            messageMutationFailure = nil
+        }
     }
 
     private func rescheduleMuteExpirations(now: Date = Date()) {

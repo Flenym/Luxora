@@ -354,20 +354,32 @@ describe("chat convergence across independent SQLite writers", () => {
   }
 
   function claimPendingEvents(fixture: Fixture): StoredEvent[] {
-    const claimed = fixture.store.claimRealtimeOutbox(
-      `assertion-worker-${randomUUID()}`,
-      "2026-08-05T12:00:00.000Z",
-      "2026-08-05T12:01:00.000Z",
-      500
-    );
-    const unreadable = claimed.find((item) => !item.ok);
-    if (unreadable !== undefined && !unreadable.ok) {
-      throw new Error(`Unexpected unreadable event ${unreadable.eventSequence}`);
+    const workerId = `assertion-worker-${randomUUID()}`;
+    const now = "2026-08-05T12:00:00.000Z";
+    const events: StoredEvent[] = [];
+    const maxBatches = 1_000;
+
+    for (let batch = 0; batch < maxBatches; batch += 1) {
+      const claimed = fixture.store.claimRealtimeOutbox(
+        workerId,
+        now,
+        "2026-08-05T12:01:00.000Z",
+        500
+      );
+      if (claimed.length === 0) return events;
+
+      for (const item of claimed) {
+        if (!item.ok) {
+          throw new Error(`Unexpected unreadable event ${item.eventSequence}`);
+        }
+        events.push(item.event);
+        if (!fixture.store.markRealtimeOutboxPublished(item.event.sequence, workerId, now)) {
+          throw new Error(`Failed to acknowledge event ${item.event.sequence}`);
+        }
+      }
     }
-    return claimed.map((item) => {
-      if (!item.ok) throw new Error("Expected a readable outbox claim");
-      return item.event;
-    });
+
+    throw new Error(`Outbox did not drain within ${maxBatches} assertion batches`);
   }
 
   it("converges identical send nonces to the first committed message", async () => {

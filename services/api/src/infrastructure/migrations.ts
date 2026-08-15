@@ -3547,5 +3547,124 @@ export const migrations: Migration[] = [
         WHERE excluded.last_revision > chat_membership_revision_ledger.last_revision;
       END;
     `
+  },
+  {
+    id: "025_synchronized_chat_drafts",
+    sql: `
+      CREATE TABLE chat_drafts (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        text_ciphertext TEXT,
+        reply_to_message_id TEXT,
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        updated_at TEXT NOT NULL CHECK (julianday(updated_at) IS NOT NULL),
+        deleted_at TEXT CHECK (
+          deleted_at IS NULL OR julianday(deleted_at) IS NOT NULL
+        ),
+        PRIMARY KEY (user_id, chat_id),
+        CHECK (
+          (deleted_at IS NULL AND text_ciphertext IS NOT NULL)
+          OR
+          (deleted_at IS NOT NULL AND text_ciphertext IS NULL AND reply_to_message_id IS NULL)
+        )
+      ) STRICT;
+      CREATE INDEX idx_chat_drafts_account_active
+        ON chat_drafts(user_id, updated_at DESC, chat_id)
+        WHERE deleted_at IS NULL;
+
+      CREATE TABLE chat_draft_command_receipts (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_nonce TEXT NOT NULL CHECK (length(client_nonce) = 36),
+        operation TEXT NOT NULL CHECK (operation IN ('put', 'delete')),
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        fingerprint_ciphertext TEXT NOT NULL CHECK (
+          fingerprint_ciphertext GLOB 'luxora:v1.*'
+          AND length(CAST(fingerprint_ciphertext AS BLOB)) BETWEEN 1 AND 1000
+        ),
+        response_ciphertext TEXT NOT NULL CHECK (
+          length(CAST(response_ciphertext AS BLOB)) BETWEEN 1 AND 100000
+        ),
+        created_at TEXT NOT NULL CHECK (julianday(created_at) IS NOT NULL),
+        expires_at TEXT NOT NULL CHECK (
+          julianday(expires_at) IS NOT NULL
+          AND julianday(expires_at) > julianday(created_at)
+        ),
+        PRIMARY KEY (user_id, client_nonce)
+      ) STRICT;
+      CREATE INDEX idx_chat_draft_receipts_account_chat
+        ON chat_draft_command_receipts(user_id, chat_id, created_at DESC);
+      CREATE INDEX idx_chat_draft_receipts_expiry
+        ON chat_draft_command_receipts(expires_at, user_id, client_nonce);
+      CREATE INDEX idx_chat_draft_receipts_account_expiry
+        ON chat_draft_command_receipts(user_id, expires_at, client_nonce);
+
+      CREATE TRIGGER trg_chat_drafts_insert_invariants
+      BEFORE INSERT ON chat_drafts
+      WHEN NEW.revision <> 1
+        OR (
+          NEW.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM chat_members
+            WHERE chat_id = NEW.chat_id AND user_id = NEW.user_id
+          )
+        )
+        OR (
+          NEW.reply_to_message_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM messages
+            WHERE id = NEW.reply_to_message_id
+              AND chat_id = NEW.chat_id
+              AND deleted_at IS NULL
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'chat draft insert invariant failed');
+      END;
+
+      CREATE TRIGGER trg_chat_drafts_update_invariants
+      BEFORE UPDATE ON chat_drafts
+      WHEN NEW.user_id <> OLD.user_id
+        OR NEW.chat_id <> OLD.chat_id
+        OR NEW.revision <> OLD.revision + 1
+        OR julianday(NEW.updated_at) <= julianday(OLD.updated_at)
+        OR (
+          NEW.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM chat_members
+            WHERE chat_id = NEW.chat_id AND user_id = NEW.user_id
+          )
+        )
+        OR (
+          NEW.reply_to_message_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM messages
+            WHERE id = NEW.reply_to_message_id
+              AND chat_id = NEW.chat_id
+              AND deleted_at IS NULL
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'chat draft revision transition is invalid');
+      END;
+
+      CREATE TRIGGER trg_chat_draft_receipts_immutable_update
+      BEFORE UPDATE ON chat_draft_command_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'chat draft command receipt is immutable');
+      END;
+
+      CREATE TRIGGER trg_chat_draft_receipts_immutable_delete
+      BEFORE DELETE ON chat_draft_command_receipts
+      WHEN julianday(OLD.expires_at) > julianday('now')
+        AND EXISTS (SELECT 1 FROM users WHERE id = OLD.user_id)
+        AND EXISTS (SELECT 1 FROM chats WHERE id = OLD.chat_id)
+        AND EXISTS (
+          SELECT 1 FROM chat_members
+          WHERE user_id = OLD.user_id AND chat_id = OLD.chat_id
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'active chat draft command receipt cannot be deleted');
+      END;
+    `
   }
 ];

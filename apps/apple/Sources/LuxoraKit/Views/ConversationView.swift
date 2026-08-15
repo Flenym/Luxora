@@ -45,6 +45,11 @@ struct ConversationView: View {
             }
         }
         .navigationTitle(conversation.title)
+        .task(id: conversation.id) {
+            await store.loadSynchronizedDraft(for: conversation.id)
+            await store.loadMessages(for: conversation.id)
+            await store.markConversationRead(conversation.id)
+        }
         .toolbarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {

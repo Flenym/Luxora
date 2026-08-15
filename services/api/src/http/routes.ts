@@ -13,6 +13,7 @@ import {
   CreateTopicRequestSchema,
   CreateUploadRequestSchema,
   CursorQuerySchema,
+  DeleteChatDraftRequestSchema,
   DeleteChatFolderRequestSchema,
   DisablePhonePasswordSchema,
   EditMessageRequestSchema,
@@ -25,6 +26,7 @@ import {
   PatchNotificationSettingsSchema,
   PatchCurrentUserSchema,
   PatchPrivacySettingsSchema,
+  PutChatDraftRequestSchema,
   CompletePhoneRegistrationSchema,
   ReactionRequestSchema,
   RELEASE_LABEL,
@@ -51,6 +53,7 @@ import type { Metrics } from "../metrics.js";
 import type { AttachmentService } from "../services/attachment-service.js";
 import type { AuthService } from "../services/auth-service.js";
 import type { ChatService } from "../services/chat-service.js";
+import type { ChatDraftService } from "../services/chat-draft-service.js";
 import type { ChatFolderService } from "../services/chat-folder-service.js";
 import type { IdentityAccessService } from "../services/identity-access-service.js";
 import type { NotificationService } from "../services/notification-service.js";
@@ -80,6 +83,7 @@ interface RouteDependencies {
   store: Store;
   auth: AuthService;
   chats: ChatService;
+  chatDrafts: ChatDraftService;
   chatFolders: ChatFolderService;
   identity: IdentityAccessService;
   notifications: NotificationService;
@@ -497,6 +501,29 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { id } = IdParamSchema.parse(request.params);
     const input = PatchChatPreferencesSchema.parse(request.body);
     return { preferences: dependencies.chats.updatePreferences(request.auth.userId, id, input) };
+  });
+
+  app.get("/v1/chats/:id/draft", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    return dependencies.chatDrafts.get(request.auth.userId, id);
+  });
+
+  app.put("/v1/chats/:id/draft", {
+    preHandler: [dependencies.authGuard, identityRateLimits.chatDraftMutation],
+    config: { rateLimit: { max: 600, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = PutChatDraftRequestSchema.parse(request.body);
+    return dependencies.chatDrafts.put(request.auth.userId, id, input);
+  });
+
+  app.delete("/v1/chats/:id/draft", {
+    preHandler: [dependencies.authGuard, identityRateLimits.chatDraftMutation],
+    config: { rateLimit: { max: 600, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = DeleteChatDraftRequestSchema.parse(request.body);
+    return dependencies.chatDrafts.delete(request.auth.userId, id, input);
   });
 
   app.get("/v1/chats/:id/members", { preHandler: dependencies.authGuard }, async (request) => {

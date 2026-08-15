@@ -31,6 +31,10 @@ struct MessageComposer: View {
                     .accessibilityIdentifier("message-composer-connection-state")
             }
 
+            if store.synchronizedDraftsEnabled {
+                draftSynchronizationStatus
+            }
+
             if #available(iOS 26.0, macOS 26.0, *) {
                 GlassEffectContainer(spacing: 12) {
                     composerContent
@@ -83,6 +87,21 @@ struct MessageComposer: View {
                 .accessibilityLabel(LuxoraL10n.text("conversation.message"))
                 .accessibilityIdentifier("message-composer")
 
+            if isFocused {
+                Button {
+                    isFocused = false
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.plain)
+                .frame(minWidth: 44, minHeight: 44)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Скрыть клавиатуру")
+                .accessibilityIdentifier("message-composer-keyboard-dismiss")
+            }
+
             Button {
                 if store.canSend {
                     store.sendDraft()
@@ -132,13 +151,52 @@ struct MessageComposer: View {
         }
         .frame(maxWidth: 920)
         .frame(maxWidth: .infinity)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Скрыть клавиатуру") {
-                    isFocused = false
+    }
+
+    @ViewBuilder
+    private var draftSynchronizationStatus: some View {
+        if store.isSelectedDraftReplyResolving {
+            Label("Загружаем сообщение для ответа…", systemImage: "text.bubble")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 7)
+                .accessibilityIdentifier("message-draft-reply-resolving")
+        } else {
+            switch store.selectedDraftSynchronizationState {
+        case .loading:
+            Label("Синхронизируем черновик…", systemImage: "arrow.triangle.2.circlepath")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 4)
+                .padding(.bottom, 7)
+                .accessibilityIdentifier("message-draft-sync-loading")
+        case let .failed(message):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                if let chatID = store.selectedConversationID {
+                    Button("Повторить") {
+                        Task { await store.retrySynchronizedDraft(for: chatID) }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(LuxoraTheme.iris)
+                    .accessibilityIdentifier("message-draft-sync-retry")
                 }
-                .accessibilityIdentifier("message-composer-keyboard-dismiss")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 7)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("message-draft-sync-failure")
+        case .idle, .loaded:
+            EmptyView()
             }
         }
     }

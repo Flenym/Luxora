@@ -39,6 +39,10 @@ npm-debug.log*
 **/DerivedData/
 **/*.xcodeproj/
 **/*.xcworkspace/
+**/*.xcresult/
+**/*.xcarchive/
+**/*.dSYM/
+*.ipa
 *.xcuserstate
 xcuserdata/
 
@@ -73,6 +77,7 @@ reports/
 # Container-local volumes and backups
 .docker-data/
 backups/
+*.bundle
 *.tfstate
 *.tfstate.*
 .terraform/

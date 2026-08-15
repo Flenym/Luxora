@@ -439,6 +439,7 @@ export class ChatService {
         (candidate, folder) => timestampAfter(candidate, folder.updatedAt),
         now
       );
+      const draftBeforeRemoval = this.store.getChatDraft(targetUserId, chatId);
       const membership = this.store.removeChatMember(
         chatId,
         targetUserId,
@@ -464,6 +465,21 @@ export class ChatService {
         now,
         targetUserId
       );
+      if (draftBeforeRemoval?.deletedAt === null) {
+        const draftTombstone = this.store.getChatDraft(targetUserId, chatId);
+        if (draftTombstone === null || draftTombstone.deletedAt === null) {
+          throw new Error("Could not tombstone chat draft after membership removal");
+        }
+        events.push(this.store.appendEvent(targetUserId, {
+          type: "chat.draft.changed",
+          audience: "account_sessions",
+          accountId: targetUserId,
+          chatId,
+          draft: null,
+          revision: draftTombstone.revision,
+          changedAt: draftTombstone.updatedAt
+        }, draftTombstone.updatedAt));
+      }
       if (affectedFolders.length > 0) {
         for (const folder of affectedFolders) {
           const updated = this.store.updateChatFolder(targetUserId, folder.id, {

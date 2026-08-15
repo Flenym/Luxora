@@ -58,6 +58,7 @@ const DURABLE_EVENT_BOUNDARIES = [
   "chat.member.changed:removed_account",
   "chat.preferences.updated:member_account",
   "chat.folders.updated:actor_account",
+  "chat.draft.changed:account_sessions",
   "sync.invalidated:account_projection",
   "relationship.request.created:sender_account",
   "relationship.request.created:recipient_account",
@@ -231,7 +232,7 @@ describe("complete realtime authorization matrix", () => {
     expect([...new Set([...realtimeEvents, ...identityEvents])].sort()).toEqual([
       ...new Set(DURABLE_EVENT_BOUNDARIES.map((entry) => entry.split(":")[0]))
     ].sort());
-    expect(DURABLE_EVENT_BOUNDARIES).toHaveLength(24);
+    expect(DURABLE_EVENT_BOUNDARIES).toHaveLength(25);
   });
 
   it("rejects every pre-authentication client command and invalid authenticate frame on both protocols", async () => {

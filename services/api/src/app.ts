@@ -40,6 +40,7 @@ import { StorePasskeyCredentialRepository } from "./passkeys/store-passkey-repos
 import { AttachmentService } from "./services/attachment-service.js";
 import { AuthService } from "./services/auth-service.js";
 import { ChatFolderService } from "./services/chat-folder-service.js";
+import { ChatDraftService } from "./services/chat-draft-service.js";
 import { ChatService } from "./services/chat-service.js";
 import { IdentityAccessService } from "./services/identity-access-service.js";
 import { NotificationService } from "./services/notification-service.js";
@@ -436,6 +437,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const storage = await createStorageProvider(config);
   const chats = new ChatService(store, outbox, searchHasher);
   const chatFolders = new ChatFolderService(store, outbox);
+  const chatDrafts = new ChatDraftService(store, outbox);
   const identity = new IdentityAccessService(store, outbox, searchHasher);
   const notifications = new NotificationService(store);
   const uploads = await UploadService.create(store, storage, searchHasher, outbox, config);
@@ -622,6 +624,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     profileAvatars,
     chats,
     chatFolders,
+    chatDrafts,
     uploads,
     attachments,
     identity,

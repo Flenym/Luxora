@@ -42,6 +42,7 @@ import type {
 } from "@luxora/protocol";
 import {
   AttachmentSchema,
+  CHAT_DRAFT_IDEMPOTENCY_TTL_SECONDS,
   CHAT_FOLDER_IDEMPOTENCY_TTL_SECONDS,
   DurableRealtimeEventSchema,
   IdSchema
@@ -88,6 +89,8 @@ import type {
   AttachmentRecord,
   BlockRecord,
   ClaimedRealtimeOutboxEvent,
+  ChatDraftCommandReceiptRecord,
+  ChatDraftRecord,
   ChatFolderCommandReceiptRecord,
   ChatFolderOverrideRecord,
   ChatFolderRecord,
@@ -376,6 +379,27 @@ interface ChatFolderCommandReceiptRow {
   created_at: string;
   expires_at: string | null;
   effective_expires_at: string;
+}
+
+interface ChatDraftRow {
+  user_id: string;
+  chat_id: string;
+  text_ciphertext: string | null;
+  reply_to_message_id: string | null;
+  revision: number;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+interface ChatDraftCommandReceiptRow {
+  user_id: string;
+  client_nonce: string;
+  operation: ChatDraftCommandReceiptRecord["operation"];
+  chat_id: string;
+  fingerprint_ciphertext: string;
+  response_ciphertext: string;
+  created_at: string;
+  expires_at: string;
 }
 
 interface MessageRow {
@@ -7373,6 +7397,10 @@ export class SqliteStore implements Store {
         timestampAfterFloor(at, current.updatedAt),
         ledger?.last_removed_at ?? current.updatedAt
       );
+      // A removed account must never recover an old private draft if it is
+      // later re-added. Keep the tombstone revision so stale devices still
+      // cannot overwrite a newer state after the membership lifecycle.
+      this.tombstoneChatDraftForMembershipRemoval(userId, chatId, removedAt);
       const ledgerResult = this.#db.prepare(`
         INSERT INTO chat_membership_revision_ledger (
           chat_id, user_id, last_revision, last_removed_at
@@ -7390,6 +7418,16 @@ export class SqliteStore implements Store {
         WHERE chat_id = ? AND user_id = ? AND membership_revision = ?
       `).run(chatId, userId, expectedRevision);
       if (result.changes !== 1) return null;
+      this.#db.prepare(`
+        DELETE FROM chat_draft_command_receipts
+        WHERE user_id = ? AND chat_id = ?
+      `).run(userId, chatId);
+      this.#db.prepare(`
+        DELETE FROM realtime_events
+        WHERE audience_user_id = ?
+          AND event_type = 'chat.draft.changed'
+          AND entity_id = ?
+      `).run(userId, `${chatId}:${userId}`);
       return { ...current, revision, updatedAt: removedAt };
     }).immediate();
   }
@@ -7835,6 +7873,186 @@ export class SqliteStore implements Store {
       )
     `).run({ legacyCutoff, limit: remaining }).changes;
     return current + legacy;
+  }
+
+  getChatDraft(userId: string, chatId: string): ChatDraftRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM chat_drafts WHERE user_id = ? AND chat_id = ?
+    `).get(userId, chatId) as ChatDraftRow | undefined;
+    return row === undefined ? null : this.#mapChatDraft(row);
+  }
+
+  putChatDraft(
+    userId: string,
+    chatId: string,
+    input: {
+      text: string;
+      replyToMessageId: string | null;
+      expectedRevision: number;
+      updatedAt: string;
+    }
+  ): ChatDraftRecord | null {
+    const encryptedText = this.contentCipher.encrypt(
+      input.text,
+      `chat-draft:${userId}:${chatId}:text`
+    );
+    const row = this.#db.prepare(`
+      INSERT INTO chat_drafts (
+        user_id, chat_id, text_ciphertext, reply_to_message_id,
+        revision, updated_at, deleted_at
+      ) SELECT
+        @userId, @chatId, @textCiphertext, @replyToMessageId,
+        1, @updatedAt, NULL
+      WHERE @expectedRevision = 0 OR EXISTS (
+        SELECT 1 FROM chat_drafts
+        WHERE user_id = @userId AND chat_id = @chatId
+          AND revision = @expectedRevision
+      )
+      ON CONFLICT(user_id, chat_id) DO UPDATE SET
+        text_ciphertext = excluded.text_ciphertext,
+        reply_to_message_id = excluded.reply_to_message_id,
+        revision = chat_drafts.revision + 1,
+        updated_at = excluded.updated_at,
+        deleted_at = NULL
+      WHERE chat_drafts.revision = @expectedRevision
+      RETURNING *
+    `).get({
+      userId,
+      chatId,
+      textCiphertext: encryptedText,
+      replyToMessageId: input.replyToMessageId,
+      expectedRevision: input.expectedRevision,
+      updatedAt: input.updatedAt
+    }) as ChatDraftRow | undefined;
+    if (row === undefined || (input.expectedRevision === 0 && row.revision !== 1)) return null;
+    return this.#mapChatDraft(row);
+  }
+
+  deleteChatDraft(
+    userId: string,
+    chatId: string,
+    expectedRevision: number,
+    updatedAt: string
+  ): ChatDraftRecord | null {
+    const row = this.#db.prepare(`
+      UPDATE chat_drafts
+      SET text_ciphertext = NULL,
+          reply_to_message_id = NULL,
+          revision = revision + 1,
+          updated_at = @updatedAt,
+          deleted_at = @updatedAt
+      WHERE user_id = @userId AND chat_id = @chatId
+        AND revision = @expectedRevision AND deleted_at IS NULL
+      RETURNING *
+    `).get({ userId, chatId, expectedRevision, updatedAt }) as ChatDraftRow | undefined;
+    return row === undefined ? null : this.#mapChatDraft(row);
+  }
+
+  tombstoneChatDraftForMembershipRemoval(
+    userId: string,
+    chatId: string,
+    updatedAt: string
+  ): ChatDraftRecord | null {
+    const current = this.getChatDraft(userId, chatId);
+    if (current === null || current.deletedAt !== null) return null;
+    const effectiveAt = timestampAfterFloor(updatedAt, current.updatedAt);
+    return this.deleteChatDraft(userId, chatId, current.revision, effectiveAt);
+  }
+
+  findChatDraftCommandReceipt(
+    userId: string,
+    clientNonce: string,
+    at: string
+  ): ChatDraftCommandReceiptRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM chat_draft_command_receipts
+      WHERE user_id = ? AND client_nonce = ?
+        AND expires_at > ?
+    `).get(userId, clientNonce, at) as ChatDraftCommandReceiptRow | undefined;
+    if (row === undefined) return null;
+    return {
+      userId: row.user_id,
+      clientNonce: row.client_nonce,
+      operation: row.operation,
+      chatId: row.chat_id,
+      fingerprint: this.contentCipher.decrypt(
+        row.fingerprint_ciphertext,
+        `chat-draft-receipt-fingerprint:${row.user_id}:${row.client_nonce}`
+      ),
+      responseJson: this.contentCipher.decrypt(
+        row.response_ciphertext,
+        `chat-draft-receipt:${row.user_id}:${row.client_nonce}`
+      ),
+      createdAt: row.created_at,
+      expiresAt: row.expires_at
+    };
+  }
+
+  createChatDraftCommandReceipt(receipt: ChatDraftCommandReceiptRecord): void {
+    this.#db.prepare(`
+      INSERT INTO chat_draft_command_receipts (
+        user_id, client_nonce, operation, chat_id,
+        fingerprint_ciphertext, response_ciphertext, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      receipt.userId,
+      receipt.clientNonce,
+      receipt.operation,
+      receipt.chatId,
+      this.contentCipher.encrypt(
+        receipt.fingerprint,
+        `chat-draft-receipt-fingerprint:${receipt.userId}:${receipt.clientNonce}`
+      ),
+      this.contentCipher.encrypt(
+        receipt.responseJson,
+        `chat-draft-receipt:${receipt.userId}:${receipt.clientNonce}`
+      ),
+      receipt.createdAt,
+      receipt.expiresAt
+    );
+  }
+
+  countActiveChatDraftCommandReceipts(userId: string, at: string): number {
+    return (this.#db.prepare(`
+      SELECT count(*) AS count
+      FROM chat_draft_command_receipts
+      WHERE user_id = ? AND expires_at > ?
+    `).get(userId, at) as { count: number }).count;
+  }
+
+  getOldestChatDraftCommandReceiptExpiry(userId: string, at: string): string | null {
+    const row = this.#db.prepare(`
+      SELECT expires_at
+      FROM chat_draft_command_receipts
+      WHERE user_id = ? AND expires_at > ?
+      ORDER BY expires_at, client_nonce
+      LIMIT 1
+    `).get(userId, at) as { expires_at: string } | undefined;
+    return row?.expires_at ?? null;
+  }
+
+  deleteExpiredChatDraftCommandReceipt(
+    userId: string,
+    clientNonce: string,
+    at: string
+  ): boolean {
+    return this.#db.prepare(`
+      DELETE FROM chat_draft_command_receipts
+      WHERE user_id = ? AND client_nonce = ? AND expires_at <= ?
+    `).run(userId, clientNonce, at).changes === 1;
+  }
+
+  purgeExpiredChatDraftCommandReceipts(at: string, limit: number): number {
+    return this.#db.prepare(`
+      DELETE FROM chat_draft_command_receipts
+      WHERE rowid IN (
+        SELECT rowid
+        FROM chat_draft_command_receipts INDEXED BY idx_chat_draft_receipts_expiry
+        WHERE expires_at <= @at
+        ORDER BY expires_at, user_id, client_nonce
+        LIMIT @limit
+      )
+    `).run({ at, limit }).changes;
   }
 
   listChats(userId: string, limit: number, cursor?: string): { items: Chat[]; nextCursor: string | null } {
@@ -8907,12 +9125,24 @@ export class SqliteStore implements Store {
     }
     return this.immediateTransaction(() => {
       const candidates = this.#db.prepare(`
-        SELECT event_sequence
-        FROM realtime_outbox
-        WHERE published_at IS NULL AND failed_at IS NULL
-          AND available_at <= ?
-          AND (claimed_by IS NULL OR claim_until <= ?)
-        ORDER BY event_sequence ASC
+        SELECT candidate.event_sequence
+        FROM realtime_outbox candidate
+        JOIN realtime_events candidate_event
+          ON candidate_event.sequence = candidate.event_sequence
+        WHERE candidate.published_at IS NULL AND candidate.failed_at IS NULL
+          AND candidate.available_at <= ?
+          AND (candidate.claimed_by IS NULL OR candidate.claim_until <= ?)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM realtime_outbox prior
+            JOIN realtime_events prior_event
+              ON prior_event.sequence = prior.event_sequence
+            WHERE prior_event.audience_user_id = candidate_event.audience_user_id
+              AND prior.event_sequence < candidate.event_sequence
+              AND prior.published_at IS NULL
+              AND prior.failed_at IS NULL
+          )
+        ORDER BY candidate.event_sequence ASC
         LIMIT ?
       `).all(at, at, limit) as Array<{ event_sequence: number }>;
       if (candidates.length === 0) return [];
@@ -9029,6 +9259,23 @@ export class SqliteStore implements Store {
       })),
       createdAt: row.created_at,
       updatedAt: row.updated_at
+    };
+  }
+
+  #mapChatDraft(row: ChatDraftRow): ChatDraftRecord {
+    return {
+      userId: row.user_id,
+      chatId: row.chat_id,
+      text: row.text_ciphertext === null
+        ? null
+        : this.contentCipher.decrypt(
+            row.text_ciphertext,
+            `chat-draft:${row.user_id}:${row.chat_id}:text`
+          ),
+      replyToMessageId: row.reply_to_message_id,
+      revision: row.revision,
+      updatedAt: row.updated_at,
+      deletedAt: row.deleted_at
     };
   }
 
@@ -9257,6 +9504,7 @@ export class SqliteStore implements Store {
       case "chat.member.changed": return `${event.membership.chatId}:${event.membership.userId}`;
       case "chat.preferences.updated": return `${event.chatId}:${event.accountId}`;
       case "chat.folders.updated": return event.accountId;
+      case "chat.draft.changed": return `${event.chatId}:${event.accountId}`;
       case "sync.invalidated": return event.accountId;
     }
   }

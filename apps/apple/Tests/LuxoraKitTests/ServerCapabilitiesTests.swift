@@ -10,6 +10,8 @@ struct ServerCapabilitiesTests {
 
         #expect(capabilities.features.phoneAuthentication)
         #expect(capabilities.features.chatFolders)
+        #expect(!capabilities.features.drafts)
+        #expect(capabilities.limits.maxDraftCodePoints == nil)
         #expect(capabilities.limits.maxChatFolders == 10)
         #expect(capabilities.limits.maxChatFolderTitleLength == 48)
         #expect(capabilities.limits.maxChatFolderOverrides == 100)
@@ -25,6 +27,93 @@ struct ServerCapabilitiesTests {
         #expect(matrix.communities.state == .limited)
         #expect(matrix.stories.state == .unavailable)
         #expect(matrix.allSections.count == 12)
+    }
+
+    @Test
+    func additiveDraftCapabilityNegotiatesCurrentLimitAndLegacyOmissionOff() throws {
+        let legacy = try decodeCapabilities().validated()
+        #expect(!legacy.features.drafts)
+        #expect(legacy.limits.maxDraftCodePoints == nil)
+
+        let payload = capabilityJSON
+            .replacingOccurrences(
+                of: #""phoneAuthentication":true"#,
+                with: #""drafts":true,"phoneAuthentication":true"#
+            )
+            .replacingOccurrences(
+                of: #""maxMessageCodePoints":10000"#,
+                with: #""maxDraftCodePoints":10000,"maxMessageCodePoints":10000"#
+            )
+            .replacingOccurrences(
+                of: #""supported":[1],"preferred":1,"minimum":1"#,
+                with: #""supported":[1,2],"preferred":2,"minimum":1"#
+            )
+            .replacingOccurrences(
+                of: #""reconciliation":[1]"#,
+                with: #""reconciliation":[2]"#
+            )
+        let current = try JSONDecoder().decode(APICapabilities.self, from: Data(payload.utf8))
+        let validated = try current.validated()
+        #expect(validated.features.drafts)
+        #expect(validated.limits.maxDraftCodePoints == 10_000)
+        #expect(validated.supportsSynchronizedDrafts)
+    }
+
+    @Test
+    func legacyRealtimeCannotAdvertiseSynchronizedDrafts() throws {
+        let payload = capabilityJSON
+            .replacingOccurrences(
+                of: #""phoneAuthentication":true"#,
+                with: #""drafts":true,"phoneAuthentication":true"#
+            )
+            .replacingOccurrences(
+                of: #""maxMessageCodePoints":10000"#,
+                with: #""maxDraftCodePoints":10000,"maxMessageCodePoints":10000"#
+            )
+        let decoded = try JSONDecoder().decode(APICapabilities.self, from: Data(payload.utf8))
+        #expect(throws: LuxoraAPIError.self) { try decoded.validated() }
+
+        let forgedLegacy = ServerCapabilities(
+            trust: .init(
+                profile: "cloud_preview",
+                contentReadableByServer: true,
+                endToEndEncryption: false
+            ),
+            features: .init(
+                phoneAuthentication: true,
+                passwordAuthentication: true,
+                deviceSessions: true,
+                messaging: true,
+                identityAccess: true,
+                safetyReports: true,
+                realtime: true,
+                reconciliation: true,
+                mediaUploads: true,
+                serverSearchConfigured: false,
+                calls: false,
+                passkeys: false,
+                push: false,
+                drafts: true
+            ),
+            limits: .init(
+                maxMessageCodePoints: 10_000,
+                maxAttachmentsPerMessage: 10,
+                maxAttachmentBytes: 104_857_600,
+                maxDraftCodePoints: 10_000
+            ),
+            realtimeProtocolVersion: .legacyV1
+        )
+        #expect(!forgedLegacy.supportsSynchronizedDrafts)
+    }
+
+    @Test
+    func advertisedDraftCapabilityWithoutExactLimitFailsClosed() throws {
+        let payload = capabilityJSON.replacingOccurrences(
+            of: #""phoneAuthentication":true"#,
+            with: #""drafts":true,"phoneAuthentication":true"#
+        )
+        let decoded = try JSONDecoder().decode(APICapabilities.self, from: Data(payload.utf8))
+        #expect(throws: LuxoraAPIError.self) { try decoded.validated() }
     }
 
     @Test

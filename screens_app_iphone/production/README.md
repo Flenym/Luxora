@@ -40,6 +40,18 @@ Validated deterministic production-UI sets:
   surfaces. Archive evidence uses a real swipe through the production
   confirmation path; the retained screenshots remain deterministic Debug
   fixture evidence, not live-backend proof.
+- [`v14-global-search-ru`](v14-global-search-ru/README.md) — server-shaped
+  people/message result surfaces and a navigation journey that opens both
+  result types. The two retained PNGs are deterministic Debug fixture evidence;
+  fixture-free Swift→Docker search behavior is proved separately in the test
+  record, not by the screenshots.
+- [`v15-synchronized-drafts-ru`](v15-synchronized-drafts-ru/README.md) —
+  loading/autosave, rate-limit retry, cross-chat restoration and send/clear
+  states from the production store/UI path. The post-patch journey passes 1/1
+  in 75.079 s with no retained invalid-frame warning and three reviewed,
+  checksum-verified 1206×2622 PNGs. Its transport is an opt-in DEBUG-only
+  server-shaped fixture; a separate postpromotion Swift→Docker HTTP+V2 test
+  proves the live draft boundary 1/1, not these screenshots.
 
 Validated live-backend set:
 

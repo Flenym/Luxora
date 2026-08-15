@@ -43,6 +43,7 @@ public struct LuxoraPhoneRootView: View {
     private let pushRegistrationStore: PushRegistrationStore?
     private let chatFoldersStore: ChatFoldersStore?
     private let communityStore: CommunityStore?
+    private let globalSearchStore: GlobalSearchStore?
     private let updateChatPreferences: (UUID, ChatPreferencesPatch) async -> Bool
     private let synchronizePushAuthorization: (Bool) -> Void
     private let signOut: () -> Void
@@ -62,6 +63,7 @@ public struct LuxoraPhoneRootView: View {
         pushRegistrationStore: PushRegistrationStore? = nil,
         chatFoldersStore: ChatFoldersStore? = nil,
         communityStore: CommunityStore? = nil,
+        globalSearchStore: GlobalSearchStore? = nil,
         updateChatPreferences: @escaping (UUID, ChatPreferencesPatch) async -> Bool = { _, _ in false },
         synchronizePushAuthorization: @escaping (Bool) -> Void = { _ in },
         signOut: @escaping () -> Void = {}
@@ -74,6 +76,7 @@ public struct LuxoraPhoneRootView: View {
         self.pushRegistrationStore = pushRegistrationStore
         self.chatFoldersStore = chatFoldersStore
         self.communityStore = communityStore
+        self.globalSearchStore = globalSearchStore
         self.updateChatPreferences = updateChatPreferences
         self.synchronizePushAuthorization = synchronizePushAuthorization
         self.signOut = signOut
@@ -264,6 +267,7 @@ public struct LuxoraPhoneRootView: View {
                 NavigationStack {
                     PhoneSearchView(
                         store: store,
+                        searchStore: globalSearchStore,
                         searchGate: featureMatrix.search,
                         openConversation: openConversation,
                         close: { selectedTab = .chats }
@@ -2790,6 +2794,7 @@ private struct PhoneDirectConversationView: View {
                 didInstallDebugMessageMutations = true
             }
             #endif
+            await store.loadSynchronizedDraft(for: conversation.id)
             await store.loadMessages(for: conversation.id)
             await store.markConversationRead(conversation.id)
             #if DEBUG
@@ -3680,27 +3685,31 @@ private struct PhoneCallsView: View {
 
 private struct PhoneSearchView: View {
     @Bindable var store: MessengerStore
+    let searchStore: GlobalSearchStore?
     let searchGate: FeatureGate
     let openConversation: (UUID) -> Void
     let close: () -> Void
 
     @State private var query = ""
-    @State private var scope = "Чаты"
+    @State private var scope = GlobalSearchScope.chats
     @State private var hidesRecentPeople = false
 
-    private var results: [Conversation] {
+    private var normalizedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var localResults: [Conversation] {
         store.conversations
             .filter {
-                query.isEmpty
-                    || $0.title.localizedCaseInsensitiveContains(query)
-                    || $0.subtitle.localizedCaseInsensitiveContains(query)
+                normalizedQuery.isEmpty
+                    || $0.title.localizedCaseInsensitiveContains(normalizedQuery)
+                    || $0.subtitle.localizedCaseInsensitiveContains(normalizedQuery)
             }
             .filter { conversation in
                 switch scope {
-                case "Каналы": conversation.kind == .channel
-                case "Люди": conversation.kind == .direct
-                case "Медиа": false
-                default: true
+                case .channels: conversation.kind == .channel
+                case .chats: true
+                case .people, .messages, .media: false
                 }
             }
             .sorted { $0.lastActivity > $1.lastActivity }
@@ -3711,11 +3720,15 @@ private struct PhoneSearchView: View {
     }
 
     var body: some View {
-        let projectedResults = results
+        let projectedResults = localResults
         let projectedRecentPeople = recentPeople
 
         List {
-            if !projectedRecentPeople.isEmpty, !hidesRecentPeople {
+            if scope == .chats,
+               normalizedQuery.isEmpty,
+               !projectedRecentPeople.isEmpty,
+               !hidesRecentPeople
+            {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 14) {
@@ -3741,19 +3754,12 @@ private struct PhoneSearchView: View {
             }
 
             Section {
-                ForEach(projectedResults) { conversation in
-                    Button { openConversation(conversation.id) } label: {
-                        PhoneSearchResultRow(conversation: conversation)
-                    }
-                    .buttonStyle(.plain)
-                    .listRowInsets(.init(top: 0, leading: 14, bottom: 0, trailing: 16))
-                    .accessibilityIdentifier("search-result-\(conversation.id.uuidString.lowercased())")
-                }
+                searchRows(localResults: projectedResults)
             } header: {
                 HStack {
-                    Text(query.isEmpty ? phoneString("search.recent") : phoneString("search.results"))
+                    Text(normalizedQuery.isEmpty ? phoneString("search.recent") : phoneString("search.results"))
                     Spacer()
-                    if query.isEmpty, !hidesRecentPeople {
+                    if scope == .chats, normalizedQuery.isEmpty, !hidesRecentPeople {
                         Button(phoneString("search.clear_recent")) {
                             hidesRecentPeople = true
                         }
@@ -3763,18 +3769,25 @@ private struct PhoneSearchView: View {
                     }
                 }
             } footer: {
-                Text(scope == "Медиа"
-                     ? "\(searchGate.state.label): сервер пока не поддерживает поиск по медиа."
-                     : "Сейчас поиск фильтрует только уже загруженные чаты Luxora.")
+                Text(searchFooter)
             }
         }
         .accessibilityIdentifier("search-screen")
         .overlay {
-            if projectedResults.isEmpty {
+            if showsInitialLoader {
+                ProgressView("Ищем на сервере…")
+                    .accessibilityIdentifier("search-loading")
+            } else if scope.isRemote, normalizedQuery.isEmpty {
+                ContentUnavailableView(
+                    "Введите запрос",
+                    systemImage: "magnifyingglass",
+                    description: Text("Выберите область и начните вводить имя, сообщение или файл.")
+                )
+            } else if showsEmpty(localResults: projectedResults) {
                 ContentUnavailableView(
                     "Ничего не найдено",
-                    systemImage: scope == "Медиа" ? "lock.fill" : "magnifyingglass",
-                    description: Text(scope == "Медиа" ? "Поиск по медиа пока недоступен." : "Измените запрос или область поиска.")
+                    systemImage: "magnifyingglass",
+                    description: Text("Измените запрос или область поиска.")
                 )
             }
         }
@@ -3791,12 +3804,165 @@ private struct PhoneSearchView: View {
                 .padding(.bottom, 18)
                 .offset(y: 32)
         }
+        .task(id: "\(scope.rawValue)|\(normalizedQuery)") {
+            guard let searchStore else { return }
+            if scope.isRemote, !normalizedQuery.isEmpty {
+                do {
+                    try await Task.sleep(for: .milliseconds(250))
+                } catch {
+                    return
+                }
+            }
+            guard !Task.isCancelled else { return }
+            await searchStore.search(query: normalizedQuery, scope: scope)
+        }
+    }
+
+    @ViewBuilder
+    private func searchRows(localResults: [Conversation]) -> some View {
+        switch scope {
+        case .chats, .channels:
+            ForEach(localResults) { conversation in
+                Button { openConversation(conversation.id) } label: {
+                    PhoneSearchResultRow(conversation: conversation)
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(.init(top: 0, leading: 14, bottom: 0, trailing: 16))
+                .accessibilityIdentifier("search-result-\(conversation.id.uuidString.lowercased())")
+            }
+        case .people:
+            if let searchStore {
+                ForEach(searchStore.people) { participant in
+                    Button { openParticipant(participant) } label: {
+                        PhoneParticipantSearchResultRow(participant: participant)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("search-person-\(participant.id.uuidString.lowercased())")
+                }
+                remoteStateRows(searchStore)
+            } else {
+                unavailableRow
+            }
+        case .messages:
+            if let searchStore {
+                ForEach(searchStore.messages) { result in
+                    Button { openConversation(result.conversationID) } label: {
+                        PhoneMessageSearchResultRow(
+                            result: result,
+                            conversationTitle: store.conversations.first {
+                                $0.id == result.conversationID
+                            }?.title
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("search-message-\(result.id.uuidString.lowercased())")
+                }
+                remoteStateRows(searchStore)
+            } else {
+                unavailableRow
+            }
+        case .media:
+            if let searchStore {
+                ForEach(searchStore.files) { result in
+                    PhoneFileSearchResultRow(result: result)
+                        .accessibilityIdentifier("search-file-\(result.id.uuidString.lowercased())")
+                }
+                remoteStateRows(searchStore)
+            } else {
+                unavailableRow
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func remoteStateRows(_ searchStore: GlobalSearchStore) -> some View {
+        if case let .failed(message) = searchStore.state {
+            PhoneRemoteFailureRow(
+                title: "Поиск не выполнен",
+                detail: message,
+                retry: { Task { await searchStore.retry() } }
+            )
+        }
+        if searchStore.canLoadMore {
+            Button {
+                Task { await searchStore.loadMore() }
+            } label: {
+                HStack {
+                    Spacer()
+                    if searchStore.state == .loading {
+                        ProgressView()
+                    } else {
+                        Text("Показать ещё")
+                    }
+                    Spacer()
+                }
+            }
+            .disabled(searchStore.state == .loading)
+            .accessibilityIdentifier("search-load-more")
+        }
+    }
+
+    private var unavailableRow: some View {
+        Label("Серверный поиск недоступен в этом сеансе", systemImage: "wifi.slash")
+            .foregroundStyle(.secondary)
+    }
+
+    private func openParticipant(_ participant: Participant) {
+        if let existing = store.conversations.first(where: {
+            $0.kind == .direct && $0.avatar.id == participant.id
+        }) {
+            openConversation(existing.id)
+            return
+        }
+        Task {
+            if let conversationID = await store.createDirectConversation(with: participant.id) {
+                openConversation(conversationID)
+            }
+        }
+    }
+
+    private var showsInitialLoader: Bool {
+        guard scope.isRemote,
+              !normalizedQuery.isEmpty,
+              let searchStore,
+              searchStore.state == .loading
+        else { return false }
+        return remoteResultCount(searchStore) == 0
+    }
+
+    private func showsEmpty(localResults: [Conversation]) -> Bool {
+        guard !normalizedQuery.isEmpty else { return false }
+        if !scope.isRemote { return localResults.isEmpty }
+        guard let searchStore, searchStore.state == .loaded else { return false }
+        return remoteResultCount(searchStore) == 0
+    }
+
+    private func remoteResultCount(_ searchStore: GlobalSearchStore) -> Int {
+        switch scope {
+        case .people: searchStore.people.count
+        case .messages: searchStore.messages.count
+        case .media: searchStore.files.count
+        case .chats, .channels: 0
+        }
+    }
+
+    private var searchFooter: String {
+        switch scope {
+        case .chats, .channels:
+            "Поиск по уже синхронизированным чатам этого сеанса."
+        case .people:
+            "Сервер показывает только принятые контакты без статуса присутствия."
+        case .messages:
+            "\(searchGate.state.label): сервер ищет только доступные вам сообщения. Beta-0.1 не использует E2EE."
+        case .media:
+            "\(searchGate.state.label): результаты доступны только в разрешённых вам чатах; файлы могут иметь статус «не проверен»."
+        }
     }
 }
 
 private struct PhoneSearchBottomBar: View {
     @Binding var query: String
-    @Binding var scope: String
+    @Binding var scope: GlobalSearchScope
     let close: () -> Void
 
     var body: some View {
@@ -3844,18 +4010,16 @@ private struct PhoneSearchBottomBar: View {
 }
 
 private struct PhoneSearchScopeRail: View {
-    @Binding var selection: String
-
-    private let scopes = ["Чаты", "Каналы", "Люди", "Медиа"]
+    @Binding var selection: GlobalSearchScope
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 4) {
-                ForEach(scopes, id: \.self) { scope in
+                ForEach(GlobalSearchScope.allCases) { scope in
                     Button {
                         selection = scope
                     } label: {
-                        Text(scope)
+                        Text(scope.rawValue)
                             .font(.subheadline.weight(selection == scope ? .semibold : .regular))
                             .lineLimit(1)
                             .padding(.horizontal, 18)
@@ -3869,7 +4033,7 @@ private struct PhoneSearchScopeRail: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(selection == scope ? Color.primary : Color.secondary)
                     .accessibilityAddTraits(selection == scope ? .isSelected : [])
-                    .accessibilityIdentifier("search-scope-\(scope)")
+                    .accessibilityIdentifier("search-scope-\(scope.rawValue)")
                 }
             }
             .padding(3)
@@ -3903,6 +4067,108 @@ private struct PhoneSearchResultRow: View {
         }
         .frame(minHeight: 50)
         .contentShape(Rectangle())
+    }
+}
+
+private struct PhoneParticipantSearchResultRow: View {
+    let participant: Participant
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AvatarView(participant: participant, size: 44)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(participant.displayName)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text("@\(participant.username)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct PhoneMessageSearchResultRow: View {
+    let result: GlobalMessageSearchResult
+    let conversationTitle: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            AvatarView(participant: result.sender, size: 44)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(conversationTitle ?? result.sender.displayName)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(result.createdAt, style: .time)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(result.sender.displayName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(LuxoraTheme.iris)
+                    .lineLimit(1)
+                Text(result.text)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct PhoneFileSearchResultRow: View {
+    let result: GlobalFileSearchResult
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(LuxoraTheme.iris.gradient, in: RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.fileName)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                Text("\(result.formattedSize) · \(result.mimeType)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if result.safetyStatus == "unscanned" {
+                    Label("Файл не проверен", systemImage: "exclamationmark.shield.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 56)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+
+    private var symbol: String {
+        switch result.kind {
+        case "image": "photo.fill"
+        case "video", "video_message": "video.fill"
+        case "audio", "voice": "waveform"
+        default: "doc.fill"
+        }
     }
 }
 

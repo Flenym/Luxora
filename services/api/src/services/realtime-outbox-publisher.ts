@@ -221,8 +221,9 @@ export class RealtimeOutboxPublisher implements EventPublisher {
             // its lease expires and another at-least-once attempt recovers it.
           }
         }
-
-        if (claimed.length < this.#batchSize) break;
+        // A per-audience head may expose its successor only after this batch
+        // is acknowledged. Continue the bounded loop even after a short claim;
+        // an empty claim above remains the no-work/busy-loop stop condition.
       }
     } catch (error) {
       this.#failure({ stage: "claim", error });

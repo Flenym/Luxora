@@ -366,22 +366,29 @@ export class RealtimeHub implements EventPublisher {
       case "safety.report.submitted":
         return true;
       case "chat.member.changed": {
-        const currentMembership = this.store.getChatMember(
-          event.membership.chatId,
-          audienceUserId
-        );
         if (event.audience === "removed_account") {
           return event.change === "removed" &&
-            event.membership.userId === audienceUserId &&
-            currentMembership === null;
+            event.membership.userId === audienceUserId;
         }
-        return currentMembership !== null;
+        return this.store.getChatMember(event.membership.chatId, audienceUserId) !== null;
       }
       case "chat.preferences.updated":
         return event.accountId === audienceUserId &&
           this.store.getChatMember(event.chatId, audienceUserId) !== null;
       case "chat.folders.updated":
         return event.accountId === audienceUserId;
+      case "chat.draft.changed": {
+        if (event.accountId !== audienceUserId) return false;
+        if (event.draft === null) return true;
+        if (this.store.getChatMember(event.chatId, audienceUserId) === null) return false;
+        const currentDraft = this.store.getChatDraft(audienceUserId, event.chatId);
+        return currentDraft !== null &&
+          currentDraft.deletedAt === null &&
+          currentDraft.revision === event.revision &&
+          currentDraft.updatedAt === event.changedAt &&
+          currentDraft.text === event.draft.text &&
+          currentDraft.replyToMessageId === event.draft.replyToMessageId;
+      }
       case "sync.invalidated":
         return event.accountId === audienceUserId;
     }
@@ -426,6 +433,7 @@ export class RealtimeHub implements EventPublisher {
       case "chat.member.changed": return event.membership.chatId;
       case "chat.preferences.updated": return event.chatId;
       case "chat.folders.updated": return null;
+      case "chat.draft.changed": return event.chatId;
       case "sync.invalidated": return null;
       case "attachment.stored":
       case "relationship.request.created":

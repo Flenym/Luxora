@@ -625,9 +625,52 @@ actor LuxoraAPIClient {
     }
 
     func searchUsers(query: String, token: String) async throws -> [APIUser] {
-        guard let encoded = Self.encodedQueryValue(query) else { return [] }
-        let response: APIList<APIUser> = try await request(path: "/v1/users/search?q=\(encoded)&limit=30", token: token)
-        return response.items
+        (try await searchUsersPage(query: query, cursor: nil, token: token)).items
+    }
+
+    func searchUsersPage(
+        query: String,
+        cursor: String?,
+        limit: Int = 30,
+        token: String
+    ) async throws -> APIList<APIUser> {
+        let path = try Self.searchPath(
+            base: "/v1/users/search",
+            query: query,
+            cursor: cursor,
+            limit: limit
+        )
+        return try await request(path: path, token: token)
+    }
+
+    func searchMessagesPage(
+        query: String,
+        cursor: String?,
+        limit: Int = 30,
+        token: String
+    ) async throws -> APIList<APIMessage> {
+        let path = try Self.searchPath(
+            base: "/v1/search/messages",
+            query: query,
+            cursor: cursor,
+            limit: limit
+        )
+        return try await request(path: path, token: token)
+    }
+
+    func searchFilesPage(
+        query: String,
+        cursor: String?,
+        limit: Int = 30,
+        token: String
+    ) async throws -> APIList<APISearchAttachment> {
+        let path = try Self.searchPath(
+            base: "/v1/search/files",
+            query: query,
+            cursor: cursor,
+            limit: limit
+        )
+        return try await request(path: path, token: token)
     }
 
     func lookupUser(username: String, token: String) async throws -> APIPublicProfile? {
@@ -826,6 +869,107 @@ actor LuxoraAPIClient {
         }
     }
 
+    /// Draft requests use an isolated error boundary so hostile server text is
+    /// never retained by errors surfaced to the composer or diagnostics.
+    func requestChatDraft<Response: Decodable & Sendable>(
+        path: String,
+        token: String
+    ) async throws -> Response {
+        guard let url = URL(string: path, relativeTo: configuration.apiBaseURL) else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return try await performChatDraftRequest(request, recognizesRateLimit: false)
+    }
+
+    /// Chat draft mutations retain scoped 429 metadata so the in-memory draft
+    /// store can retry the same nonce after a bounded server-directed delay.
+    /// Every other server rejection is reduced to status plus a known-safe
+    /// code; neither response text nor request body/token material survives.
+    func requestChatDraftMutation<Response: Decodable & Sendable, Body: Encodable & Sendable>(
+        path: String,
+        method: String,
+        body: Body,
+        token: String
+    ) async throws -> Response {
+        guard let url = URL(string: path, relativeTo: configuration.apiBaseURL) else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try encoder.encode(body)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        return try await performChatDraftRequest(request, recognizesRateLimit: true)
+    }
+
+    private func performChatDraftRequest<Response: Decodable & Sendable>(
+        _ request: URLRequest,
+        recognizesRateLimit: Bool
+    ) async throws -> Response {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw Self.transportError(error)
+        }
+        guard let http = response as? HTTPURLResponse,
+              Self.sameOrigin(http.url, configuration.apiBaseURL)
+        else { throw LuxoraAPIError.invalidResponse }
+        guard 200..<300 ~= http.statusCode else {
+            let envelope = try? decoder.decode(APIChatDraftErrorEnvelope.self, from: data)
+            if recognizesRateLimit, http.statusCode == 429 {
+                throw ChatDraftRateLimitError(
+                    headerValue: http.value(forHTTPHeaderField: "Retry-After"),
+                    detailValue: envelope?.error.details?.retryAfterSeconds
+                )
+            }
+            throw Self.sanitizedChatDraftServerError(
+                status: http.statusCode,
+                proposedCode: envelope?.error.code
+            )
+        }
+        do {
+            return try decoder.decode(Response.self, from: data)
+        } catch {
+            throw LuxoraAPIError.invalidResponse
+        }
+    }
+
+    private static func sanitizedChatDraftServerError(
+        status: Int,
+        proposedCode: String?
+    ) -> LuxoraAPIError {
+        let safeCode: String
+        switch proposedCode {
+        case "BAD_REQUEST",
+             "UNAUTHENTICATED",
+             "FORBIDDEN",
+             "NOT_FOUND",
+             "CONFLICT",
+             "RATE_LIMITED",
+             "VALIDATION_FAILED",
+             "INTERNAL_ERROR",
+             "SERVICE_UNAVAILABLE":
+            safeCode = proposedCode ?? "HTTP_\(status)"
+        default:
+            safeCode = "HTTP_\(status)"
+        }
+        return LuxoraAPIError.server(
+            status: status,
+            code: safeCode,
+            message: LuxoraL10n.text("error.server_request_failed")
+        )
+    }
+
     private func requestWithoutResponse(
         path: String,
         method: String,
@@ -948,6 +1092,28 @@ actor LuxoraAPIClient {
         var allowed = CharacterSet.urlQueryAllowed
         allowed.remove(charactersIn: "&=+?#")
         return value.addingPercentEncoding(withAllowedCharacters: allowed)
+    }
+
+    private static func searchPath(
+        base: String,
+        query: String,
+        cursor: String?,
+        limit: Int
+    ) throws -> String {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              (1...100).contains(limit),
+              let encodedQuery = encodedQueryValue(normalized)
+        else { throw LuxoraAPIError.invalidResponse }
+
+        var path = "\(base)?q=\(encodedQuery)&limit=\(limit)"
+        if let cursor {
+            guard !cursor.isEmpty, let encodedCursor = encodedQueryValue(cursor) else {
+                throw LuxoraAPIError.invalidResponse
+            }
+            path += "&cursor=\(encodedCursor)"
+        }
+        return path
     }
 }
 

@@ -13,7 +13,8 @@ enum ScopedReconciliationPublisher {
         communityStore: CommunityStore,
         preferencesStore: ChatPreferencesStore,
         foldersStore: ChatFoldersStore,
-        foldersBinding: ChatFoldersSessionBinding
+        foldersBinding: ChatFoldersSessionBinding,
+        beforeCommit: @MainActor () -> Void = {}
     ) throws {
         try messengerStore.validateReconciliation(bundle, currentUserID: currentUserID)
         try communityStore.validateReconciliation(bundle, currentUserID: currentUserID)
@@ -21,6 +22,9 @@ enum ScopedReconciliationPublisher {
 
         // The methods below only commit the projections validated above. There
         // is deliberately no suspension point in this MainActor transaction.
+        // Draft recovery uses this hook so its destructive privacy fences run
+        // only after every throwing preflight has succeeded.
+        beforeCommit()
         try messengerStore.applyReconciliation(bundle, currentUserID: currentUserID)
         try communityStore.applyReconciliation(bundle, currentUserID: currentUserID)
         preferencesStore.replaceConfirmed(

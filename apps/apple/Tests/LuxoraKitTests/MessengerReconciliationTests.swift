@@ -195,6 +195,421 @@ final class MessengerReconciliationTests: XCTestCase {
         )
     }
 
+    func testReconciliationPurgesSelectedAndOrphanComposerDraftPrivacyState() throws {
+        let store = LuxoraDesignFixtures.makeStore()
+        let selectedChatID = try XCTUnwrap(store.selectedConversationID)
+        let orphanChatID = UUID()
+        let drafts = SynchronizedChatDraftStore()
+        drafts.configureRemote(
+            accountID: store.currentUser.id,
+            sessionID: UUID(),
+            loader: { _ in throw LuxoraAPIError.invalidResponse },
+            putter: { _, _ in throw LuxoraAPIError.invalidResponse },
+            deleter: { _, _ in throw LuxoraAPIError.invalidResponse }
+        )
+        store.configureSynchronizedDrafts(drafts)
+        store.draft = "selected reconciliation secret"
+        store.composerDraftsByConversation[orphanChatID] = "orphan reconciliation secret"
+        store.unresolvedReplyIDsByConversation[orphanChatID] = UUID()
+        _ = drafts.setLocalDraft(
+            for: orphanChatID,
+            text: "orphan reconciliation secret"
+        )
+        let bundle = LuxoraReconciliationBundle(
+            boundary: Self.boundary(),
+            currentUser: Self.apiUser(
+                id: store.currentUser.id,
+                username: store.currentUser.username,
+                displayName: store.currentUser.displayName
+            ),
+            incomingRequests: [],
+            outgoingRequests: [],
+            blocks: [],
+            chats: [],
+            attachments: [],
+            safetyReports: [],
+            chatFolders: ChatFolderListSnapshot(folders: [], stateRevision: 0)
+        )
+
+        try store.applyReconciliation(bundle, currentUserID: store.currentUser.id)
+
+        XCTAssertNil(store.selectedConversationID)
+        XCTAssertEqual(store.draft, "")
+        XCTAssertNil(store.composerDraftsByConversation[selectedChatID])
+        XCTAssertNil(store.composerDraftsByConversation[orphanChatID])
+        XCTAssertNil(store.unresolvedReplyIDsByConversation[orphanChatID])
+        XCTAssertEqual(drafts.localDraft(for: selectedChatID), .empty)
+        XCTAssertEqual(drafts.localDraft(for: orphanChatID), .empty)
+    }
+
+    func testRealReconciliationPreservesRetainedEditAndConflictSafeExpectedRevision() async throws {
+        let store = LuxoraDesignFixtures.makeStore()
+        let chatID = try XCTUnwrap(store.selectedConversationID)
+        let conversation = try XCTUnwrap(store.selectedConversation)
+        let outgoing = try XCTUnwrap(store.selectedMessages.first(where: \.isOutgoing))
+        let originalRevision = store.metadata(for: outgoing.id).revision
+        let participant = store.currentUser
+        store.configureRemote(
+            sender: { _, _, _ in throw LuxoraAPIError.invalidResponse },
+            loader: { _ in [] },
+            messageEditor: { messageID, body, revision in
+                RemoteMessageSnapshot(
+                    message: ChatMessage(
+                        id: messageID,
+                        conversationID: chatID,
+                        author: participant,
+                        text: body,
+                        sentAt: .now,
+                        delivery: .sent,
+                        isOutgoing: true
+                    ),
+                    metadata: MessageRemoteMetadata(revision: (revision ?? 0) + 1)
+                )
+            }
+        )
+        let draftLoader = ReconciliationDraftLoader(
+            state: SynchronizedChatDraftState(
+                draft: SynchronizedChatDraft(
+                    chatID: chatID,
+                    content: .init(text: "old underlying draft"),
+                    revision: 1,
+                    updatedAt: .now
+                ),
+                revision: 1
+            )
+        )
+        let drafts = SynchronizedChatDraftStore()
+        drafts.configureRemote(
+            accountID: participant.id,
+            sessionID: UUID(),
+            loader: { _ in await draftLoader.load() },
+            putter: { _, _ in throw LuxoraAPIError.invalidResponse },
+            deleter: { _, _ in throw LuxoraAPIError.invalidResponse }
+        )
+        store.configureSynchronizedDrafts(drafts)
+        await store.loadSynchronizedDraft(for: chatID)
+        store.beginEditing(outgoing)
+        store.draft = "unsaved edit across gap"
+        let plan = drafts.prepareForRecovery(retainedChatIDs: [chatID])
+        let now = Date()
+        let apiMessage = APIMessage(
+            id: outgoing.id,
+            chatId: chatID,
+            sender: Self.apiUser(
+                id: participant.id,
+                username: participant.username,
+                displayName: participant.displayName
+            ),
+            kind: "text",
+            body: "authoritative server body",
+            replyToMessageId: nil,
+            topicId: nil,
+            forwardedFrom: nil,
+            isPinned: false,
+            clientNonce: outgoing.clientID,
+            revision: 8,
+            createdAt: outgoing.sentAt,
+            updatedAt: now,
+            editedAt: now,
+            deletedAt: nil
+        )
+        let bundle = LuxoraReconciliationBundle(
+            boundary: Self.boundary(),
+            currentUser: Self.apiUser(
+                id: participant.id,
+                username: participant.username,
+                displayName: participant.displayName
+            ),
+            incomingRequests: [],
+            outgoingRequests: [],
+            blocks: [],
+            chats: [
+                ReconciliationChatState(
+                    chat: APIChat(
+                        id: chatID,
+                        kind: "direct",
+                        title: conversation.title,
+                        avatarUrl: nil,
+                        role: "member",
+                        memberCount: 2,
+                        lastMessage: apiMessage,
+                        lastActivityAt: now,
+                        createdAt: now,
+                        unreadCount: 0,
+                        archivedAt: nil,
+                        mutedUntil: nil
+                    ),
+                    members: [],
+                    messages: [
+                        ReconciliationMessageState(
+                            message: apiMessage,
+                            reactions: [],
+                            receipts: []
+                        ),
+                    ],
+                    pins: [],
+                    topics: []
+                ),
+            ],
+            attachments: [],
+            safetyReports: [],
+            chatFolders: ChatFolderListSnapshot(folders: [], stateRevision: 0)
+        )
+
+        try store.applyReconciliation(bundle, currentUserID: participant.id)
+        store.applySynchronizedDraftRecoveryInvalidation(plan)
+
+        XCTAssertEqual(store.draft, "unsaved edit across gap")
+        guard case let .edit(target) = store.composerMode else {
+            return XCTFail("Retained authoritative message must keep edit mode")
+        }
+        XCTAssertEqual(target.id, outgoing.id)
+        XCTAssertEqual(target.revision, originalRevision)
+        XCTAssertTrue(store.synchronizedDraftStore === drafts)
+        XCTAssertEqual(drafts.mutationState(for: chatID), .idle)
+        XCTAssertEqual(drafts.loadState(for: chatID), .idle)
+        XCTAssertEqual(store.draft, "unsaved edit across gap")
+        XCTAssertEqual(store.draftBeforeEditing, "")
+        store.cancelComposerMode()
+        XCTAssertEqual(store.draft, "")
+    }
+
+    func testMissedRemoveAndReaddLifecycleHardPurgesDirtyDraftBeforeFreshGET() async throws {
+        let chatID = UUID()
+        let store = Self.draftLifecycleMessenger(chatID: chatID)
+        let accountID = store.currentUser.id
+        let oldJoinedAt = Date(timeIntervalSince1970: 1_786_000_000)
+        let oldMembership = RealtimeChatMembershipEvent(
+            audience: .memberAccount,
+            change: .roleUpdated,
+            membership: APIChatMembership(
+                chatId: chatID,
+                userId: accountID,
+                role: "member",
+                revision: 4,
+                joinedAt: oldJoinedAt,
+                updatedAt: oldJoinedAt.addingTimeInterval(60)
+            ),
+            actorUserID: accountID,
+            changedAt: oldJoinedAt.addingTimeInterval(60)
+        )
+        XCTAssertFalse(
+            store.applyRealtimeMembership(
+                oldMembership,
+                currentUserID: accountID,
+                causalSequence: 4
+            )
+        )
+
+        let loader = ReconciliationDraftLoader(
+            state: Self.draftState(chatID: chatID, text: "old server draft", revision: 4)
+        )
+        let putter = ReconciliationDraftPutter()
+        let drafts = SynchronizedChatDraftStore()
+        drafts.configureRemote(
+            accountID: accountID,
+            sessionID: UUID(),
+            loader: { _ in await loader.load() },
+            putter: { chatID, command in
+                await putter.put(chatID: chatID, command: command)
+            },
+            deleter: { _, _ in throw LuxoraAPIError.invalidResponse }
+        )
+        store.configureSynchronizedDrafts(drafts)
+        await store.loadSynchronizedDraft(for: chatID)
+        store.draft = "private text from the removed membership"
+        drafts.cancelScheduledPersist(for: chatID)
+        XCTAssertTrue(drafts.dirtyChatIDs.contains(chatID))
+
+        let newJoinedAt = oldJoinedAt.addingTimeInterval(3_600)
+        let bundle = Self.retainedChatBundle(
+            store: store,
+            chatID: chatID,
+            membership: APIChatMembership(
+                chatId: chatID,
+                userId: accountID,
+                role: "member",
+                revision: 1,
+                joinedAt: newJoinedAt,
+                updatedAt: newJoinedAt
+            )
+        )
+        let lifecycleResets = store.synchronizedDraftLifecycleResetChatIDs(
+            in: bundle,
+            currentUserID: accountID
+        )
+        XCTAssertEqual(lifecycleResets, [chatID])
+        let plan = drafts.prepareForRecovery(
+            retainedChatIDs: [chatID],
+            lifecycleResetChatIDs: lifecycleResets
+        )
+
+        try store.applyReconciliation(bundle, currentUserID: accountID)
+        store.applySynchronizedDraftRecoveryInvalidation(plan)
+
+        XCTAssertEqual(plan.lifecycleResetChatIDs, [chatID])
+        XCTAssertFalse(plan.dirtyPreservedChatIDs.contains(chatID))
+        XCTAssertEqual(store.draft, "")
+        XCTAssertNil(store.composerDraftsByConversation[chatID])
+        XCTAssertEqual(drafts.localDraft(for: chatID), .empty)
+        XCTAssertFalse(drafts.dirtyChatIDs.contains(chatID))
+
+        await loader.replace(Self.draftState(chatID: chatID, text: nil, revision: 5))
+        let refreshed = await drafts.refresh(chatID, force: true)
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertTrue(refreshed)
+        XCTAssertEqual(drafts.confirmedState(for: chatID)?.revision, 5)
+        let putCount = await putter.count
+        XCTAssertEqual(putCount, 0, "Pre-removal private text must never be PUT")
+    }
+
+    func testSameMembershipLifetimeRoleChangePreservesDirtyDraftForCASRebase() async throws {
+        let chatID = UUID()
+        let store = Self.draftLifecycleMessenger(chatID: chatID)
+        let accountID = store.currentUser.id
+        let joinedAt = Date(timeIntervalSince1970: 1_786_000_000)
+        XCTAssertFalse(
+            store.applyRealtimeMembership(
+                RealtimeChatMembershipEvent(
+                    audience: .memberAccount,
+                    change: .roleUpdated,
+                    membership: APIChatMembership(
+                        chatId: chatID,
+                        userId: accountID,
+                        role: "member",
+                        revision: 4,
+                        joinedAt: joinedAt,
+                        updatedAt: joinedAt.addingTimeInterval(60)
+                    ),
+                    actorUserID: accountID,
+                    changedAt: joinedAt.addingTimeInterval(60)
+                ),
+                currentUserID: accountID,
+                causalSequence: 4
+            )
+        )
+
+        let loader = ReconciliationDraftLoader(
+            state: Self.draftState(chatID: chatID, text: "old server draft", revision: 4)
+        )
+        let putter = ReconciliationDraftPutter()
+        let drafts = SynchronizedChatDraftStore()
+        drafts.configureRemote(
+            accountID: accountID,
+            sessionID: UUID(),
+            loader: { _ in await loader.load() },
+            putter: { chatID, command in
+                await putter.put(chatID: chatID, command: command)
+            },
+            deleter: { _, _ in throw LuxoraAPIError.invalidResponse }
+        )
+        store.configureSynchronizedDrafts(drafts)
+        await store.loadSynchronizedDraft(for: chatID)
+        store.draft = "dirty text survives role update"
+        drafts.cancelScheduledPersist(for: chatID)
+
+        let bundle = Self.retainedChatBundle(
+            store: store,
+            chatID: chatID,
+            membership: APIChatMembership(
+                chatId: chatID,
+                userId: accountID,
+                role: "admin",
+                revision: 5,
+                joinedAt: joinedAt,
+                updatedAt: joinedAt.addingTimeInterval(120)
+            )
+        )
+        let lifecycleResets = store.synchronizedDraftLifecycleResetChatIDs(
+            in: bundle,
+            currentUserID: accountID
+        )
+        XCTAssertTrue(lifecycleResets.isEmpty)
+        let plan = drafts.prepareForRecovery(
+            retainedChatIDs: [chatID],
+            lifecycleResetChatIDs: lifecycleResets
+        )
+        try store.applyReconciliation(bundle, currentUserID: accountID)
+        store.applySynchronizedDraftRecoveryInvalidation(plan)
+
+        XCTAssertEqual(plan.dirtyPreservedChatIDs, [chatID])
+        XCTAssertEqual(store.draft, "dirty text survives role update")
+        XCTAssertEqual(drafts.localDraft(for: chatID).text, "dirty text survives role update")
+
+        await loader.replace(Self.draftState(chatID: chatID, text: "remote moved", revision: 7))
+        let refreshed = await drafts.refresh(chatID, force: true)
+        XCTAssertTrue(refreshed)
+        drafts.cancelScheduledPersist(for: chatID)
+        let persisted = await drafts.persist(chatID)
+        XCTAssertTrue(persisted)
+        let commands = await putter.commands
+        XCTAssertEqual(commands.map(\.content.text), ["dirty text survives role update"])
+        XCTAssertEqual(commands.map(\.expectedRevision), [7])
+    }
+
+    func testLifecycleResetHardScrubsLocalComposerWhenServerDraftFeatureIsOff() throws {
+        let chatID = UUID()
+        let store = Self.draftLifecycleMessenger(chatID: chatID)
+        let outgoing = try XCTUnwrap(store.selectedMessages.first(where: \.isOutgoing))
+        let accountID = store.currentUser.id
+        let oldJoinedAt = Date(timeIntervalSince1970: 1_786_000_000)
+        XCTAssertNil(store.synchronizedDraftStore)
+        XCTAssertFalse(
+            store.applyRealtimeMembership(
+                RealtimeChatMembershipEvent(
+                    audience: .memberAccount,
+                    change: .roleUpdated,
+                    membership: APIChatMembership(
+                        chatId: chatID,
+                        userId: accountID,
+                        role: "member",
+                        revision: 3,
+                        joinedAt: oldJoinedAt,
+                        updatedAt: oldJoinedAt.addingTimeInterval(60)
+                    ),
+                    actorUserID: accountID,
+                    changedAt: oldJoinedAt.addingTimeInterval(60)
+                ),
+                currentUserID: accountID,
+                causalSequence: 3
+            )
+        )
+        store.draft = "local private draft"
+        store.beginEditing(outgoing)
+        store.draft = "unsaved edit body"
+        XCTAssertEqual(store.draftBeforeEditing, "local private draft")
+
+        let newJoinedAt = oldJoinedAt.addingTimeInterval(3_600)
+        let bundle = Self.retainedChatBundle(
+            store: store,
+            chatID: chatID,
+            membership: APIChatMembership(
+                chatId: chatID,
+                userId: accountID,
+                role: "member",
+                revision: 1,
+                joinedAt: newJoinedAt,
+                updatedAt: newJoinedAt
+            )
+        )
+        let lifecycleResets = store.synchronizedDraftLifecycleResetChatIDs(
+            in: bundle,
+            currentUserID: accountID
+        )
+        XCTAssertEqual(lifecycleResets, [chatID])
+
+        try store.applyReconciliation(bundle, currentUserID: accountID)
+        store.applyComposerLifecycleReset(chatIDs: lifecycleResets)
+
+        XCTAssertEqual(store.draft, "")
+        XCTAssertEqual(store.composerMode, .new)
+        XCTAssertEqual(store.draftBeforeEditing, "")
+        XCTAssertEqual(store.composerModeBeforeEditing, .new)
+        XCTAssertNil(store.composerDraftsByConversation[chatID])
+        XCTAssertNil(store.composerModesByConversation[chatID])
+        XCTAssertNil(store.unresolvedReplyIDsByConversation[chatID])
+    }
+
     func testDelayedAccountAReconciliationCannotMutateReplacementAccountBStore() {
         let accountA = Self.apiUser(
             id: UUID(),
@@ -315,6 +730,168 @@ final class MessengerReconciliationTests: XCTestCase {
             cursor: "luxora-rt1.\(String(repeating: "a", count: 40)).\(String(repeating: "b", count: 40))",
             capturedAt: Date(timeIntervalSince1970: 1_786_435_200),
             cursorExpiresAt: Date(timeIntervalSince1970: 1_787_040_000)
+        )
+    }
+
+    private static func retainedChatBundle(
+        store: MessengerStore,
+        chatID: UUID,
+        membership: APIChatMembership
+    ) -> LuxoraReconciliationBundle {
+        let now = membership.updatedAt
+        let title = store.conversations.first(where: { $0.id == chatID })?.title ?? "Чат"
+        let user = apiUser(
+            id: store.currentUser.id,
+            username: store.currentUser.username,
+            displayName: store.currentUser.displayName
+        )
+        return LuxoraReconciliationBundle(
+            boundary: boundary(),
+            currentUser: user,
+            incomingRequests: [],
+            outgoingRequests: [],
+            blocks: [],
+            chats: [
+                ReconciliationChatState(
+                    chat: APIChat(
+                        id: chatID,
+                        kind: "direct",
+                        title: title,
+                        avatarUrl: nil,
+                        role: membership.role,
+                        memberCount: 1,
+                        lastMessage: nil,
+                        lastActivityAt: now,
+                        createdAt: membership.joinedAt,
+                        unreadCount: 0,
+                        archivedAt: nil,
+                        mutedUntil: nil
+                    ),
+                    members: [APIChatMember(membership: membership, user: user)],
+                    messages: [],
+                    pins: [],
+                    topics: []
+                ),
+            ],
+            attachments: [],
+            safetyReports: [],
+            chatFolders: ChatFolderListSnapshot(folders: [], stateRevision: 0)
+        )
+    }
+
+    private static func draftState(
+        chatID: UUID,
+        text: String?,
+        revision: Int
+    ) -> SynchronizedChatDraftState {
+        SynchronizedChatDraftState(
+            draft: text.map {
+                SynchronizedChatDraft(
+                    chatID: chatID,
+                    content: .init(text: $0),
+                    revision: revision,
+                    updatedAt: Date(timeIntervalSince1970: 1_786_435_200)
+                )
+            },
+            revision: revision
+        )
+    }
+
+    private static func draftLifecycleMessenger(chatID: UUID) -> MessengerStore {
+        let participant = apiUser(
+            id: UUID(),
+            username: "draft_owner",
+            displayName: "Владелец"
+        ).participant
+        let message = ChatMessage(
+            id: UUID(),
+            conversationID: chatID,
+            author: participant,
+            text: "Исходящее сообщение",
+            sentAt: Date(timeIntervalSince1970: 1_786_435_200),
+            delivery: .sent,
+            isOutgoing: true
+        )
+        let conversation = Conversation(
+            id: chatID,
+            title: "Приватный чат",
+            subtitle: message.text,
+            kind: .direct,
+            avatar: participant,
+            memberCount: 1,
+            unreadCount: 0,
+            isMuted: false,
+            isPinned: false,
+            isTyping: false,
+            isArchived: false,
+            lastActivity: message.sentAt,
+            folder: "personal",
+            serverRole: "member"
+        )
+        let store = MessengerStore(
+            conversations: [conversation],
+            messagesByConversation: [chatID: [message]],
+            currentUser: participant,
+            selectedConversationID: chatID,
+            loadedConversationIDs: [chatID]
+        )
+        store.configureRemote(
+            sender: { _, _, _ in throw LuxoraAPIError.invalidResponse },
+            loader: { _ in [message] },
+            messageEditor: { messageID, body, revision in
+                RemoteMessageSnapshot(
+                    message: ChatMessage(
+                        id: messageID,
+                        conversationID: chatID,
+                        author: participant,
+                        text: body,
+                        sentAt: message.sentAt,
+                        delivery: .sent,
+                        isOutgoing: true
+                    ),
+                    metadata: MessageRemoteMetadata(revision: (revision ?? 0) + 1)
+                )
+            }
+        )
+        store.connectionState = .online
+        return store
+    }
+}
+
+private actor ReconciliationDraftLoader {
+    private var state: SynchronizedChatDraftState
+
+    init(state: SynchronizedChatDraftState) { self.state = state }
+
+    func load() -> SynchronizedChatDraftState { state }
+
+    func replace(_ state: SynchronizedChatDraftState) {
+        self.state = state
+    }
+}
+
+private actor ReconciliationDraftPutter {
+    private(set) var commands: [ChatDraftPutCommand] = []
+
+    var count: Int { commands.count }
+
+    func put(
+        chatID: UUID,
+        command: ChatDraftPutCommand
+    ) -> ChatDraftMutationResult {
+        commands.append(command)
+        let nextRevision = command.expectedRevision + 1
+        return ChatDraftMutationResult(
+            state: SynchronizedChatDraftState(
+                draft: SynchronizedChatDraft(
+                    chatID: chatID,
+                    content: command.content,
+                    revision: nextRevision,
+                    updatedAt: Date(timeIntervalSince1970: 1_786_435_200)
+                ),
+                revision: nextRevision
+            ),
+            replayed: false
         )
     }
 }

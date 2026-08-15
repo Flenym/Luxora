@@ -27,6 +27,8 @@ import type {
   ClaimedRealtimeOutboxEvent,
   ChatMemberRecord,
   ChatFolderCommandReceiptRecord,
+  ChatDraftCommandReceiptRecord,
+  ChatDraftRecord,
   ChatFolderRecord,
   ChatFolderRulesRecord,
   ChatFolderOverrideRecord,
@@ -853,6 +855,38 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   getOldestChatFolderCommandReceiptExpiry(userId: string, at: string): string | null;
   deleteExpiredChatFolderCommandReceipt(userId: string, clientNonce: string, at: string): boolean;
   purgeExpiredChatFolderCommandReceipts(at: string, limit: number): number;
+  getChatDraft(userId: string, chatId: string): ChatDraftRecord | null;
+  putChatDraft(
+    userId: string,
+    chatId: string,
+    input: {
+      text: string;
+      replyToMessageId: string | null;
+      expectedRevision: number;
+      updatedAt: string;
+    }
+  ): ChatDraftRecord | null;
+  deleteChatDraft(
+    userId: string,
+    chatId: string,
+    expectedRevision: number,
+    updatedAt: string
+  ): ChatDraftRecord | null;
+  tombstoneChatDraftForMembershipRemoval(
+    userId: string,
+    chatId: string,
+    updatedAt: string
+  ): ChatDraftRecord | null;
+  findChatDraftCommandReceipt(
+    userId: string,
+    clientNonce: string,
+    at: string
+  ): ChatDraftCommandReceiptRecord | null;
+  createChatDraftCommandReceipt(receipt: ChatDraftCommandReceiptRecord): void;
+  countActiveChatDraftCommandReceipts(userId: string, at: string): number;
+  getOldestChatDraftCommandReceiptExpiry(userId: string, at: string): string | null;
+  deleteExpiredChatDraftCommandReceipt(userId: string, clientNonce: string, at: string): boolean;
+  purgeExpiredChatDraftCommandReceipts(at: string, limit: number): number;
   listChats(userId: string, limit: number, cursor?: string): { items: Chat[]; nextCursor: string | null };
   listChatsForReconciliation(
     userId: string,

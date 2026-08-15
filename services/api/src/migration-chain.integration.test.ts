@@ -32,7 +32,8 @@ const MIGRATION_IDS = [
   "021_push_registration_preferences",
   "022_chat_folders",
   "023_chat_folder_receipt_retention",
-  "024_chat_membership_revision_ledger"
+  "024_chat_membership_revision_ledger",
+  "025_synchronized_chat_drafts"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";
@@ -333,7 +334,7 @@ function finalDeclaredTriggerNames(): string[] {
   return [...names].sort();
 }
 
-describe("SQLite migration chain 001-024", () => {
+describe("SQLite migration chain 001-025", () => {
   const temporaryDirectories: string[] = [];
   const workers: Worker[] = [];
 
@@ -459,6 +460,13 @@ describe("SQLite migration chain 001-024", () => {
     expect(migrations[23]!.sql).toMatch(/trg_chat_membership_revision_ledger_monotonic/u);
     expect(migrations[23]!.sql).toMatch(/DROP TRIGGER trg_chat_members_insert_invariants/u);
     expect(migrations[23]!.sql).toMatch(/DROP TRIGGER trg_chat_members_identity_immutable/u);
+    expect(migrations[24]!.sql).toMatch(/CREATE TABLE chat_drafts/u);
+    expect(migrations[24]!.sql).toMatch(/CREATE TABLE chat_draft_command_receipts/u);
+    expect(migrations[24]!.sql).toMatch(/trg_chat_drafts_update_invariants/u);
+    expect(migrations[24]!.sql).toMatch(
+      /trg_chat_draft_receipts_immutable_delete[\s\S]*EXISTS \(\s*SELECT 1 FROM chat_members\s*WHERE user_id = OLD\.user_id AND chat_id = OLD\.chat_id/u
+    );
+    expect(migrations[24]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
   });
 
   it("creates the complete clean schema once with declared tables, indexes, triggers and foreign keys", () => {

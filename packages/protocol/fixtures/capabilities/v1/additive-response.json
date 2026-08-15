@@ -28,6 +28,7 @@
     "reconciliation": true,
     "syncInvalidation": true,
     "chatFolders": true,
+    "drafts": true,
     "mediaUploads": true,
     "serverSearchConfigured": false,
     "calls": false,
@@ -37,6 +38,9 @@
   },
   "limits": {
     "maxMessageCodePoints": 10000,
+    "maxDraftCodePoints": 10000,
+    "chatDraftIdempotencyTtlSeconds": 86400,
+    "maxChatDraftActiveCommandReceipts": 2048,
     "maxMessageRequestCodePoints": 1000,
     "maxChatTitleLength": 120,
     "maxChatFolders": 10,
