@@ -222,7 +222,13 @@ final class ChatFolderMuteExpiryTests: XCTestCase {
         )
 
         XCTAssertTrue(folder.projectedConversations(messenger.conversations).isEmpty)
-        try await Task.sleep(for: .milliseconds(120))
+        // The local mute-expiry re-projection is wall-clock driven; poll instead
+        // of a fixed sleep so slow CI simulators cannot flake the deadline.
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if !(try XCTUnwrap(messenger.conversations.first)).isMuted { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertFalse(try XCTUnwrap(messenger.conversations.first).isMuted)
         XCTAssertEqual(folder.projectedConversations(messenger.conversations).map(\.id), [chatID])
     }
