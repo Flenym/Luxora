@@ -112,16 +112,11 @@ struct PhoneBindingStoreTests {
     @Test func resetClearsTheWholeFlow() async {
         let store = PhoneBindingStore()
         store.remoteVerify = { _, _ in
-            APIPhoneCodeVerificationResult.bindingVerified(
-                APIPhoneBindingVerified(
-                    bindingToken: "luxbt_\(String(repeating: "d", count: 43))",
-                    maskedPhone: "+7 ••• •••-77-88",
-                    expiresAt: Date(timeIntervalSince1970: 1_800_000_000)
-                )
-            )
+            throw LuxoraAPIError.transport("offline")
         }
-        #expect(await store.verify(code: "222222"))
-        store.failureMessage = "saved failure"
+        #expect(!(await store.verify(code: "222222")))
+        #expect(store.failureMessage != nil)
+
         store.reset()
 
         #expect(store.phase == .idle)
