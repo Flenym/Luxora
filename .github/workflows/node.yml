@@ -82,5 +82,11 @@ jobs:
         run: |
           npm --prefix apps/desktop ci --no-audit --no-fund
           npm --prefix apps/desktop run typecheck
+      - name: Install ripgrep for the release-truth validator
+        run: |
+          set -euo pipefail
+          sudo apt-get update --quiet
+          sudo apt-get install --yes --quiet ripgrep
+          rg --version | head --lines=1
       - name: Guard known release-truth regressions
         run: make check-truth
