@@ -37,7 +37,7 @@ jq --exit-status '
     and all($api.ports[]; .host_ip == "127.0.0.1")
     and ($api.healthcheck.test[0] == "CMD")
     and ($api.healthcheck.test[1] == "/nodejs/bin/node")
-    and ($prom.image == "prom/prometheus:v3.13.2-distroless@sha256:64f71bb84e03c855948418b0fc5dea53e9543d8e3fc9931598f583805507f05e")
+    and ($prom.image == "prom/prometheus:v3.14.0-distroless@sha256:50c707e96da5ade383cb1707790576480485e93de06aa60ad8802cb5f744bd0a")
     and ($prom.read_only == true)
     and ($prom.cap_drop == ["ALL"])
     and (($prom.security_opt | index("no-new-privileges:true")) != null)
