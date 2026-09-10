@@ -55,6 +55,10 @@ public final class PhoneBindingStore {
     }
 
     public func verify(code: String) async -> Bool {
+        guard let remoteVerify else {
+            failureMessage = "Проверка кода привязки на сервере не подключена."
+            return false
+        }
         guard let challenge else {
             failureMessage = "Сначала запросите код подтверждения."
             return false
@@ -67,12 +71,12 @@ public final class PhoneBindingStore {
 
         failureMessage = nil
         do {
-            let response = try await remoteVerify(challenge.challengeID, normalizedCode)
-            guard case let .bindingVerified(response) = result else {
+            let result = try await remoteVerify(challenge.challengeID, normalizedCode)
+            guard case let .bindingVerified(bindingResponse) = result else {
                 failureMessage = "Сервер ответил неожиданным статусом для привязки."
                 return false
             }
-            grant = PhoneBindingGrant(response: response)
+            grant = PhoneBindingGrant(response: bindingResponse)
             phase = .verified
             return true
         } catch is CancellationError {
@@ -84,6 +88,10 @@ public final class PhoneBindingStore {
     }
 
     public func complete() async -> Bool {
+        guard let remoteComplete else {
+            failureMessage = "Завершение привязки на сервере не подключено."
+            return false
+        }
         guard let grant else {
             failureMessage = "Привязка не подтверждена. Начните заново."
             return false
