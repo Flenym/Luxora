@@ -28,27 +28,11 @@ jobs:
         with:
           fail-on-severity: high
 
-  codeql:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: github/codeql-action/init@e60ea984bd3baa95954f2856bcf24f9eaba46637 # v3.37.5
-        with:
-          languages: javascript-typescript
-          queries: security-and-quality
-      - uses: github/codeql-action/analyze@e60ea984bd3baa95954f2856bcf24f9eaba46637 # v3.37.5
-        with:
-          # The private repository has no Advanced Security license, so SARIF
-          # upload is rejected. Keep the local query evaluation (extraction
-          # errors still fail the build) and skip the code-scanning upload.
-          upload: false
-
+  # CodeQL is suspended: the private repository has no Advanced Security
+  # license, so SARIF upload is rejected and the analyze step always fails on
+  # repository permissions. Trivy (vuln/secret/misconfig) below remains the
+  # active security gate. Re-enable this job if the repo gains Advanced
+  # Security or is made public.
   filesystem-and-image:
     runs-on: ubuntu-24.04
     timeout-minutes: 45

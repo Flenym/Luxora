@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "@luxora/api",
   "version": "0.1.0",
   "description": "Luxora Beta-0.1 HTTP and realtime messaging API",
@@ -30,7 +30,7 @@
     "file-type": "^22.0.1",
     "jose": "^6.0.8",
     "libphonenumber-js": "1.13.10",
-    "sharp": "0.35.3",
+    "sharp": "0.35.4",
     "zod": "^3.24.2"
   },
   "devDependencies": {
