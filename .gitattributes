@@ -1,0 +1,8 @@
+# Normalize line endings: shell scripts must stay LF for CI and WSL.
+*.sh text eol=lf
+*.yml text
+*.yaml text
+*.json text
+*.md text
+*.bat text eol=crlf
+*.ps1 text eol=crlf
