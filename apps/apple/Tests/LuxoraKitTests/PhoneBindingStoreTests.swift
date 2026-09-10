@@ -83,6 +83,16 @@ struct PhoneBindingStoreTests {
     @Test func completeCarriesAuthoritativePasswordStatus() async {
         let store = PhoneBindingStore()
         let bindingToken = "luxbt_\(String(repeating: "c", count: 43))"
+        store.remoteBegin = { _, _ in
+            APIPhoneCodeChallenge(
+                challengeId: "challenge-03",
+                maskedPhone: "+7 ••• •••-55-66",
+                expiresAt: Date(timeIntervalSince1970: 1_800_000_000),
+                retryAfterSeconds: 60
+            )
+        }
+        #expect(await store.begin(countryCode: "7", nationalNumber: "925005566"))
+
         store.remoteVerify = { _, _ in
             APIPhoneCodeVerificationResult.bindingVerified(
                 APIPhoneBindingVerified(
