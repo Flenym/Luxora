@@ -43,6 +43,11 @@ jobs:
           languages: javascript-typescript
           queries: security-and-quality
       - uses: github/codeql-action/analyze@e60ea984bd3baa95954f2856bcf24f9eaba46637 # v3.37.5
+        with:
+          # The private repository has no Advanced Security license, so SARIF
+          # upload is rejected. Keep the local query evaluation (extraction
+          # errors still fail the build) and skip the code-scanning upload.
+          upload: false
 
   filesystem-and-image:
     runs-on: ubuntu-24.04
@@ -64,6 +69,12 @@ jobs:
           printf '%s  %s\n' "$ACTIONLINT_SHA256" "$archive" | sha256sum --check
           tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -color
+      - name: Install ripgrep for infrastructure validation
+        run: |
+          set -euo pipefail
+          sudo apt-get update --quiet
+          sudo apt-get install --yes --quiet ripgrep
+          rg --version | head --lines=1
       - name: Validate local infrastructure definitions
         run: make check-truth compose-config calls-config compose-security-check prometheus-check
       - name: Smoke local calls infrastructure
