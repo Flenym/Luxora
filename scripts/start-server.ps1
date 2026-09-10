@@ -20,6 +20,17 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 
 Step-Message "Workspace: $root"
 
+# Free the port from any stale Luxora instance before starting.
+$listeners = Get-NetTCPConnection -LocalPort 2222 -State Listen -ErrorAction SilentlyContinue
+foreach ($listener in $listeners) {
+  $owner = $listener.OwningProcess
+  $ownerName = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
+  Step-Message "Port 2222 is held by PID $owner ($ownerName). Stopping the stale instance..."
+  Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
+}
+
+
 if (-not (Test-Path "packages\protocol\node_modules")) {
   Step-Message "Installing protocol dependencies..."
   cmd /c "npm --prefix packages/protocol ci --no-audit --no-fund"

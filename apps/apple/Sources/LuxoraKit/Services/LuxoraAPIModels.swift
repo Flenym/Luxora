@@ -11,10 +11,13 @@ public struct LuxoraClientConfiguration: Sendable {
 
     public static var development: LuxoraClientConfiguration {
         let environment = ProcessInfo.processInfo.environment
+        // The production Beta-0.1 tunnel is the default server for installed
+        // builds; local Docker/loopback previews stay available through the
+        // LUXORA_API_URL / LUXORA_REALTIME_URL overrides.
         let apiURL = environment["LUXORA_API_URL"].flatMap(URL.init(string:))
-            ?? URL(string: "http://127.0.0.1:8080")!
+            ?? URL(string: "https://luxora.cloudpub.ru")!
         let realtimeURL = environment["LUXORA_REALTIME_URL"].flatMap(URL.init(string:))
-            ?? URL(string: "ws://127.0.0.1:8080/v1/realtime")!
+            ?? URL(string: "wss://luxora.cloudpub.ru/v2/realtime")!
         return LuxoraClientConfiguration(apiBaseURL: apiURL, realtimeURL: realtimeURL)
     }
 

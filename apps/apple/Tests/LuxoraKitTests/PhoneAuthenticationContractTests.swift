@@ -330,7 +330,10 @@ final class PhoneAuthenticationContractTests: XCTestCase {
 
         let intent = PhoneRecoveryIntent(response: response)
         XCTAssertEqual(intent.recoveryToken, token)
-        XCTAssertEqual(intent.confirmAt, Date(timeIntervalSince1970: 1_760_111_700))
+        XCTAssertEqual(
+            intent.confirmAt,
+            ISO8601DateFormatter().date(from: "2026-09-10T12:05:00Z")
+        )
         XCTAssertTrue(intent.expiresAt > intent.confirmAt)
     }
 
