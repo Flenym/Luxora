@@ -1119,6 +1119,10 @@ public struct LuxoraPhoneAuthenticationScreen: View {
                 password = ""
                 revealsPassword = false
                 transition(to: .password)
+            case .bindingRequired:
+                // Binding challenges only originate from authenticated
+                // settings flows; onboarding surfaces a truthful error.
+                localMessage = LuxoraL10n.text("auth.recovery_unexpected_binding")
             }
         }
     }
@@ -1562,6 +1566,10 @@ private extension PhoneAuthenticationFailure {
             "auth-error-keychain"
         case .registrationExpired:
             "auth-error-registration-expired"
+        case .recoveryTokenExpired:
+            "auth-error-recovery-token-expired"
+        case .recoveryNotConfirmable:
+            "auth-error-recovery-not-confirmable"
         case .temporarilyUnavailable:
             "auth-error-temporary"
         case .unexpected:

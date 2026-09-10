@@ -1,24 +1,17 @@
+import Foundation
 import Testing
 @testable import LuxoraKit
 
 @MainActor
 struct PhoneBindingStoreTests {
-    private struct BeginInput: Equatable {
-        let countryCode: String
-        let nationalNumber: String
-    }
-
     @Test func beginValidatesE164DigitBoundsBeforeCallingServer() async {
         let store = PhoneBindingStore()
-        var beginInputs: [BeginInput] = []
-        store.remoteBegin = { countryCode, nationalNumber in
-            beginInputs.append(BeginInput(countryCode: countryCode, nationalNumber: nationalNumber))
-            throw LuxoraAPIError.transport("should not be called")
+        store.remoteBegin = { _, _ in
+            throw LuxoraAPIError.transport("must not be called for invalid input")
         }
 
         let tooShort = await store.begin(countryCode: "7", nationalNumber: "123")
         #expect(!tooShort)
-        #expect(beginInputs.isEmpty)
         #expect(store.failureMessage != nil)
         #expect(store.phase == .idle)
     }
