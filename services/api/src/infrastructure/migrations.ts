@@ -3666,5 +3666,255 @@ export const migrations: Migration[] = [
         SELECT RAISE(ABORT, 'active chat draft command receipt cannot be deleted');
       END;
     `
+  },
+  {
+    id: "026_phone_recovery_and_binding",
+    sql: `
+      CREATE TABLE phone_recovery_intents (
+        id TEXT PRIMARY KEY,
+        challenge_id TEXT NOT NULL REFERENCES phone_auth_challenges(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        phone_digest TEXT NOT NULL CHECK (
+          length(phone_digest) = 64 AND phone_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        recovery_token_hash TEXT NOT NULL UNIQUE CHECK (
+          length(recovery_token_hash) = 64 AND recovery_token_hash NOT GLOB '*[^0-9a-f]*'
+        ),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'completed')),
+        created_at TEXT NOT NULL,
+        confirm_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        CHECK (julianday(created_at) IS NOT NULL),
+        CHECK (julianday(confirm_at) >= julianday(created_at)),
+        CHECK (julianday(expires_at) > julianday(confirm_at)),
+        CHECK (julianday(updated_at) >= julianday(created_at)),
+        CHECK (
+          (state = 'pending' AND completed_at IS NULL)
+          OR (state = 'completed' AND completed_at IS NOT NULL)
+        )
+      ) STRICT;
+      CREATE INDEX idx_phone_recovery_intents_user
+        ON phone_recovery_intents(user_id, state, expires_at);
+      CREATE INDEX idx_phone_recovery_intents_challenge
+        ON phone_recovery_intents(challenge_id, state);
+
+      CREATE TABLE phone_recovery_receipts (
+        scope TEXT PRIMARY KEY CHECK (length(scope) BETWEEN 1 AND 192),
+        fingerprint TEXT NOT NULL CHECK (
+          length(fingerprint) = 64 AND fingerprint NOT GLOB '*[^0-9a-f]*'
+        ),
+        intent_id TEXT NOT NULL REFERENCES phone_recovery_intents(id),
+        result_kind TEXT NOT NULL CHECK (result_kind IN ('started', 'completed')),
+        response_ciphertext TEXT NOT NULL CHECK (
+          length(CAST(response_ciphertext AS BLOB)) BETWEEN 1 AND 20000
+        ),
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        CHECK (julianday(created_at) IS NOT NULL),
+        CHECK (julianday(expires_at) IS NOT NULL),
+        CHECK (julianday(expires_at) > julianday(created_at))
+      ) STRICT;
+      CREATE INDEX idx_phone_recovery_receipts_intent
+        ON phone_recovery_receipts(intent_id, created_at);
+
+      CREATE TABLE phone_recovery_events (
+        event_id TEXT PRIMARY KEY,
+        intent_id TEXT NOT NULL REFERENCES phone_recovery_intents(id),
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'phone.recovery.started',
+          'phone.recovery.completed'
+        )),
+        command_scope TEXT NOT NULL UNIQUE CHECK (length(command_scope) BETWEEN 1 AND 192),
+        occurred_at TEXT NOT NULL,
+        CHECK (julianday(occurred_at) IS NOT NULL)
+      ) STRICT;
+      CREATE INDEX idx_phone_recovery_events_intent
+        ON phone_recovery_events(intent_id, occurred_at);
+
+      CREATE TABLE phone_binding_challenges (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        phone_digest TEXT NOT NULL CHECK (
+          length(phone_digest) = 64 AND phone_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        phone_ciphertext TEXT NOT NULL,
+        code_digest TEXT NOT NULL CHECK (
+          length(code_digest) = 64 AND code_digest NOT GLOB '*[^0-9a-f]*'
+        ),
+        delivery_code_ciphertext TEXT,
+        state TEXT NOT NULL CHECK (state IN (
+          'pending_delivery', 'pending', 'verified', 'consumed', 'locked', 'expired'
+        )),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        attempts_used INTEGER NOT NULL CHECK (attempts_used >= 0),
+        max_attempts INTEGER NOT NULL CHECK (max_attempts BETWEEN 3 AND 10),
+        begin_client_nonce TEXT NOT NULL UNIQUE,
+        begin_fingerprint TEXT NOT NULL CHECK (
+          length(begin_fingerprint) = 64 AND begin_fingerprint NOT GLOB '*[^0-9a-f]*'
+        ),
+        masked_phone TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        retry_after_seconds INTEGER NOT NULL CHECK (retry_after_seconds BETWEEN 30 AND 300),
+        updated_at TEXT NOT NULL,
+        verified_at TEXT,
+        consumed_at TEXT,
+        binding_token_hash TEXT UNIQUE CHECK (
+          binding_token_hash IS NULL OR (
+            length(binding_token_hash) = 64
+            AND binding_token_hash NOT GLOB '*[^0-9a-f]*'
+          )
+        ),
+        binding_expires_at TEXT,
+        CHECK (attempts_used <= max_attempts),
+        CHECK (julianday(created_at) IS NOT NULL),
+        CHECK (julianday(expires_at) IS NOT NULL),
+        CHECK (julianday(updated_at) IS NOT NULL),
+        CHECK (julianday(expires_at) > julianday(created_at)),
+        CHECK (julianday(updated_at) >= julianday(created_at)),
+        CHECK (
+          (state = 'pending_delivery' AND delivery_code_ciphertext IS NOT NULL)
+          OR (state <> 'pending_delivery' AND delivery_code_ciphertext IS NULL)
+        ),
+        CHECK (
+          (state = 'verified'
+            AND verified_at IS NOT NULL
+            AND consumed_at IS NULL
+            AND binding_token_hash IS NOT NULL
+            AND binding_expires_at IS NOT NULL)
+          OR (state <> 'verified')
+        ),
+        CHECK (
+          binding_token_hash IS NULL
+          OR julianday(binding_expires_at) > julianday(verified_at)
+        ),
+        CHECK (
+          consumed_at IS NULL OR state = 'consumed'
+        )
+      ) STRICT;
+      CREATE INDEX idx_phone_binding_challenges_user
+        ON phone_binding_challenges(user_id, created_at);
+      CREATE INDEX idx_phone_binding_challenges_phone
+        ON phone_binding_challenges(phone_digest, created_at);
+      CREATE INDEX idx_phone_binding_challenges_binding
+        ON phone_binding_challenges(binding_token_hash, state, binding_expires_at);
+      CREATE INDEX idx_phone_binding_challenges_expiry
+        ON phone_binding_challenges(state, expires_at);
+
+      CREATE TABLE phone_binding_receipts (
+        scope TEXT PRIMARY KEY CHECK (length(scope) BETWEEN 1 AND 192),
+        fingerprint TEXT NOT NULL CHECK (
+          length(fingerprint) = 64 AND fingerprint NOT GLOB '*[^0-9a-f]*'
+        ),
+        challenge_id TEXT NOT NULL REFERENCES phone_binding_challenges(id),
+        result_kind TEXT NOT NULL CHECK (result_kind IN (
+          'binding_verified', 'completed', 'phone_unavailable', 'invalid_code'
+        )),
+        response_ciphertext TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        CHECK (julianday(created_at) IS NOT NULL),
+        CHECK (julianday(expires_at) IS NOT NULL),
+        CHECK (julianday(expires_at) > julianday(created_at)),
+        CHECK (
+          (result_kind IN ('binding_verified', 'completed') AND response_ciphertext IS NOT NULL)
+          OR (result_kind IN ('phone_unavailable', 'invalid_code') AND response_ciphertext IS NULL)
+        )
+      ) STRICT;
+      CREATE INDEX idx_phone_binding_receipts_challenge
+        ON phone_binding_receipts(challenge_id, created_at);
+
+      CREATE TABLE phone_binding_events (
+        event_id TEXT PRIMARY KEY,
+        challenge_id TEXT NOT NULL REFERENCES phone_binding_challenges(id),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        event_type TEXT NOT NULL CHECK (event_type IN (
+          'phone.binding.created',
+          'phone.binding.delivered',
+          'phone.binding.delivery_failed',
+          'phone.binding.verification_rejected',
+          'phone.binding.verified',
+          'phone.binding.completed'
+        )),
+        command_scope TEXT NOT NULL UNIQUE CHECK (length(command_scope) BETWEEN 1 AND 192),
+        occurred_at TEXT NOT NULL,
+        CHECK (julianday(occurred_at) IS NOT NULL)
+      ) STRICT;
+      CREATE INDEX idx_phone_binding_events_challenge
+        ON phone_binding_events(challenge_id, occurred_at);
+
+      CREATE TRIGGER trg_phone_recovery_intents_state_transition
+      BEFORE UPDATE ON phone_recovery_intents
+      WHEN NEW.id <> OLD.id
+        OR NEW.challenge_id <> OLD.challenge_id
+        OR NEW.user_id <> OLD.user_id
+        OR NEW.phone_digest <> OLD.phone_digest
+        OR NEW.recovery_token_hash <> OLD.recovery_token_hash
+        OR NEW.created_at <> OLD.created_at
+        OR NEW.confirm_at <> OLD.confirm_at
+        OR NEW.expires_at <> OLD.expires_at
+        OR (OLD.state = 'completed')
+        OR (NEW.state = 'completed' AND (NEW.completed_at IS NULL OR NEW.completed_at < OLD.confirm_at))
+      BEGIN
+        SELECT RAISE(ABORT, 'phone recovery intent transition is invalid');
+      END;
+      CREATE TRIGGER trg_phone_recovery_receipts_no_update
+      BEFORE UPDATE ON phone_recovery_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'phone recovery receipt is immutable');
+      END;
+      CREATE TRIGGER trg_phone_recovery_receipts_no_delete
+      BEFORE DELETE ON phone_recovery_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'phone recovery receipt cannot be deleted');
+      END;
+      CREATE TRIGGER trg_phone_recovery_events_no_update
+      BEFORE UPDATE ON phone_recovery_events
+      BEGIN
+        SELECT RAISE(ABORT, 'phone recovery audit is append-only');
+      END;
+      CREATE TRIGGER trg_phone_recovery_events_no_delete
+      BEFORE DELETE ON phone_recovery_events
+      BEGIN
+        SELECT RAISE(ABORT, 'phone recovery audit cannot be deleted');
+      END;
+      CREATE TRIGGER trg_phone_binding_challenges_transition
+      BEFORE UPDATE ON phone_binding_challenges
+      WHEN NEW.id <> OLD.id
+        OR NEW.user_id <> OLD.user_id
+        OR NEW.phone_digest <> OLD.phone_digest
+        OR NEW.begin_client_nonce <> OLD.begin_client_nonce
+        OR NEW.begin_fingerprint <> OLD.begin_fingerprint
+        OR NEW.created_at <> OLD.created_at
+        OR NEW.revision < OLD.revision
+        OR NEW.attempts_used < OLD.attempts_used
+        OR NEW.attempts_used > NEW.max_attempts
+        OR (OLD.state IN ('consumed', 'expired', 'locked'))
+      BEGIN
+        SELECT RAISE(ABORT, 'phone binding challenge transition is invalid');
+      END;
+      CREATE TRIGGER trg_phone_binding_receipts_no_update
+      BEFORE UPDATE ON phone_binding_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'phone binding receipt is immutable');
+      END;
+      CREATE TRIGGER trg_phone_binding_receipts_no_delete
+      BEFORE DELETE ON phone_binding_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'phone binding receipt cannot be deleted');
+      END;
+      CREATE TRIGGER trg_phone_binding_events_no_update
+      BEFORE UPDATE ON phone_binding_events
+      BEGIN
+        SELECT RAISE(ABORT, 'phone binding audit is append-only');
+      END;
+      CREATE TRIGGER trg_phone_binding_events_no_delete
+      BEFORE DELETE ON phone_binding_events
+      BEGIN
+        SELECT RAISE(ABORT, 'phone binding audit cannot be deleted');
+      END;
+    `
   }
 ];

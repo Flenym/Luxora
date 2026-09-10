@@ -97,6 +97,8 @@ public enum PhoneAuthenticationFailure: Equatable, Sendable {
     case credentialPersistenceFailed
     case registrationExpired
     case temporarilyUnavailable
+    case recoveryTokenExpired
+    case recoveryNotConfirmable(seconds: Int)
     case unexpected(String)
 
     public var message: String {
@@ -125,6 +127,10 @@ public enum PhoneAuthenticationFailure: Equatable, Sendable {
             "Не удалось безопасно сохранить сеанс на iPhone. Нажмите «Повторить»."
         case .registrationExpired:
             "Время регистрации истекло. Подтвердите номер заново."
+        case .recoveryTokenExpired:
+            "Заявка на сброс пароля недействительна или истекла. Начните восстановление заново."
+        case let .recoveryNotConfirmable(seconds):
+            "Сброс можно подтвердить через \(seconds) с. Это защита аккаунта."
         case .temporarilyUnavailable:
             "Сервис входа временно недоступен. Нажмите «Повторить»."
         case let .unexpected(message):
@@ -142,9 +148,13 @@ public enum PhoneAuthenticationFailure: Equatable, Sendable {
             // Retain it until the user changes the password, so a response-loss
             // retry replays rather than consuming another bounded attempt.
             true
+        case .recoveryNotConfirmable:
+            // The confirmation window is time-based: a response-loss retry must
+            // re-evaluate the clock instead of replaying the early rejection.
+            false
         case .invalidCode, .attemptsExhausted, .passwordAttemptsExhausted,
              .passwordTokenExpired, .challengeExpired, .challengeInvalid,
-             .registrationExpired, .unexpected:
+             .registrationExpired, .recoveryTokenExpired, .unexpected:
             false
         }
     }
@@ -152,22 +162,24 @@ public enum PhoneAuthenticationFailure: Equatable, Sendable {
     var blocksCodeVerification: Bool {
         switch self {
         case .attemptsExhausted, .passwordAttemptsExhausted, .passwordTokenExpired,
-             .challengeExpired, .challengeInvalid, .registrationExpired:
+             .challengeExpired, .challengeInvalid, .registrationExpired,
+             .recoveryTokenExpired:
             true
         case .invalidCode, .invalidPassword, .resendCooldown, .networkUnavailable, .deliveryUnavailable,
-             .credentialPersistenceFailed, .temporarilyUnavailable, .unexpected:
+             .credentialPersistenceFailed, .temporarilyUnavailable, .recoveryNotConfirmable,
+             .unexpected:
             false
         }
     }
 
     var blocksPasswordVerification: Bool {
         switch self {
-        case .passwordAttemptsExhausted, .passwordTokenExpired:
+        case .passwordAttemptsExhausted, .passwordTokenExpired, .recoveryTokenExpired:
             true
         case .invalidCode, .attemptsExhausted, .invalidPassword, .challengeExpired,
              .challengeInvalid, .resendCooldown, .networkUnavailable, .deliveryUnavailable,
              .credentialPersistenceFailed, .registrationExpired, .temporarilyUnavailable,
-             .unexpected:
+             .recoveryNotConfirmable, .unexpected:
             false
         }
     }
@@ -179,7 +191,8 @@ public enum PhoneAuthenticationFailure: Equatable, Sendable {
             true
         case .invalidCode, .attemptsExhausted, .invalidPassword, .passwordAttemptsExhausted,
              .passwordTokenExpired, .challengeExpired, .challengeInvalid,
-             .resendCooldown, .registrationExpired, .unexpected:
+             .resendCooldown, .registrationExpired, .recoveryTokenExpired,
+             .recoveryNotConfirmable, .unexpected:
             false
         }
     }
@@ -205,6 +218,10 @@ public enum PhoneAuthenticationFailure: Equatable, Sendable {
                 return .passwordAttemptsExhausted
             case "PHONE_AUTH_PASSWORD_TOKEN_INVALID", "PHONE_AUTH_PASSWORD_TOKEN_EXPIRED":
                 return .passwordTokenExpired
+            case "PHONE_AUTH_RECOVERY_TOKEN_INVALID":
+                return .recoveryTokenExpired
+            case "PHONE_AUTH_RECOVERY_NOT_CONFIRMABLE":
+                return .recoveryNotConfirmable(seconds: Self.retrySeconds(from: message) ?? 60)
             case "PHONE_AUTH_CHALLENGE_EXPIRED":
                 return .challengeExpired
             case "PHONE_AUTH_CHALLENGE_INVALID":
@@ -270,6 +287,7 @@ public final class ApplicationSession {
     public private(set) var messengerStore: MessengerStore?
     public private(set) var deviceSessionsStore: DeviceSessionsStore?
     public private(set) var phonePasswordSettingsStore: PhonePasswordSettingsStore?
+    public private(set) var phoneBindingStore: PhoneBindingStore?
     public private(set) var notificationSettingsStore: NotificationSettingsStore?
     public private(set) var pushRegistrationStore: PushRegistrationStore?
     public private(set) var chatPreferencesStore: ChatPreferencesStore?
@@ -332,10 +350,21 @@ public final class ApplicationSession {
         let passwordToken: String
         let password: String
     }
+
+    private struct PhoneRecoveryStartKey: Equatable {
+        let passwordToken: String
+    }
+
+    private struct PhoneRecoveryCompleteKey: Equatable {
+        let recoveryToken: String
+        let newPassword: String
+    }
     private var phoneBeginCommand = PhoneAuthenticationCommandNonce<PhoneBeginKey>()
     private var phoneVerificationCommand = PhoneAuthenticationCommandNonce<PhoneVerificationKey>()
     private var phoneRegistrationCommand = PhoneAuthenticationCommandNonce<PhoneRegistrationKey>()
     private var phonePasswordCommand = PhoneAuthenticationCommandNonce<PhonePasswordKey>()
+    private var phoneRecoveryStartCommand = PhoneAuthenticationCommandNonce<PhoneRecoveryStartKey>()
+    private var phoneRecoveryCompleteCommand = PhoneAuthenticationCommandNonce<PhoneRecoveryCompleteKey>()
 
     public convenience init(configuration: LuxoraClientConfiguration = .development) {
         self.init(
@@ -448,6 +477,7 @@ public final class ApplicationSession {
         messengerStore = nil
         deviceSessionsStore = nil
         phonePasswordSettingsStore = nil
+        phoneBindingStore = nil
         notificationSettingsStore = nil
         pushRegistrationStore = nil
         chatPreferencesStore = nil
@@ -570,6 +600,16 @@ public final class ApplicationSession {
                 // its own password command below owns exact retry semantics.
                 phoneVerificationCommand.finish()
                 return .passwordRequired(PhonePasswordChallenge(response: response))
+            case .bindingVerified:
+                // Binding challenges only exist for authenticated /me flows.
+                // Onboarding never creates one, so treat this status as an
+                // unexpected server answer for the unauthenticated flow while
+                // still decoding the additive contract exactly.
+                phoneVerificationCommand.finish()
+                phoneAuthenticationFailure = .unexpected(
+                    LuxoraL10n.text("auth.recovery_unexpected_binding")
+                )
+                return nil
             }
         } catch is CancellationError {
             return nil
@@ -619,13 +659,81 @@ public final class ApplicationSession {
         }
     }
 
+    public func startPhoneRecovery(passwordToken: String) async -> PhoneRecoveryIntent? {
+        guard phase == .unauthenticated, !isWorking else { return nil }
+        guard !passwordToken.isEmpty else {
+            errorMessage = LuxoraL10n.text("auth.recovery_invalid_grant")
+            return nil
+        }
+
+        let commandKey = PhoneRecoveryStartKey(passwordToken: passwordToken)
+        let clientNonce = phoneRecoveryStartCommand.acquire(for: commandKey)
+        isWorking = true
+        phoneAuthenticationFailure = nil
+        errorMessage = nil
+        defer { isWorking = false }
+
+        do {
+            let response = try await api.startPhoneRecovery(
+                passwordToken: passwordToken,
+                clientNonce: clientNonce
+            )
+            phoneRecoveryStartCommand.finish()
+            return PhoneRecoveryIntent(response: response)
+        } catch is CancellationError {
+            return nil
+        } catch {
+            let failure = PhoneAuthenticationFailure.classify(error)
+            phoneRecoveryStartCommand.fail(retainingCommand: failure.retainsIdempotencyCommand)
+            phoneAuthenticationFailure = failure
+            errorMessage = failure.message
+            return nil
+        }
+    }
+
+    public func completePhoneRecovery(recoveryToken: String, newPassword: String) async -> Bool {
+        guard phase == .unauthenticated, !isWorking else { return false }
+        let normalized = newPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !recoveryToken.isEmpty, normalized.count >= 12 else {
+            errorMessage = LuxoraL10n.text("auth.recovery_password_invalid")
+            return false
+        }
+
+        let commandKey = PhoneRecoveryCompleteKey(recoveryToken: recoveryToken, newPassword: normalized)
+        let clientNonce = phoneRecoveryCompleteCommand.acquire(for: commandKey)
+        isWorking = true
+        phoneAuthenticationFailure = nil
+        errorMessage = nil
+        defer { isWorking = false }
+
+        do {
+            let response = try await api.completePhoneRecovery(
+                recoveryToken: recoveryToken,
+                newPassword: normalized,
+                deviceName: ProcessInfo.processInfo.hostName,
+                clientNonce: clientNonce
+            )
+            let accepted = await finishAuthentication(response)
+            phoneRecoveryCompleteCommand.settleAfterClientAcceptance(accepted)
+            return accepted
+        } catch is CancellationError {
+            return false
+        } catch {
+            let failure = PhoneAuthenticationFailure.classify(error)
+            phoneRecoveryCompleteCommand.fail(retainingCommand: failure.retainsIdempotencyCommand)
+            phoneAuthenticationFailure = failure
+            errorMessage = failure.message
+            phase = .unauthenticated
+            return false
+        }
+    }
+
     public func completePhoneRegistration(
         registrationToken: String,
         displayName: String,
         username: String,
         bio: String
-    ) async -> Bool {
-        guard phase == .unauthenticated, !isWorking else { return false }
+    ) async -> Bool {        guard phase == .unauthenticated, !isWorking else { return false }
         let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let normalizedBio = String(bio.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
@@ -736,6 +844,7 @@ public final class ApplicationSession {
         messengerStore = nil
         deviceSessionsStore = nil
         phonePasswordSettingsStore = nil
+        phoneBindingStore = nil
         notificationSettingsStore = nil
         pushRegistrationStore = nil
         chatPreferencesStore = nil
@@ -1199,6 +1308,36 @@ public final class ApplicationSession {
             }
         )
 
+        let bindingStore = PhoneBindingStore()
+        bindingStore.remoteBegin = { countryCode, nationalNumber in
+            try await coordinator.withAccessToken { token in
+                try await api.beginPhoneBinding(
+                    countryCode: countryCode,
+                    nationalNumber: nationalNumber,
+                    deviceName: ProcessInfo.processInfo.hostName,
+                    clientNonce: UUID.clientNonceV4(),
+                    token: token
+                )
+            }
+        }
+        bindingStore.remoteVerify = { challengeID, code in
+            try await api.verifyPhoneCode(
+                challengeID: challengeID,
+                code: code,
+                deviceName: ProcessInfo.processInfo.hostName,
+                clientNonce: UUID.clientNonceV4()
+            )
+        }
+        bindingStore.remoteComplete = { bindingToken in
+            try await coordinator.withAccessToken { token in
+                try await api.completePhoneBinding(
+                    bindingToken: bindingToken,
+                    clientNonce: UUID.clientNonceV4(),
+                    token: token
+                )
+            }
+        }
+
         let notificationStore = NotificationSettingsStore()
         notificationStore.configureRemote(
             loader: {
@@ -1493,6 +1632,7 @@ public final class ApplicationSession {
         messengerStore = store
         deviceSessionsStore = sessionsStore
         phonePasswordSettingsStore = passwordSettingsStore
+        phoneBindingStore = bindingStore
         notificationSettingsStore = notificationStore
         pushRegistrationStore = pushStore
         chatPreferencesStore = preferencesStore
@@ -1677,6 +1817,7 @@ public final class ApplicationSession {
         messengerStore = nil
         deviceSessionsStore = nil
         phonePasswordSettingsStore = nil
+        phoneBindingStore = nil
         notificationSettingsStore = nil
         pushRegistrationStore = nil
         chatPreferencesStore = nil
@@ -1822,6 +1963,7 @@ public final class ApplicationSession {
         chatPreferencesStore = debugPreferencesStore
         deviceSessionsStore = nil
         phonePasswordSettingsStore = nil
+        phoneBindingStore = nil
         notificationSettingsStore = nil
         pushRegistrationStore = nil
         resetPhoneAuthenticationCommands()

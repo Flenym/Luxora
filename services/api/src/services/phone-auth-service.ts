@@ -1,19 +1,30 @@
 import { randomUUID } from "node:crypto";
 import {
   AuthResponseSchema,
-  PhonePasswordRequiredResponseSchema,
-  PhoneUsernameAvailabilityResponseSchema,
+  PhoneBindingChallengeResponseSchema,
+  PhoneBindingCompletedResponseSchema,
+  PhoneBindingVerifiedResponseSchema,
   PhoneChallengeResponseSchema,
+  PhonePasswordRequiredResponseSchema,
+  PhoneRecoveryStartedResponseSchema,
+  PhoneUsernameAvailabilityResponseSchema,
   PhoneAuthenticatedResponseSchema,
   PhoneProfileRequiredResponseSchema,
   VerifyPhoneChallengeResponseSchema,
   type AuthTokens,
-  type CompletePhoneRegistration,
+  type CompletePhoneBinding,
   type CompletePhonePasswordChallenge,
+  type CompletePhoneRecovery,
+  type CompletePhoneRegistration,
   type CheckPhoneUsername,
+  type PhoneBindingChallengeResponse,
+  type PhoneBindingCompletedResponse,
   type PhoneChallengeResponse,
+  type PhoneRecoveryStartedResponse,
   type PhoneUsernameAvailabilityResponse,
   type RequestPhoneChallenge,
+  type StartPhoneBinding,
+  type StartPhoneRecovery,
   type User,
   type VerifyPhoneChallenge,
   type VerifyPhoneChallengeResponse
@@ -21,16 +32,25 @@ import {
 import { parsePhoneNumberWithError } from "libphonenumber-js/max";
 import type { AppConfig } from "../config.js";
 import type {
+  CommitPhoneBindingCompleted,
+  CommitPhoneBindingRejected,
+  CommitPhoneBindingVerified,
+  CommitPhoneRecoveryCompleted,
+  NewPhoneBindingChallenge,
+  NewPhoneRecoveryIntent,
   NewRefreshToken,
   NewSession,
   PhoneAuthPasswordReceiptInput,
-  PhoneAuthReceiptInput
+  PhoneAuthReceiptInput,
+  PhoneBindingReceiptInput,
+  PhoneRecoveryReceiptInput
 } from "../domain/store.js";
 import type { Store } from "../domain/store.js";
 import type {
   PhoneAuthChallengeRecord,
   PhoneAuthCommandReceiptRecord,
   PhoneAuthPasswordReceiptRecord,
+  PhoneBindingChallengeRecord,
   UserRecord
 } from "../domain/types.js";
 import {
@@ -42,7 +62,7 @@ import {
 import type { PhoneVerificationDeliveryProvider } from "../phone-auth/phone-delivery-provider.js";
 import { PhoneAuthSecurity } from "../phone-auth/phone-auth-security.js";
 import { TokenSecurity } from "../security.js";
-import { createPasskeyDisabledPasswordHash, verifyPassword } from "./password-auth.js";
+import { createPasskeyDisabledPasswordHash, hashPassword, verifyPassword } from "./password-auth.js";
 
 const COMMIT_RETRY_LIMIT = 8;
 
@@ -142,6 +162,39 @@ function passwordRejected(reason: "password_invalid" | "attempts_exhausted"): Ap
         "The password is invalid",
         { reason }
       );
+}
+
+function recoveryTokenInvalid(): AppError {
+  return new AppError(
+    401,
+    "PHONE_AUTH_RECOVERY_TOKEN_INVALID",
+    "The phone recovery intent is invalid or expired"
+  );
+}
+
+function recoveryNotConfirmable(retryAfterSeconds: number): AppError {
+  return new AppError(
+    403,
+    "PHONE_AUTH_RECOVERY_NOT_CONFIRMABLE",
+    `Recovery can be completed after the confirmation window; retry after ${retryAfterSeconds} seconds`,
+    { retryAfterSeconds }
+  );
+}
+
+function bindingChallengeInvalid(): AppError {
+  return new AppError(
+    401,
+    "PHONE_AUTH_BINDING_CHALLENGE_INVALID",
+    "The phone binding challenge is invalid"
+  );
+}
+
+function bindingTokenInvalid(): AppError {
+  return new AppError(
+    401,
+    "PHONE_AUTH_BINDING_TOKEN_INVALID",
+    "The phone binding grant is invalid or expired"
+  );
 }
 
 function publicUser(user: UserRecord): User {
@@ -369,6 +422,14 @@ export class PhoneAuthService {
     input: VerifyPhoneChallenge
   ): Promise<VerifyPhoneChallengeResponse> {
     const { security } = this.#requireAvailable();
+    const loginChallenge = this.store.findPhoneAuthChallengeById(challengeId);
+    if (loginChallenge === null) {
+      const bindingChallenge = this.store.findPhoneBindingChallengeById(challengeId);
+      if (bindingChallenge !== null) {
+        return this.#verifyBindingChallenge(challengeId, input);
+      }
+      throw challengeInvalid();
+    }
     const scope = `verify:${challengeId}:${input.clientNonce}`;
     const fingerprint = security.fingerprint(
       "verify",
@@ -736,6 +797,492 @@ export class PhoneAuthService {
       available,
       suggestions
     });
+  }
+
+  async startRecovery(input: StartPhoneRecovery): Promise<PhoneRecoveryStartedResponse> {
+    const { security } = this.#requireAvailable();
+    const passwordTokenHash = security.passwordTokenDigest(input.passwordToken);
+    const scope = `recovery-start:${passwordTokenHash}:${input.clientNonce}`;
+    const fingerprint = security.fingerprint(
+      "recovery-start",
+      stablePayload([passwordTokenHash])
+    );
+    const replay = this.#replayRecoveryStart(scope, fingerprint);
+    if (replay !== null) return replay;
+
+    const intentId = randomUUID();
+    for (let attempt = 0; attempt < COMMIT_RETRY_LIMIT; attempt += 1) {
+      const challenge = this.store.findPhoneAuthChallengeByRegistrationTokenHash(
+        passwordTokenHash
+      );
+      const now = this.clock();
+      if (
+        challenge === null
+        || challenge.state !== "verified"
+        || challenge.registrationExpiresAt === null
+        || challenge.registrationExpiresAt <= now.toISOString()
+      ) throw passwordTokenInvalid();
+      const identity = this.store.findPhoneIdentityByDigest(challenge.phoneDigest);
+      if (identity === null) throw passwordTokenInvalid();
+      const user = this.store.findUserById(identity.userId);
+      if (
+        user === null
+        || !user.phonePasswordEnabled
+        || user.phonePasswordHash === null
+      ) throw passwordTokenInvalid();
+
+      const recoveryToken = security.newRecoveryToken();
+      const confirmAt = addSeconds(now, this.config.phoneAuthRecoveryDelaySeconds);
+      const expiresAt = addSeconds(
+        now,
+        this.config.phoneAuthRecoveryDelaySeconds + this.config.phoneAuthRecoveryTtlSeconds
+      );
+      const response = PhoneRecoveryStartedResponseSchema.parse({
+        recoveryToken: recoveryToken.raw,
+        maskedPhone: challenge.maskedPhone,
+        confirmAt,
+        expiresAt
+      });
+      const intent: NewPhoneRecoveryIntent = {
+        id: intentId,
+        challengeId: challenge.id,
+        userId: user.id,
+        phoneDigest: challenge.phoneDigest,
+        recoveryTokenHash: recoveryToken.digest,
+        createdAt: now.toISOString(),
+        confirmAt,
+        expiresAt
+      };
+      const receipt: PhoneRecoveryReceiptInput = {
+        scope,
+        fingerprint,
+        intentId,
+        resultKind: "started",
+        responseJson: JSON.stringify(response),
+        createdAt: now.toISOString(),
+        expiresAt
+      };
+      if (this.store.createPhoneRecoveryIntent({ intent, receipt })) return response;
+      const raced = this.#replayRecoveryStart(scope, fingerprint);
+      if (raced !== null) return raced;
+      throw conflict("A phone password recovery is already pending for this account");
+    }
+    throw phoneAuthTemporarilyUnavailable("Phone recovery is temporarily unavailable");
+  }
+
+  async completeRecovery(input: CompletePhoneRecovery): Promise<VerifyPhoneChallengeResponse> {
+    const { security } = this.#requireAvailable();
+    const recoveryTokenHash = security.recoveryTokenDigest(input.recoveryToken);
+    const scope = `recovery-complete:${recoveryTokenHash}:${input.clientNonce}`;
+    const fingerprint = security.fingerprint(
+      "recovery-complete",
+      stablePayload([recoveryTokenHash, input.password, input.deviceName])
+    );
+    const receipt = this.store.findPhoneRecoveryReceipt(scope);
+    if (receipt !== null) {
+      if (receipt.fingerprint !== fingerprint) {
+        throw conflict("Idempotency key was already used with different input");
+      }
+      return PhoneAuthenticatedResponseSchema.parse(JSON.parse(receipt.responseJson));
+    }
+
+    for (let attempt = 0; attempt < COMMIT_RETRY_LIMIT; attempt += 1) {
+      const intent = this.store.findPhoneRecoveryIntentByTokenHash(recoveryTokenHash);
+      const now = this.clock();
+      if (intent === null || intent.state !== "pending") throw recoveryTokenInvalid();
+      if (intent.confirmAt > now.toISOString()) {
+        const retryAfterSeconds = Math.max(
+          1,
+          Math.ceil((Date.parse(intent.confirmAt) - now.getTime()) / 1_000)
+        );
+        throw recoveryNotConfirmable(retryAfterSeconds);
+      }
+      if (intent.expiresAt <= now.toISOString()) throw recoveryTokenInvalid();
+      const user = this.store.findUserById(intent.userId);
+      if (user === null || !user.phonePasswordEnabled) throw recoveryTokenInvalid();
+
+      const nextPhonePasswordHash = await hashPassword(input.password);
+      const prepared = await this.#prepareSession(user.id, input.deviceName, now);
+      const response = PhoneAuthenticatedResponseSchema.parse({
+        status: "authenticated",
+        user: publicUser(user),
+        tokens: prepared.tokens
+      });
+      const completed: CommitPhoneRecoveryCompleted = {
+        intentId: intent.id,
+        userId: user.id,
+        nextPhonePasswordHash,
+        session: prepared.session,
+        refreshToken: prepared.refreshToken,
+        receipt: {
+          scope,
+          fingerprint,
+          intentId: intent.id,
+          resultKind: "completed",
+          responseJson: JSON.stringify(response),
+          createdAt: now.toISOString(),
+          expiresAt: intent.expiresAt
+        }
+      };
+      if (this.store.commitPhoneRecoveryCompleted(completed)) return response;
+      const raced = this.store.findPhoneRecoveryReceipt(scope);
+      if (raced !== null) {
+        if (raced.fingerprint !== fingerprint) {
+          throw conflict("Idempotency key was already used with different input");
+        }
+        return PhoneAuthenticatedResponseSchema.parse(JSON.parse(raced.responseJson));
+      }
+    }
+    throw phoneAuthTemporarilyUnavailable("Phone recovery is temporarily unavailable");
+  }
+
+  async beginBinding(userId: string, input: StartPhoneBinding): Promise<PhoneBindingChallengeResponse> {
+    const { security, delivery } = this.#requireAvailable();
+    if (this.store.findPhoneIdentityByUserId(userId) !== null) {
+      throw conflict("This account already has a verified phone number");
+    }
+    const normalized = normalizePhone(input);
+    const phoneDigest = security.phoneDigest(normalized.e164);
+    const fingerprint = security.fingerprint(
+      "binding-begin",
+      stablePayload([userId, normalized.e164, input.deviceName])
+    );
+    let challenge = this.store.findPhoneBindingChallengeByBeginNonce(input.clientNonce);
+    if (challenge !== null && challenge.beginFingerprint !== fingerprint) {
+      throw conflict("Idempotency key was already used with different input");
+    }
+
+    if (challenge === null) {
+      const now = this.clock();
+      const challengeId = randomUUID();
+      const code = this.config.phoneAuthProvider === "development"
+        ? this.config.phoneAuthDevelopmentCode as string
+        : security.newVerificationCode();
+      const candidate: NewPhoneBindingChallenge = {
+        id: challengeId,
+        userId,
+        phoneDigest,
+        e164: normalized.e164,
+        codeDigest: security.codeDigest(challengeId, code),
+        deliveryCode: code,
+        maxAttempts: this.config.phoneAuthMaxAttempts,
+        beginClientNonce: input.clientNonce,
+        beginFingerprint: fingerprint,
+        maskedPhone: maskPhone(normalized.countryCallingCode, normalized.e164),
+        createdAt: now.toISOString(),
+        expiresAt: addSeconds(now, this.config.phoneAuthChallengeTtlSeconds),
+        retryAfterSeconds: this.config.phoneAuthRetryAfterSeconds
+      };
+      try {
+        challenge = this.store.createPhoneBindingChallenge(candidate);
+        if (challenge === null) {
+          const raced = this.store.findPhoneBindingChallengeByBeginNonce(input.clientNonce);
+          if (raced !== null) {
+            if (raced.beginFingerprint !== fingerprint) {
+              throw conflict("Idempotency key was already used with different input");
+            }
+            challenge = raced;
+          } else {
+            throw resendCooldown(this.config.phoneAuthRetryAfterSeconds);
+          }
+        }
+      } catch (error) {
+        if (!isUniqueConstraint(error)) throw error;
+        challenge = this.store.findPhoneBindingChallengeByBeginNonce(input.clientNonce);
+        if (challenge === null || challenge.beginFingerprint !== fingerprint) {
+          throw conflict("Idempotency key was already used with different input");
+        }
+      }
+    }
+
+    if (challenge.state === "locked" && challenge.attemptsUsed === 0) {
+      throw deliveryUnavailable();
+    }
+
+    if (challenge.state === "pending_delivery") {
+      if (challenge.expiresAt <= this.clock().toISOString()) {
+        this.store.failPhoneBindingChallengeDelivery(
+          challenge.id,
+          challenge.revision,
+          this.clock().toISOString()
+        );
+        throw new AppError(
+          401,
+          "PHONE_AUTH_CHALLENGE_EXPIRED",
+          "Verification challenge expired before delivery"
+        );
+      }
+      if (challenge.deliveryCode === null) {
+        throw deliveryUnavailable();
+      }
+      try {
+        await delivery.sendVerificationCode({
+          challengeId: challenge.id,
+          e164: challenge.e164,
+          code: challenge.deliveryCode,
+          expiresAt: challenge.expiresAt
+        });
+      } catch {
+        throw deliveryUnavailable();
+      }
+      const activated = this.store.activatePhoneBindingChallenge(
+        challenge.id,
+        challenge.revision,
+        this.clock().toISOString()
+      );
+      if (!activated) {
+        const current = this.store.findPhoneBindingChallengeById(challenge.id);
+        if (current === null || current.state !== "pending") {
+          throw deliveryUnavailable();
+        }
+        challenge = current;
+      }
+    }
+
+    return PhoneBindingChallengeResponseSchema.parse({
+      challengeId: challenge.id,
+      maskedPhone: challenge.maskedPhone,
+      expiresAt: challenge.expiresAt,
+      retryAfterSeconds: challenge.retryAfterSeconds
+    });
+  }
+
+  async #verifyBindingChallenge(
+    challengeId: string,
+    input: VerifyPhoneChallenge
+  ): Promise<VerifyPhoneChallengeResponse> {
+    const { security } = this.#requireAvailable();
+    const scope = `binding-verify:${challengeId}:${input.clientNonce}`;
+    const fingerprint = security.fingerprint(
+      "binding-verify",
+      stablePayload([challengeId, input.code])
+    );
+    const replay = this.#replayBindingVerify(scope, fingerprint);
+    if (replay !== null) return replay;
+
+    for (let attempt = 0; attempt < COMMIT_RETRY_LIMIT; attempt += 1) {
+      const challenge = this.store.findPhoneBindingChallengeById(challengeId);
+      if (challenge === null) throw bindingChallengeInvalid();
+      if (challenge.state === "expired") throw verificationFailure("expired");
+      if (challenge.state === "locked") {
+        throw challenge.attemptsUsed >= challenge.maxAttempts
+          ? verificationFailure("attempts_exhausted")
+          : bindingChallengeInvalid();
+      }
+      if (challenge.state !== "pending") throw bindingChallengeInvalid();
+      const now = this.clock();
+      const expired = challenge.expiresAt <= now.toISOString();
+      if (expired || !security.codeMatches(challenge.id, input.code, challenge.codeDigest)) {
+        const nextState = expired
+          ? "expired" as const
+          : challenge.attemptsUsed + 1 >= challenge.maxAttempts
+            ? "locked" as const
+            : "pending" as const;
+        const failure: PhoneVerificationFailure = expired
+          ? "expired"
+          : nextState === "locked"
+            ? "attempts_exhausted"
+            : "invalid_code";
+        const receipt: PhoneBindingReceiptInput = {
+          scope: failureReceiptScope(scope, failure),
+          fingerprint,
+          challengeId,
+          resultKind: "invalid_code",
+          responseJson: null,
+          createdAt: now.toISOString(),
+          expiresAt: addSeconds(now, this.config.phoneAuthRegistrationTtlSeconds)
+        };
+        if (this.store.commitPhoneBindingRejected({
+          challengeId,
+          expectedRevision: challenge.revision,
+          nextState,
+          receipt
+        })) {
+          throw verificationFailure(failure);
+        }
+        const raced = this.#replayBindingVerify(scope, fingerprint);
+        if (raced !== null) return raced;
+        continue;
+      }
+
+      const bindingToken = security.newBindingToken();
+      const bindingExpiresAt = addSeconds(
+        now,
+        this.config.phoneAuthRegistrationTtlSeconds
+      );
+      const response = PhoneBindingVerifiedResponseSchema.parse({
+        status: "binding_verified",
+        bindingToken: bindingToken.raw,
+        maskedPhone: challenge.maskedPhone,
+        expiresAt: bindingExpiresAt
+      });
+      const verified: CommitPhoneBindingVerified = {
+        challengeId,
+        expectedRevision: challenge.revision,
+        bindingTokenHash: bindingToken.digest,
+        bindingExpiresAt,
+        receipt: {
+          scope,
+          fingerprint,
+          challengeId,
+          resultKind: "binding_verified",
+          responseJson: JSON.stringify(response),
+          createdAt: now.toISOString(),
+          expiresAt: bindingExpiresAt
+        }
+      };
+      if (this.store.commitPhoneBindingVerified(verified)) return response;
+      const raced = this.#replayBindingVerify(scope, fingerprint);
+      if (raced !== null) return raced;
+    }
+    throw phoneAuthTemporarilyUnavailable("Phone binding verification is temporarily unavailable");
+  }
+
+  async completeBinding(userId: string, input: CompletePhoneBinding): Promise<PhoneBindingCompletedResponse> {
+    const { security } = this.#requireAvailable();
+    const bindingTokenHash = security.bindingTokenDigest(input.bindingToken);
+    const scope = `binding-complete:${bindingTokenHash}:${input.clientNonce}`;
+    const fingerprint = security.fingerprint(
+      "binding-complete",
+      stablePayload([bindingTokenHash])
+    );
+    const receipt = this.store.findPhoneBindingReceipt(scope);
+    if (receipt !== null) {
+      if (receipt.fingerprint !== fingerprint) {
+        throw conflict("Idempotency key was already used with different input");
+      }
+      if (receipt.resultKind === "phone_unavailable") {
+        throw conflict("This phone number cannot be bound to the account");
+      }
+      return PhoneBindingCompletedResponseSchema.parse(JSON.parse(
+        receipt.responseJson as string
+      ));
+    }
+
+    for (let attempt = 0; attempt < COMMIT_RETRY_LIMIT; attempt += 1) {
+      const challenge = this.store.findPhoneBindingChallengeByTokenHash(bindingTokenHash);
+      const now = this.clock();
+      if (
+        challenge === null
+        || challenge.userId !== userId
+        || challenge.state !== "verified"
+        || challenge.bindingExpiresAt === null
+        || challenge.bindingExpiresAt <= now.toISOString()
+      ) throw bindingTokenInvalid();
+
+      const phoneTaken = this.store.findPhoneIdentityByDigest(challenge.phoneDigest) !== null;
+      if (phoneTaken) {
+        if (this.store.commitPhoneBindingIdentityTaken({
+          challengeId: challenge.id,
+          expectedRevision: challenge.revision,
+          bindingTokenHash,
+          receipt: {
+            scope,
+            fingerprint,
+            challengeId: challenge.id,
+            resultKind: "phone_unavailable",
+            responseJson: null,
+            createdAt: now.toISOString(),
+            expiresAt: challenge.bindingExpiresAt
+          }
+        })) {
+          throw conflict("This phone number cannot be bound to the account");
+        }
+        const raced = this.store.findPhoneBindingReceipt(scope);
+        if (raced !== null) {
+          if (raced.fingerprint !== fingerprint) {
+            throw conflict("Idempotency key was already used with different input");
+          }
+          throw conflict("This phone number cannot be bound to the account");
+        }
+        continue;
+      }
+
+      const challengeUserId = challenge.userId;
+      const currentUser = this.store.findUserById(challengeUserId);
+      if (currentUser === null) throw bindingTokenInvalid();
+      const response = PhoneBindingCompletedResponseSchema.parse({
+        phonePassword: {
+          eligible: true,
+          enabled: currentUser.phonePasswordEnabled
+        }
+      });
+      const committed: CommitPhoneBindingCompleted = {
+        challengeId: challenge.id,
+        expectedRevision: challenge.revision,
+        userId: challengeUserId,
+        bindingTokenHash,
+        receipt: {
+          scope,
+          fingerprint,
+          challengeId: challenge.id,
+          resultKind: "completed",
+          responseJson: JSON.stringify(response),
+          createdAt: now.toISOString(),
+          expiresAt: challenge.bindingExpiresAt
+        }
+      };
+      if (this.store.commitPhoneBindingCompleted(committed)) return response;
+      const raced = this.store.findPhoneBindingReceipt(scope);
+      if (raced !== null) {
+        if (raced.fingerprint !== fingerprint) {
+          throw conflict("Idempotency key was already used with different input");
+        }
+        if (raced.resultKind === "phone_unavailable") {
+          throw conflict("This phone number cannot be bound to the account");
+        }
+        return PhoneBindingCompletedResponseSchema.parse(JSON.parse(
+          raced.responseJson as string
+        ));
+      }
+    }
+    throw phoneAuthTemporarilyUnavailable("Phone binding is temporarily unavailable");
+  }
+
+  #replayRecoveryStart(
+    scope: string,
+    fingerprint: string
+  ): PhoneRecoveryStartedResponse | null {
+    const receipt = this.store.findPhoneRecoveryReceipt(scope);
+    if (receipt === null) return null;
+    if (receipt.fingerprint !== fingerprint) {
+      throw conflict("Idempotency key was already used with different input");
+    }
+    if (receipt.resultKind !== "started") {
+      throw phoneAuthTemporarilyUnavailable("Phone recovery receipt is inconsistent");
+    }
+    return PhoneRecoveryStartedResponseSchema.parse(JSON.parse(receipt.responseJson));
+  }
+
+  #replayBindingVerify(
+    scope: string,
+    fingerprint: string
+  ): VerifyPhoneChallengeResponse | null {
+    for (const reason of PHONE_VERIFICATION_FAILURES) {
+      const failureReceipt = this.store.findPhoneBindingReceipt(
+        failureReceiptScope(scope, reason)
+      );
+      if (failureReceipt === null) continue;
+      if (
+        failureReceipt.fingerprint !== fingerprint
+        || failureReceipt.resultKind !== "invalid_code"
+        || failureReceipt.responseJson !== null
+      ) {
+        throw phoneAuthTemporarilyUnavailable("Phone binding receipt is inconsistent");
+      }
+      throw verificationFailure(reason);
+    }
+    const receipt = this.store.findPhoneBindingReceipt(scope);
+    if (receipt === null) return null;
+    if (receipt.fingerprint !== fingerprint) {
+      throw conflict("Idempotency key was already used with different input");
+    }
+    if (receipt.resultKind === "binding_verified") {
+      return VerifyPhoneChallengeResponseSchema.parse(JSON.parse(
+        receipt.responseJson as string
+      ));
+    }
+    return null;
   }
 
   #receipt(input: {

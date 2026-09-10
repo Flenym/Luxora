@@ -8,6 +8,8 @@ import {
   ChatMembershipMutationResponseSchema,
   CheckPhoneUsernameSchema,
   CompletePhonePasswordChallengeSchema,
+  CompletePhoneBindingSchema,
+  CompletePhoneRecoverySchema,
   CompletePhoneRegistrationSchema,
   ConfigurePhonePasswordSchema,
   CreateMessageRequestSchema,
@@ -20,8 +22,12 @@ import {
   MessageRequestRecipientProjectionSchema,
   MessageRequestSenderProjectionSchema,
   PatchPrivacySettingsSchema,
+  PhoneBindingChallengeResponseSchema,
+  PhoneBindingCompletedResponseSchema,
   PhoneChallengeResponseSchema,
   PhonePasswordStatusSchema,
+  PhoneRecoveryStartedResponseSchema,
+  PhoneRecoveryTokenSchema,
   PhoneRegistrationTokenSchema,
   PhoneUsernameAvailabilityResponseSchema,
   RequestPhoneChallengeSchema,
@@ -35,6 +41,8 @@ import {
   RegisterRequestSchema,
   SafetyReportSummarySchema,
   SendMessageRequestSchema,
+  StartPhoneBindingSchema,
+  StartPhoneRecoverySchema,
   SyncInvalidatedRealtimeEventSchema,
   VerifyPhoneChallengeResponseSchema,
   VerifyPhoneChallengeSchema,
@@ -144,6 +152,72 @@ describe("protocol validation", () => {
       maskedPhone: "+7 ••• •••-45-67",
       expiresAt: "2026-08-04T12:10:00.000Z"
     })).toMatchObject({ status: "password_required", passwordToken });
+    const bindingToken = `luxbt_${"c".repeat(43)}`;
+    expect(VerifyPhoneChallengeResponseSchema.parse({
+      status: "binding_verified",
+      bindingToken,
+      maskedPhone: "+7 ••• •••-45-67",
+      expiresAt: "2026-08-04T12:10:00.000Z"
+    })).toMatchObject({ status: "binding_verified", bindingToken });
+    expect(PhoneRecoveryTokenSchema.safeParse(`luxrc_${"d".repeat(43)}`).success).toBe(true);
+    expect(PhoneRecoveryTokenSchema.safeParse(`luxpw_${"d".repeat(43)}`).success).toBe(false);
+    expect(StartPhoneRecoverySchema.parse({
+      passwordToken,
+      clientNonce: nonce
+    })).toEqual({ passwordToken, clientNonce: nonce });
+    const recoveryStarted = PhoneRecoveryStartedResponseSchema.parse({
+      recoveryToken: `luxrc_${"d".repeat(43)}`,
+      maskedPhone: "+7 ••• •••-45-67",
+      confirmAt: "2026-08-04T12:05:00.000Z",
+      expiresAt: "2026-08-05T12:05:00.000Z"
+    });
+    expect(recoveryStarted).toMatchObject({ confirmAt: "2026-08-04T12:05:00.000Z" });
+    expect(PhoneRecoveryStartedResponseSchema.safeParse({
+      ...recoveryStarted,
+      confirmAt: "2026-08-04T12:05:00.000Z",
+      expiresAt: "not-a-timestamp"
+    }).success).toBe(false);
+    expect(CompletePhoneRecoverySchema.safeParse({
+      recoveryToken: `luxrc_${"d".repeat(43)}`,
+      password: "короткая",
+      clientNonce: nonce
+    }).success).toBe(false);
+    expect(CompletePhoneRecoverySchema.parse({
+      recoveryToken: `luxrc_${"d".repeat(43)}`,
+      password: "новая секретная фраза пароля",
+      clientNonce: nonce
+    })).toMatchObject({ deviceName: "Unknown device" });
+    expect(StartPhoneBindingSchema.parse({
+      countryCode: "7",
+      nationalNumber: "9250001122",
+      clientNonce: nonce
+    })).toEqual({
+      countryCode: "7",
+      nationalNumber: "9250001122",
+      deviceName: "Unknown device",
+      clientNonce: nonce
+    });
+    expect(StartPhoneBindingSchema.safeParse({
+      countryCode: "7",
+      nationalNumber: "1234",
+      clientNonce: nonce
+    }).success).toBe(false);
+    expect(PhoneBindingChallengeResponseSchema.safeParse({
+      challengeId: nonce,
+      maskedPhone: "+7 ••• •••-45-67",
+      expiresAt: "2026-08-04T12:05:00.000Z",
+      retryAfterSeconds: 60
+    }).success).toBe(true);
+    expect(CompletePhoneBindingSchema.parse({
+      bindingToken,
+      clientNonce: nonce
+    })).toEqual({ bindingToken, clientNonce: nonce });
+    expect(PhoneBindingCompletedResponseSchema.parse({
+      phonePassword: { eligible: true, enabled: false }
+    })).toEqual({ phonePassword: { eligible: true, enabled: false } });
+    expect(PhoneBindingCompletedResponseSchema.safeParse({
+      phonePassword: { eligible: false, enabled: true }
+    }).success).toBe(false);
     expect(CompletePhonePasswordChallengeSchema.parse({
       passwordToken,
       password: "секретная фраза",

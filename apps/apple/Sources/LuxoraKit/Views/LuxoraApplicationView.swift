@@ -121,6 +121,7 @@ public struct LuxoraApplicationView: View {
             initialDestination: initialPhoneDestination,
             deviceSessionsStore: session.deviceSessionsStore,
             phonePasswordSettingsStore: session.phonePasswordSettingsStore,
+            phoneBindingStore: session.phoneBindingStore,
             notificationSettingsStore: session.notificationSettingsStore,
             pushRegistrationStore: session.pushRegistrationStore,
             chatFoldersStore: session.chatFoldersStore,

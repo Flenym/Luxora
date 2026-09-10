@@ -66,7 +66,11 @@ export const ApiErrorCodeSchema = z.enum([
   "PHONE_AUTH_REGISTRATION_EXPIRED",
   "PHONE_AUTH_PASSWORD_INVALID",
   "PHONE_AUTH_PASSWORD_ATTEMPTS_EXHAUSTED",
-  "PHONE_AUTH_PASSWORD_TOKEN_INVALID"
+  "PHONE_AUTH_PASSWORD_TOKEN_INVALID",
+  "PHONE_AUTH_RECOVERY_TOKEN_INVALID",
+  "PHONE_AUTH_RECOVERY_NOT_CONFIRMABLE",
+  "PHONE_AUTH_BINDING_CHALLENGE_INVALID",
+  "PHONE_AUTH_BINDING_TOKEN_INVALID"
 ]);
 
 export const ApiErrorSchema = z.object({
@@ -234,6 +238,10 @@ export const PhoneRegistrationTokenSchema = z.string()
   .regex(/^luxpr_[A-Za-z0-9_-]{43}$/u, "Invalid phone registration token");
 export const PhonePasswordTokenSchema = z.string()
   .regex(/^luxpw_[A-Za-z0-9_-]{43}$/u, "Invalid phone password token");
+export const PhoneRecoveryTokenSchema = z.string()
+  .regex(/^luxrc_[A-Za-z0-9_-]{43}$/u, "Invalid phone recovery token");
+export const PhoneBindingTokenSchema = z.string()
+  .regex(/^luxbt_[A-Za-z0-9_-]{43}$/u, "Invalid phone binding token");
 
 export const RequestPhoneChallengeSchema = z.object({
   countryCode: PhoneCountryCallingCodeSchema,
@@ -284,10 +292,18 @@ export const PhonePasswordRequiredResponseSchema = z.object({
   expiresAt: TimestampSchema
 }).strict();
 
+export const PhoneBindingVerifiedResponseSchema = z.object({
+  status: z.literal("binding_verified"),
+  bindingToken: PhoneBindingTokenSchema,
+  maskedPhone: z.string().min(4).max(40),
+  expiresAt: TimestampSchema
+}).strict();
+
 export const VerifyPhoneChallengeResponseSchema = z.discriminatedUnion("status", [
   PhoneAuthenticatedResponseSchema,
   PhoneProfileRequiredResponseSchema,
-  PhonePasswordRequiredResponseSchema
+  PhonePasswordRequiredResponseSchema,
+  PhoneBindingVerifiedResponseSchema
 ]);
 
 export const CompletePhonePasswordChallengeSchema = z.object({
@@ -340,6 +356,57 @@ export const PhoneUsernameAvailabilityResponseSchema = z.object({
     });
   }
 });
+
+export const StartPhoneRecoverySchema = z.object({
+  passwordToken: PhonePasswordTokenSchema,
+  clientNonce: IdSchema
+}).strict();
+
+export const PhoneRecoveryStartedResponseSchema = z.object({
+  recoveryToken: PhoneRecoveryTokenSchema,
+  maskedPhone: z.string().min(4).max(40),
+  confirmAt: TimestampSchema,
+  expiresAt: TimestampSchema
+}).strict();
+
+export const CompletePhoneRecoverySchema = z.object({
+  recoveryToken: PhoneRecoveryTokenSchema,
+  password: PasswordSchema,
+  deviceName: z.string().trim().min(1).max(120).default("Unknown device"),
+  clientNonce: IdSchema
+}).strict();
+
+export const StartPhoneBindingSchema = z.object({
+  countryCode: PhoneCountryCallingCodeSchema,
+  nationalNumber: PhoneNationalNumberSchema,
+  deviceName: z.string().trim().min(1).max(120).default("Unknown device"),
+  clientNonce: IdSchema
+}).strict().superRefine((value, context) => {
+  const totalDigits = value.countryCode.length + value.nationalNumber.length;
+  if (totalDigits < 7 || totalDigits > 15) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Phone number must contain 7-15 E.164 digits",
+      path: ["nationalNumber"]
+    });
+  }
+});
+
+export const PhoneBindingChallengeResponseSchema = z.object({
+  challengeId: IdSchema,
+  maskedPhone: z.string().min(4).max(40),
+  expiresAt: TimestampSchema,
+  retryAfterSeconds: z.number().int().nonnegative().max(3_600)
+}).strict();
+
+export const CompletePhoneBindingSchema = z.object({
+  bindingToken: PhoneBindingTokenSchema,
+  clientNonce: IdSchema
+}).strict();
+
+export const PhoneBindingCompletedResponseSchema = z.object({
+  phonePassword: PhonePasswordStatusSchema
+}).strict();
 
 // Passkey ceremony routes are a disabled, contract-only foundation. The API
 // must keep capabilities.features.passkeys=false until storage, vault,
@@ -2586,6 +2653,14 @@ export type PhonePasswordStatus = z.infer<typeof PhonePasswordStatusSchema>;
 export type CompletePhoneRegistration = z.infer<typeof CompletePhoneRegistrationSchema>;
 export type CheckPhoneUsername = z.infer<typeof CheckPhoneUsernameSchema>;
 export type PhoneUsernameAvailabilityResponse = z.infer<typeof PhoneUsernameAvailabilityResponseSchema>;
+export type StartPhoneRecovery = z.infer<typeof StartPhoneRecoverySchema>;
+export type PhoneRecoveryStartedResponse = z.infer<typeof PhoneRecoveryStartedResponseSchema>;
+export type CompletePhoneRecovery = z.infer<typeof CompletePhoneRecoverySchema>;
+export type StartPhoneBinding = z.infer<typeof StartPhoneBindingSchema>;
+export type PhoneBindingChallengeResponse = z.infer<typeof PhoneBindingChallengeResponseSchema>;
+export type PhoneBindingVerifiedResponse = z.infer<typeof PhoneBindingVerifiedResponseSchema>;
+export type CompletePhoneBinding = z.infer<typeof CompletePhoneBindingSchema>;
+export type PhoneBindingCompletedResponse = z.infer<typeof PhoneBindingCompletedResponseSchema>;
 export type PasskeyBase64Url = z.infer<typeof PasskeyBase64UrlSchema>;
 export type PasskeyChallenge = z.infer<typeof PasskeyChallengeSchema>;
 export type PasskeyDeliveryNonce = z.infer<typeof PasskeyDeliveryNonceSchema>;

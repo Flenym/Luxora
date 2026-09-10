@@ -1,0 +1,79 @@
+name: Apple IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/apple/**"
+      - "logo.png"
+      - ".github/workflows/apple-ipa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unsigned-ipa:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned XcodeGen
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+          XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          install_dir="$RUNNER_TEMP/xcodegen-${XCODEGEN_VERSION}"
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
+            --output "$archive"
+          printf '%s  %s\n' "$XCODEGEN_SHA256" "$archive" | shasum -a 256 --check
+          ditto -x -k "$archive" "$install_dir"
+          "$install_dir/xcodegen/bin/xcodegen" --version
+          echo "$install_dir/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Generate project
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+      - name: Archive LuxoraMobile without signing
+        working-directory: apps/apple
+        run: >-
+          xcodebuild
+          -project Luxora.xcodeproj
+          -scheme LuxoraMobile
+          -configuration Release
+          -destination 'generic/platform=iOS'
+          -archivePath "$RUNNER_TEMP/LuxoraMobile.xcarchive"
+          CODE_SIGNING_ALLOWED=NO
+          CODE_SIGNING_REQUIRED=NO
+          CODE_SIGN_IDENTITY=""
+          archive
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          app_path="$RUNNER_TEMP/LuxoraMobile.xcarchive/Products/Applications/LuxoraMobile.app"
+          test -d "$app_path"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$app_path" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          zip --quiet --recurse-paths "$RUNNER_TEMP/LuxoraMobile-unsigned.ipa" Payload
+          cd - >/dev/null
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp "$RUNNER_TEMP/LuxoraMobile-unsigned.ipa" "$GITHUB_WORKSPACE/artifacts/"
+          shasum -a 256 "$GITHUB_WORKSPACE/artifacts/LuxoraMobile-unsigned.ipa"
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: LuxoraMobile-unsigned-ipa
+          path: artifacts/LuxoraMobile-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30

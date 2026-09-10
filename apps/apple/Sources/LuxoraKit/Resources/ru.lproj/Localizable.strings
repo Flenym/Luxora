@@ -221,6 +221,9 @@
 "auth.passkey_pending_detail" = "Сервер сообщает о ключах доступа, но системный вход на iPhone в этой сборке ещё не включён.";
 "auth.passkey_server_error" = "Проверка возможностей сервера завершилась ошибкой: %@";
 "auth.passkey_server_disabled" = "Публичный вход по ключу доступа не включён на этом сервере.";
+"auth.recovery_unexpected_binding" = "Сервер ответил статусом привязки номера в потоке входа. Начните вход заново.";
+"auth.recovery_invalid_grant" = "Заявка на сброс требует подтверждённой проверки номера.";
+"auth.recovery_password_invalid" = "Новый пароль должен содержать минимум 12 символов.";
 "auth.authentication" = "Аутентификация";
 "auth.password_accessibility" = "Пароль, не менее 12 символов";
 "auth.passkey_status_retry" = "Повторить проверку ключей доступа";

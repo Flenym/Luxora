@@ -83,6 +83,15 @@ struct AuthenticationView: View {
                     password: password
                 )
             },
+            startRecovery: { passwordToken in
+                await session.startPhoneRecovery(passwordToken: passwordToken)
+            },
+            completeRecovery: { recoveryToken, newPassword in
+                await session.completePhoneRecovery(
+                    recoveryToken: recoveryToken,
+                    newPassword: newPassword
+                )
+            },
             checkUsername: { registrationToken, username in
                 await session.checkPhoneUsername(
                     registrationToken: registrationToken,

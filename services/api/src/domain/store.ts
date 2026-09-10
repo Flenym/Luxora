@@ -59,7 +59,10 @@ import type {
   PhoneAuthChallengeState,
   PhoneAuthCommandReceiptRecord,
   PhoneAuthPasswordReceiptRecord,
+  PhoneBindingChallengeRecord,
+  PhoneBindingReceiptRecord,
   PhoneIdentityRecord,
+  PhoneRecoveryIntentRecord,
   PrivacySettingsRecord,
   PushRegistrationRecord,
   RefreshTokenRecord,
@@ -195,6 +198,81 @@ export interface CommitPhoneAuthPasswordAuthenticated extends PhoneAuthSessionIn
   userId: string;
   passwordTokenHash: string;
   receipt: PhoneAuthPasswordReceiptInput & { resultKind: "authenticated" };
+}
+
+export interface NewPhoneRecoveryIntent {
+  id: string;
+  challengeId: string;
+  userId: string;
+  phoneDigest: string;
+  recoveryTokenHash: string;
+  createdAt: string;
+  confirmAt: string;
+  expiresAt: string;
+}
+
+export interface PhoneRecoveryReceiptInput {
+  scope: string;
+  fingerprint: string;
+  intentId: string;
+  resultKind: "started" | "completed";
+  responseJson: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface CommitPhoneRecoveryCompleted extends PhoneAuthSessionInput {
+  intentId: string;
+  userId: string;
+  nextPhonePasswordHash: string;
+  receipt: PhoneRecoveryReceiptInput & { resultKind: "completed" };
+}
+
+export interface NewPhoneBindingChallenge {
+  id: string;
+  userId: string;
+  phoneDigest: string;
+  e164: string;
+  codeDigest: string;
+  deliveryCode: string;
+  maxAttempts: number;
+  beginClientNonce: string;
+  beginFingerprint: string;
+  maskedPhone: string;
+  createdAt: string;
+  expiresAt: string;
+  retryAfterSeconds: number;
+}
+
+export interface PhoneBindingReceiptInput {
+  scope: string;
+  fingerprint: string;
+  challengeId: string;
+  resultKind: PhoneBindingReceiptRecord["resultKind"];
+  responseJson: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface CommitPhoneBindingRejected {
+  challengeId: string;
+  expectedRevision: number;
+  nextState: Extract<PhoneAuthChallengeState, "pending" | "locked" | "expired">;
+  receipt: PhoneBindingReceiptInput;
+}export interface CommitPhoneBindingVerified {
+  challengeId: string;
+  expectedRevision: number;
+  bindingTokenHash: string;
+  bindingExpiresAt: string;
+  receipt: PhoneBindingReceiptInput & { resultKind: "binding_verified" };
+}
+
+export interface CommitPhoneBindingCompleted {
+  challengeId: string;
+  expectedRevision: number;
+  userId: string;
+  bindingTokenHash: string;
+  receipt: PhoneBindingReceiptInput & { resultKind: "completed" };
 }
 
 export interface NewPasskeyLoginIntent {
@@ -624,6 +702,31 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     nextEnabled: boolean;
     at: string;
   }): boolean;
+
+  createPhoneRecoveryIntent(input: {
+    intent: NewPhoneRecoveryIntent;
+    receipt: PhoneRecoveryReceiptInput;
+  }): boolean;
+  findPhoneRecoveryIntentByTokenHash(tokenHash: string): PhoneRecoveryIntentRecord | null;
+  findPhoneRecoveryReceipt(scope: string): PhoneRecoveryReceiptInput | null;
+  commitPhoneRecoveryCompleted(input: CommitPhoneRecoveryCompleted): boolean;
+
+  createPhoneBindingChallenge(challenge: NewPhoneBindingChallenge): PhoneBindingChallengeRecord | null;
+  findPhoneBindingChallengeById(id: string): PhoneBindingChallengeRecord | null;
+  findPhoneBindingChallengeByBeginNonce(clientNonce: string): PhoneBindingChallengeRecord | null;
+  findPhoneBindingChallengeByTokenHash(tokenHash: string): PhoneBindingChallengeRecord | null;
+  activatePhoneBindingChallenge(id: string, expectedRevision: number, at: string): boolean;
+  failPhoneBindingChallengeDelivery(id: string, expectedRevision: number, at: string): boolean;
+  commitPhoneBindingRejected(input: CommitPhoneBindingRejected): boolean;
+  commitPhoneBindingVerified(input: CommitPhoneBindingVerified): boolean;
+  commitPhoneBindingCompleted(input: CommitPhoneBindingCompleted): boolean;
+  commitPhoneBindingIdentityTaken(input: {
+    challengeId: string;
+    expectedRevision: number;
+    bindingTokenHash: string;
+    receipt: PhoneBindingReceiptInput & { resultKind: "phone_unavailable" };
+  }): boolean;
+  findPhoneBindingReceipt(scope: string): PhoneBindingReceiptRecord | null;
 
   getOrCreatePasskeyUserHandleBinding(accountId: string): Promise<PasskeyUserHandleBinding>;
   /** Returns an existing binding or a non-persisted candidate for atomic registration commit. */

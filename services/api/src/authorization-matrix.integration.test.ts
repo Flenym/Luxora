@@ -38,6 +38,8 @@ const PUBLIC_HTTP_POLICIES = [
   "POST /v1/auth/phone/challenges",
   "POST /v1/auth/phone/challenges/:id/verify",
   "POST /v1/auth/phone/password",
+  "POST /v1/auth/phone/recovery/start",
+  "POST /v1/auth/phone/recovery/complete",
   "POST /v1/auth/phone/registrations",
   "POST /v1/auth/phone/usernames/check",
   "GET /openapi.json"
@@ -76,6 +78,21 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
     method: "DELETE",
     url: "/v1/me/phone-password",
     payload: { currentPassword: PASSWORD }
+  },
+  {
+    key: "POST /v1/me/phone/binding/challenges",
+    method: "POST",
+    url: "/v1/me/phone/binding/challenges",
+    payload: { countryCode: "7", nationalNumber: "9991234567", clientNonce: SECOND_RESOURCE_ID }
+  },
+  {
+    key: "POST /v1/me/phone/binding/complete",
+    method: "POST",
+    url: "/v1/me/phone/binding/complete",
+    payload: {
+      bindingToken: `luxbt_${"A".repeat(43)}`,
+      clientNonce: SECOND_RESOURCE_ID
+    }
   },
   {
     key: "GET /v1/push/registrations/current",
@@ -534,7 +551,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(74);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(76);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

@@ -33,7 +33,8 @@ const MIGRATION_IDS = [
   "022_chat_folders",
   "023_chat_folder_receipt_retention",
   "024_chat_membership_revision_ledger",
-  "025_synchronized_chat_drafts"
+  "025_synchronized_chat_drafts",
+  "026_phone_recovery_and_binding"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";
@@ -467,6 +468,20 @@ describe("SQLite migration chain 001-025", () => {
       /trg_chat_draft_receipts_immutable_delete[\s\S]*EXISTS \(\s*SELECT 1 FROM chat_members\s*WHERE user_id = OLD\.user_id AND chat_id = OLD\.chat_id/u
     );
     expect(migrations[24]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
+    expect(migrations[25]!.sql).toMatch(/CREATE TABLE phone_recovery_intents/u);
+    expect(migrations[25]!.sql).toMatch(/CREATE TABLE phone_recovery_receipts/u);
+    expect(migrations[25]!.sql).toMatch(/CREATE TABLE phone_recovery_events/u);
+    expect(migrations[25]!.sql).toMatch(/CREATE TABLE phone_binding_challenges/u);
+    expect(migrations[25]!.sql).toMatch(/CREATE TABLE phone_binding_receipts/u);
+    expect(migrations[25]!.sql).toMatch(/CREATE TABLE phone_binding_events/u);
+    expect(migrations[25]!.sql).toMatch(/trg_phone_recovery_intents_state_transition/u);
+    expect(migrations[25]!.sql).toMatch(/trg_phone_binding_challenges_transition/u);
+    expect(migrations[25]!.sql).toMatch(/idx_phone_recovery_intents_user/u);
+    expect(migrations[25]!.sql).toMatch(/idx_phone_binding_challenges_binding/u);
+    expect(migrations[25]!.sql).not.toMatch(
+      /raw_(?:password|token|code)|access_token\s+TEXT|refresh_token\s+TEXT|verification_code\s+TEXT|phone_number\s+TEXT/iu
+    );
+    expect(migrations[25]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
   });
 
   it("creates the complete clean schema once with declared tables, indexes, triggers and foreign keys", () => {

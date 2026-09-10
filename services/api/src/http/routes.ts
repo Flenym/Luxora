@@ -28,6 +28,8 @@ import {
   PatchPrivacySettingsSchema,
   PutChatDraftRequestSchema,
   CompletePhoneRegistrationSchema,
+  CompletePhoneRecoverySchema,
+  CompletePhoneBindingSchema,
   ReactionRequestSchema,
   RELEASE_LABEL,
   RefreshRequestSchema,
@@ -38,6 +40,8 @@ import {
   RegisterRequestSchema,
   SearchQuerySchema,
   SendMessageRequestSchema,
+  StartPhoneBindingSchema,
+  StartPhoneRecoverySchema,
   UsernameSchema,
   UpdateChatMemberRoleRequestSchema,
   UpdateTopicRequestSchema,
@@ -225,6 +229,39 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   }, async (request, reply) => {
     const input = CheckPhoneUsernameSchema.parse(request.body);
     return reply.send(dependencies.phoneAuth.checkUsername(input));
+  });
+
+  app.post("/v1/auth/phone/recovery/start", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const input = StartPhoneRecoverySchema.parse(request.body);
+    return reply.code(201).send(await dependencies.phoneAuth.startRecovery(input));
+  });
+
+  app.post("/v1/auth/phone/recovery/complete", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const input = CompletePhoneRecoverySchema.parse(request.body);
+    return reply.send(await dependencies.phoneAuth.completeRecovery(input));
+  });
+
+  app.post("/v1/me/phone/binding/challenges", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const input = StartPhoneBindingSchema.parse(request.body);
+    return reply.code(201).send(await dependencies.phoneAuth.beginBinding(
+      request.auth.userId,
+      input
+    ));
+  });
+
+  app.post("/v1/me/phone/binding/complete", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const input = CompletePhoneBindingSchema.parse(request.body);
+    return dependencies.phoneAuth.completeBinding(request.auth.userId, input);
   });
 
   app.post("/v1/auth/register", {

@@ -137,6 +137,7 @@ async function readInto(file: FileHandle, bytes: Buffer, position: number): Prom
 }
 
 async function syncDirectory(path: string): Promise<void> {
+  if (process.platform === "win32") return;
   const directory = await open(path, "r");
   try {
     await directory.sync();

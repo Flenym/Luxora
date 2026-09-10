@@ -113,6 +113,54 @@ export interface PhoneAuthPasswordReceiptRecord {
   expiresAt: string;
 }
 
+export interface PhoneRecoveryIntentRecord {
+  id: string;
+  challengeId: string;
+  userId: string;
+  phoneDigest: string;
+  recoveryTokenHash: string;
+  state: "pending" | "completed";
+  createdAt: string;
+  confirmAt: string;
+  expiresAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface PhoneBindingChallengeRecord {
+  id: string;
+  userId: string;
+  phoneDigest: string;
+  e164: string;
+  codeDigest: string;
+  deliveryCode: string | null;
+  state: PhoneAuthChallengeState;
+  revision: number;
+  attemptsUsed: number;
+  maxAttempts: number;
+  beginClientNonce: string;
+  beginFingerprint: string;
+  maskedPhone: string;
+  createdAt: string;
+  expiresAt: string;
+  retryAfterSeconds: number;
+  updatedAt: string;
+  verifiedAt: string | null;
+  consumedAt: string | null;
+  bindingTokenHash: string | null;
+  bindingExpiresAt: string | null;
+}
+
+export interface PhoneBindingReceiptRecord {
+  scope: string;
+  fingerprint: string;
+  challengeId: string;
+  resultKind: "binding_verified" | "completed" | "phone_unavailable" | "invalid_code";
+  responseJson: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface PrivacySettingsRecord {
   userId: string;
   usernameDiscoverable: boolean;

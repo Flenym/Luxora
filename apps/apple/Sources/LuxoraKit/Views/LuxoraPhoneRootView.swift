@@ -39,6 +39,7 @@ public struct LuxoraPhoneRootView: View {
     private let featureMatrix: LuxoraFeatureMatrix
     private let deviceSessionsStore: DeviceSessionsStore?
     private let phonePasswordSettingsStore: PhonePasswordSettingsStore?
+    private let phoneBindingStore: PhoneBindingStore?
     private let notificationSettingsStore: NotificationSettingsStore?
     private let pushRegistrationStore: PushRegistrationStore?
     private let chatFoldersStore: ChatFoldersStore?
@@ -59,6 +60,7 @@ public struct LuxoraPhoneRootView: View {
         initialDestination: LuxoraPhoneInitialDestination = .inbox,
         deviceSessionsStore: DeviceSessionsStore? = nil,
         phonePasswordSettingsStore: PhonePasswordSettingsStore? = nil,
+        phoneBindingStore: PhoneBindingStore? = nil,
         notificationSettingsStore: NotificationSettingsStore? = nil,
         pushRegistrationStore: PushRegistrationStore? = nil,
         chatFoldersStore: ChatFoldersStore? = nil,
@@ -72,6 +74,7 @@ public struct LuxoraPhoneRootView: View {
         self.featureMatrix = featureMatrix
         self.deviceSessionsStore = deviceSessionsStore
         self.phonePasswordSettingsStore = phonePasswordSettingsStore
+        self.phoneBindingStore = phoneBindingStore
         self.notificationSettingsStore = notificationSettingsStore
         self.pushRegistrationStore = pushRegistrationStore
         self.chatFoldersStore = chatFoldersStore
@@ -244,6 +247,7 @@ public struct LuxoraPhoneRootView: View {
                         store: store,
                         featureMatrix: featureMatrix,
                         phonePasswordSettingsStore: phonePasswordSettingsStore,
+                        phoneBindingStore: phoneBindingStore,
                         chatFoldersStore: chatFoldersStore,
                         openRoute: { settingsPath.append($0) },
                         openSaved: openConversationFromYou,
@@ -355,7 +359,10 @@ public struct LuxoraPhoneRootView: View {
                 signOut: signOut
             )
         case .phonePassword:
-            PhonePasswordSettingsView(store: phonePasswordSettingsStore)
+            PhonePasswordSettingsView(
+                store: phonePasswordSettingsStore,
+                bindingStore: phoneBindingStore
+            )
         case .notifications:
             PhoneNotificationsSettingsView(
                 pushGate: featureMatrix.pushJobs,
@@ -4176,6 +4183,7 @@ private struct PhoneYouView: View {
     @Bindable var store: MessengerStore
     let featureMatrix: LuxoraFeatureMatrix
     let phonePasswordSettingsStore: PhonePasswordSettingsStore?
+    let phoneBindingStore: PhoneBindingStore?
     let chatFoldersStore: ChatFoldersStore?
     let openRoute: (PhoneSettingsRoute) -> Void
     let openSaved: (UUID) -> Void

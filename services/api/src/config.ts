@@ -57,6 +57,8 @@ const ConfigSchema = z.object({
   PHONE_AUTH_REGISTRATION_TTL_SECONDS: z.coerce.number().int().min(300).max(1_800).default(600),
   PHONE_AUTH_RETRY_AFTER_SECONDS: z.coerce.number().int().min(30).max(300).default(60),
   PHONE_AUTH_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5),
+  PHONE_AUTH_RECOVERY_DELAY_SECONDS: z.coerce.number().int().min(0).max(604_800).default(300),
+  PHONE_AUTH_RECOVERY_TTL_SECONDS: z.coerce.number().int().min(600).max(1_209_600).default(86_400),
   SYNC_INVALIDATION_ENABLED: strictDefaultOnFeatureFlag
 });
 
@@ -112,6 +114,10 @@ export interface AppConfig {
   phoneAuthRegistrationTtlSeconds: number;
   phoneAuthRetryAfterSeconds: number;
   phoneAuthMaxAttempts: number;
+  /** Deliberate confirmation window between recovery start and completion. */
+  phoneAuthRecoveryDelaySeconds: number;
+  /** Bounded completion window measured from confirmAt. */
+  phoneAuthRecoveryTtlSeconds: number;
   /** Emergency rollback seam; false suppresses only sync.invalidated emission and delivery. */
   syncInvalidationEnabled: boolean;
 }
@@ -319,6 +325,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ) {
       throw new Error("PHONE_AUTH_DEVELOPMENT_CODE is valid only for the development provider");
     }
+    if (
+      parsed.NODE_ENV === "production"
+      && parsed.PHONE_AUTH_RECOVERY_DELAY_SECONDS < 3_600
+    ) {
+      throw new Error(
+        "PHONE_AUTH_RECOVERY_DELAY_SECONDS must be at least 3600 seconds in production"
+      );
+    }
   } else if (
     parsed.PHONE_AUTH_PROVIDER !== "disabled"
     || parsed.PHONE_AUTH_HMAC_SECRET !== undefined
@@ -430,6 +444,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     phoneAuthRegistrationTtlSeconds: parsed.PHONE_AUTH_REGISTRATION_TTL_SECONDS,
     phoneAuthRetryAfterSeconds: parsed.PHONE_AUTH_RETRY_AFTER_SECONDS,
     phoneAuthMaxAttempts: parsed.PHONE_AUTH_MAX_ATTEMPTS,
+    phoneAuthRecoveryDelaySeconds: parsed.PHONE_AUTH_RECOVERY_DELAY_SECONDS,
+    phoneAuthRecoveryTtlSeconds: parsed.PHONE_AUTH_RECOVERY_TTL_SECONDS,
     syncInvalidationEnabled: parsed.SYNC_INVALIDATION_ENABLED
   };
 }

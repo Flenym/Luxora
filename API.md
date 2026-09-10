@@ -94,17 +94,57 @@ an injected provider fails startup instead of advertising a broken flow.
    privacy defaults, device session and hash-only refresh record. `bio` may be
    empty. Exact committed retries recover the original encrypted token
    response; username and phone races cannot create a second account.
+6. `POST /v1/auth/phone/recovery/start` (10/minute/IP) accepts
+   `{passwordToken,clientNonce}` from a verified `password_required`
+   continuation and opens exactly one durable recovery intent per account.
+   `201` returns `{recoveryToken,maskedPhone,confirmAt,expiresAt}`. Completion
+   is forbidden until `confirmAt`; a second concurrent start for the same
+   account conflicts.
+7. `POST /v1/auth/phone/recovery/complete` (5/minute/IP) accepts
+   `{recoveryToken,password,deviceName,clientNonce}` where `password`
+   (12–128 characters) is the replacement value. Only at/after `confirmAt` and
+   before `expiresAt` does it atomically set the new phone-password hash,
+   revoke every active session and push registration of the account, create
+   the replacement device session and return the standard
+   `{status:"authenticated",user,tokens}` envelope. Before `confirmAt` the
+   server answers `403 PHONE_AUTH_RECOVERY_NOT_CONFIRMABLE` with a bounded
+   `retryAfterSeconds`; consumed/expired intents return
+   `401 PHONE_AUTH_RECOVERY_TOKEN_INVALID`.
 
 The local development provider uses a configured six-digit code but never
 logs or echoes it. Authenticated phone accounts can enable, change or disable
 the optional post-OTP secret password through the self-scoped endpoints below;
 changing or disabling an existing password requires the current value. A real
 phone password uses a separate Argon2id hash/flag and never enables the legacy
-username/password endpoint, so it cannot bypass the OTP step. A real
-SMS provider, legacy-account phone binding and independent password recovery
-are not complete yet. Profile avatars use the authenticated upload pipeline
-followed by the owned server-processing command below; arbitrary external
-avatar URLs remain outside the mutation contract.
+username/password endpoint, so it cannot bypass the OTP step. A real SMS
+provider remains an open release gate; recovery and binding work end-to-end
+against the development provider and are covered by dedicated integration
+suites. Profile avatars use the authenticated upload pipeline followed by the
+owned server-processing command below; arbitrary external avatar URLs remain
+outside the mutation contract.
+
+### Authenticated phone binding for legacy (password) accounts
+
+Accounts created through `POST /v1/auth/register` can attach one verified
+phone number while authenticated. Binding never reveals whether a number is
+already bound before the correct OTP: availability is decided only after
+verification, and the final attach is atomic.
+
+1. `POST /v1/me/phone/binding/challenges` (authenticated, 5/minute/IP) accepts
+   `{countryCode,nationalNumber,deviceName,clientNonce}` and returns the same
+   `{challengeId,maskedPhone,expiresAt,retryAfterSeconds}` envelope as login
+   challenges with the same durable resend window. An account that already
+   owns a phone identity receives `409`.
+2. `POST /v1/auth/phone/challenges/:challengeId/verify` also serves binding
+   challenges: a correct code returns
+   `{status:"binding_verified",bindingToken,maskedPhone,expiresAt}`. Wrong
+   codes consume the same bounded attempt budget and lock the challenge.
+3. `POST /v1/me/phone/binding/complete` (authenticated, 5/minute/IP) accepts
+   `{bindingToken,clientNonce}` and atomically inserts the phone identity for
+   the authenticated account only when the number is still unbound; a taken
+   number consumes the grant and returns `409`. Success returns
+   `{phonePassword:{eligible,enabled}}`, after which phone login works for
+   that number and the secret password can be enabled.
 
 ### `POST /v1/auth/register`
 

@@ -107,6 +107,76 @@ actor LuxoraAPIClient {
         )
     }
 
+    func startPhoneRecovery(
+        passwordToken: String,
+        clientNonce: UUID
+    ) async throws -> APIPhoneRecoveryStarted {
+        try await request(
+            path: "/v1/auth/phone/recovery/start",
+            method: "POST",
+            body: APIPhoneAuthenticationBody.recoveryStart(
+                passwordToken: passwordToken,
+                clientNonce: clientNonce
+            ),
+            token: nil
+        )
+    }
+
+    func completePhoneRecovery(
+        recoveryToken: String,
+        newPassword: String,
+        deviceName: String,
+        clientNonce: UUID
+    ) async throws -> APIAuthResponse {
+        try await request(
+            path: "/v1/auth/phone/recovery/complete",
+            method: "POST",
+            body: APIPhoneAuthenticationBody.recoveryComplete(
+                recoveryToken: recoveryToken,
+                newPassword: newPassword,
+                deviceName: deviceName,
+                clientNonce: clientNonce
+            ),
+            token: nil
+        )
+    }
+
+    func beginPhoneBinding(
+        countryCode: String,
+        nationalNumber: String,
+        deviceName: String,
+        clientNonce: UUID,
+        token: String
+    ) async throws -> APIPhoneCodeChallenge {
+        try await request(
+            path: "/v1/me/phone/binding/challenges",
+            method: "POST",
+            body: APIPhoneAuthenticationBody.bindingBegin(
+                countryCode: countryCode,
+                nationalNumber: nationalNumber,
+                deviceName: deviceName,
+                clientNonce: clientNonce
+            ),
+            token: token
+        )
+    }
+
+    func completePhoneBinding(
+        bindingToken: String,
+        clientNonce: UUID,
+        token: String
+    ) async throws -> APIPhoneBindingCompleted {
+        try await request(
+            path: "/v1/me/phone/binding/complete",
+            method: "POST",
+            body: APIPhoneAuthenticationBody.bindingComplete(
+                bindingToken: bindingToken,
+                clientNonce: clientNonce
+            ),
+            token: token
+        )
+    }
+
     func completePhoneRegistration(
         registrationToken: String,
         displayName: String,
@@ -1198,6 +1268,54 @@ enum APIPhoneAuthenticationBody {
             "passwordToken": passwordToken,
             "password": password,
             "deviceName": deviceName,
+            "clientNonce": clientNonce.apiPathComponent,
+        ]
+    }
+
+    static func recoveryStart(
+        passwordToken: String,
+        clientNonce: UUID
+    ) -> [String: String] {
+        [
+            "passwordToken": passwordToken,
+            "clientNonce": clientNonce.apiPathComponent,
+        ]
+    }
+
+    static func recoveryComplete(
+        recoveryToken: String,
+        newPassword: String,
+        deviceName: String,
+        clientNonce: UUID
+    ) -> [String: String] {
+        [
+            "recoveryToken": recoveryToken,
+            "password": newPassword,
+            "deviceName": deviceName,
+            "clientNonce": clientNonce.apiPathComponent,
+        ]
+    }
+
+    static func bindingBegin(
+        countryCode: String,
+        nationalNumber: String,
+        deviceName: String,
+        clientNonce: UUID
+    ) -> [String: String] {
+        [
+            "countryCode": countryCode,
+            "nationalNumber": nationalNumber,
+            "deviceName": deviceName,
+            "clientNonce": clientNonce.apiPathComponent,
+        ]
+    }
+
+    static func bindingComplete(
+        bindingToken: String,
+        clientNonce: UUID
+    ) -> [String: String] {
+        [
+            "bindingToken": bindingToken,
             "clientNonce": clientNonce.apiPathComponent,
         ]
     }

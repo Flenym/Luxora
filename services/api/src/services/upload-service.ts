@@ -104,6 +104,7 @@ function sessionMatches(upload: UploadSessionRecord, input: CreateUploadRequest,
 
 function publishChunk(temporaryPath: string, finalPath: string, directory: string): void {
   renameSync(temporaryPath, finalPath);
+  if (process.platform === "win32") return;
   const directoryHandle = openSync(directory, "r");
   try {
     fsyncSync(directoryHandle);
@@ -539,6 +540,7 @@ export class UploadService {
 
   async #removeStaging(uploadId: string): Promise<void> {
     await rm(this.#uploadDirectory(uploadId), { recursive: true, force: true });
+    if (process.platform === "win32") return;
     const root = await open(this.stagingRoot, "r");
     try {
       await root.sync();

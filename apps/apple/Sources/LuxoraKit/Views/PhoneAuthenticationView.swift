@@ -6,6 +6,7 @@ enum PhoneAuthenticationStep: String, Sendable {
     case phone
     case code
     case password
+    case recovery
     case profile
     case username
     case permissions
@@ -51,6 +52,8 @@ public struct LuxoraPhoneAuthenticationScreen: View {
     private let requestCode: @MainActor (String, String) async -> PhoneCodeChallenge?
     private let verifyCode: @MainActor (String, String) async -> PhoneCodeVerificationResult?
     private let completePassword: @MainActor (String, String) async -> Bool
+    private let startRecovery: @MainActor (String) async -> PhoneRecoveryIntent?
+    private let completeRecovery: @MainActor (String, String) async -> Bool
     private let checkUsername: @MainActor (String, String) async -> PhoneUsernameAvailability?
     private let completeRegistration: @MainActor (String, String, String, String) async -> Bool
     private let clearFailure: @MainActor () -> Void
@@ -65,6 +68,9 @@ public struct LuxoraPhoneAuthenticationScreen: View {
     @State private var password = ""
     @State private var passwordChallenge: PhonePasswordChallenge?
     @State private var revealsPassword = false
+    @State private var recoveryIntent: PhoneRecoveryIntent?
+    @State private var newPassword = ""
+    @State private var revealsNewPassword = false
     @State private var displayName = ""
     @State private var bio = ""
     @State private var username = ""
@@ -87,6 +93,7 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         case phone
         case code
         case password
+        case newPassword
         case displayName
         case bio
         case username
@@ -102,6 +109,8 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         requestCode: @escaping @MainActor (String, String) async -> PhoneCodeChallenge?,
         verifyCode: @escaping @MainActor (String, String) async -> PhoneCodeVerificationResult?,
         completePassword: @escaping @MainActor (String, String) async -> Bool,
+        startRecovery: @escaping @MainActor (String) async -> PhoneRecoveryIntent?,
+        completeRecovery: @escaping @MainActor (String, String) async -> Bool,
         checkUsername: @escaping @MainActor (String, String) async -> PhoneUsernameAvailability?,
         completeRegistration: @escaping @MainActor (String, String, String, String) async -> Bool,
         clearFailure: @escaping @MainActor () -> Void
@@ -114,6 +123,8 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         self.requestCode = requestCode
         self.verifyCode = verifyCode
         self.completePassword = completePassword
+        self.startRecovery = startRecovery
+        self.completeRecovery = completeRecovery
         self.checkUsername = checkUsername
         self.completeRegistration = completeRegistration
         self.clearFailure = clearFailure
@@ -162,6 +173,8 @@ public struct LuxoraPhoneAuthenticationScreen: View {
                     codeScreen
                 case .password:
                     passwordScreen
+                case .recovery:
+                    recoveryScreen
                 case .profile:
                     profileScreen
                 case .username:
@@ -598,6 +611,18 @@ public struct LuxoraPhoneAuthenticationScreen: View {
                     action: submitPassword
                 )
                 .accessibilityIdentifier("auth-phone-password-submit")
+
+                Button {
+                    transition(to: .recovery)
+                } label: {
+                    Text("Забыли пароль?")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.78))
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+                .padding(.top, 8)
+                .accessibilityIdentifier("auth-phone-password-recovery")
             }
 
             Text("Пароль передаётся только в теле защищённого запроса и не заменяет одноразовый код.")
@@ -605,6 +630,123 @@ public struct LuxoraPhoneAuthenticationScreen: View {
                 .foregroundStyle(Color.white.opacity(0.58))
                 .multilineTextAlignment(.center)
                 .padding(.top, 12)
+        }
+    }
+
+    private var recoveryScreen: some View {
+        PhoneAuthScrollableScreen(identifier: "auth-phone-recovery-screen") {
+            PhoneAuthBackButton { cancelRecovery() }
+
+            PhoneAuthStageSymbol(systemName: "key.horizontal.fill")
+                .padding(.top, 22)
+
+            if let intent = recoveryIntent {
+                PhoneAuthHeading(
+                    title: "Сброс пароля запущен",
+                    detail: "Заявка для \(intent.maskedPhone) создана. Это защита аккаунта: новый пароль можно задать после окна подтверждения."
+                )
+
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    if context.date >= intent.confirmAt {
+                        newPasswordFields
+                    } else {
+                        recoveryWaitingInfo(intent: intent)
+                    }
+                }
+
+                PhoneAuthMessage(message: visibleMessage, failure: authenticationFailure)
+
+                Spacer(minLength: 30)
+            } else {
+                PhoneAuthHeading(
+                    title: "Восстановление пароля",
+                    detail: "Luxora создаст заявку на сброс секретного пароля для \(passwordChallenge?.maskedPhone ?? "подтверждённого номера"). После окна подтверждения вы зададите новый пароль, а все другие сеансы выйдут из аккаунта."
+                )
+
+                PhoneAuthMessage(message: visibleMessage, failure: authenticationFailure)
+
+                Spacer(minLength: 30)
+
+                PhoneAuthPrimaryButton(
+                    title: authenticationFailure?.isRetryable == true ? "Повторить" : "Создать заявку на сброс",
+                    isWorking: isWorking,
+                    enabled: !isWorking,
+                    action: submitRecoveryStart
+                )
+                .accessibilityIdentifier("auth-phone-recovery-start")
+            }
+
+            Text("Сброс не отменяет проверку номера: заявка действует ограниченное время и срабатывает один раз.")
+                .font(.caption)
+                .foregroundStyle(Color.white.opacity(0.58))
+                .multilineTextAlignment(.center)
+                .padding(.top, 12)
+        }
+    }
+
+    private func recoveryWaitingInfo(intent: PhoneRecoveryIntent) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "hourglass")
+                .font(.title2)
+                .foregroundStyle(Color.white.opacity(0.72))
+            Text("Окно подтверждения до \(intent.confirmAt.formatted(date: .abbreviated, time: .shortened)).")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+            Text("Оставьте этот экран открытым или вернитесь позже — заявка сохранена на сервере.")
+                .font(.caption)
+                .foregroundStyle(Color.white.opacity(0.58))
+                .multilineTextAlignment(.center)
+        }
+        .padding(.top, 18)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("auth-phone-recovery-waiting")
+    }
+
+    private var newPasswordFields: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Group {
+                    if revealsNewPassword {
+                        TextField("Новый пароль", text: $newPassword)
+                    } else {
+                        SecureField("Новый пароль", text: $newPassword)
+                    }
+                }
+                .textContentType(.newPassword)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.go)
+                .focused($focusedField, equals: .newPassword)
+                .onSubmit(submitRecoveryCompletion)
+                .accessibilityLabel("Новый секретный пароль Luxora")
+                .accessibilityIdentifier("auth-phone-recovery-password")
+
+                Button {
+                    revealsNewPassword.toggle()
+                } label: {
+                    Image(systemName: revealsNewPassword ? "eye.slash.fill" : "eye.fill")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(revealsNewPassword ? "Скрыть пароль" : "Показать пароль")
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 4)
+            .frame(minHeight: 60)
+            .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+
+            PhoneAuthPrimaryButton(
+                title: "Сохранить пароль и войти",
+                isWorking: isWorking,
+                enabled: newPassword.count >= 12 && !isWorking,
+                action: submitRecoveryCompletion
+            )
+            .accessibilityIdentifier("auth-phone-recovery-complete")
+        }
+        .padding(.top, 18)
+        .onChange(of: newPassword) { _, value in
+            if value.count > 128 { newPassword = String(value.prefix(128)) }
+            localMessage = nil
         }
     }
 
@@ -1007,10 +1149,53 @@ public struct LuxoraPhoneAuthenticationScreen: View {
         clearFailure()
         password = ""
         passwordChallenge = nil
+        recoveryIntent = nil
+        newPassword = ""
         code = ""
         challenge = nil
         retryAvailableAt = nil
         transition(to: .phone)
+    }
+
+    private func cancelRecovery() {
+        clearFailure()
+        localMessage = nil
+        recoveryIntent = nil
+        newPassword = ""
+        focusedField = nil
+        transition(to: .password)
+    }
+
+    private func submitRecoveryStart() {
+        guard let passwordChallenge, !isWorking else { return }
+        focusedField = nil
+        localMessage = nil
+        Task { @MainActor in
+            recoveryIntent = await startRecovery(passwordChallenge.passwordToken)
+            if recoveryIntent == nil && authenticationFailure == nil {
+                localMessage = "Не удалось создать заявку. Нажмите «Повторить»."
+            }
+        }
+    }
+
+    private func submitRecoveryCompletion() {
+        guard let intent = recoveryIntent, !isWorking else { return }
+        guard Date() >= intent.confirmAt else {
+            localMessage = "Окно подтверждения ещё не закончилось."
+            return
+        }
+        guard newPassword.count >= 12 else {
+            localMessage = "Новый пароль должен содержать минимум 12 символов."
+            return
+        }
+        focusedField = nil
+        localMessage = nil
+        Task { @MainActor in
+            let success = await completeRecovery(intent.recoveryToken, newPassword)
+            if success {
+                transition(to: .sync)
+            }
+        }
     }
 
     private func submitProfile() {

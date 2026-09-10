@@ -296,6 +296,121 @@ final class PhoneAuthenticationContractTests: XCTestCase {
         }
     }
 
+    func testVerifyBindingVerifiedDecodesAdditiveUnionMember() throws {
+        let token = "luxbt_\(String(repeating: "b", count: 43))"
+        let result = try decoder.decode(
+            APIPhoneCodeVerificationResult.self,
+            from: Data(
+                """
+                {"status":"binding_verified","bindingToken":"\(token)","maskedPhone":"+7 ••• •••-42-18","expiresAt":"2026-08-04T15:00:00Z"}
+                """.utf8
+            )
+        )
+
+        guard case let .bindingVerified(grant) = result else {
+            return XCTFail("Expected binding_verified result")
+        }
+        XCTAssertEqual(grant.bindingToken, token)
+        XCTAssertEqual(grant.maskedPhone, "+7 ••• •••-42-18")
+
+        let publicGrant = PhoneBindingGrant(response: grant)
+        XCTAssertEqual(publicGrant.bindingToken, token)
+    }
+
+    func testRecoveryStartedDecodesConfirmationWindowContract() throws {
+        let token = "luxrc_\(String(repeating: "c", count: 43))"
+        let response = try decoder.decode(
+            APIPhoneRecoveryStarted.self,
+            from: Data(
+                """
+                {"recoveryToken":"\(token)","maskedPhone":"+7 ••• •••-42-18","confirmAt":"2026-09-10T12:05:00Z","expiresAt":"2026-09-11T12:05:00Z"}
+                """.utf8
+            )
+        )
+
+        let intent = PhoneRecoveryIntent(response: response)
+        XCTAssertEqual(intent.recoveryToken, token)
+        XCTAssertEqual(intent.confirmAt, Date(timeIntervalSince1970: 1_760_111_700))
+        XCTAssertTrue(intent.expiresAt > intent.confirmAt)
+    }
+
+    func testRecoveryBodiesHaveExactFieldsAndUUIDv4Nonce() {
+        let startNonce = UUID.clientNonceV4()
+        let startBody = APIPhoneAuthenticationBody.recoveryStart(
+            passwordToken: "luxpw_token",
+            clientNonce: startNonce
+        )
+        XCTAssertEqual(
+            Set(startBody.keys),
+            ["passwordToken", "clientNonce"]
+        )
+        assertUUIDv4(UUID(uuidString: startBody["clientNonce"]!)!)
+
+        let completeNonce = UUID.clientNonceV4()
+        let completeBody = APIPhoneAuthenticationBody.recoveryComplete(
+            recoveryToken: "luxrc_token",
+            newPassword: "replacement secret phrase",
+            deviceName: "iPhone",
+            clientNonce: completeNonce
+        )
+        XCTAssertEqual(
+            Set(completeBody.keys),
+            ["recoveryToken", "password", "deviceName", "clientNonce"]
+        )
+        XCTAssertEqual(completeBody["password"], "replacement secret phrase")
+        assertUUIDv4(UUID(uuidString: completeBody["clientNonce"]!)!)
+    }
+
+    func testBindingBodiesHaveExactFieldsAndUUIDv4Nonce() {
+        let beginNonce = UUID.clientNonceV4()
+        let beginBody = APIPhoneAuthenticationBody.bindingBegin(
+            countryCode: "7",
+            nationalNumber: "9250001122",
+            deviceName: "iPhone",
+            clientNonce: beginNonce
+        )
+        XCTAssertEqual(
+            Set(beginBody.keys),
+            ["countryCode", "nationalNumber", "deviceName", "clientNonce"]
+        )
+        assertUUIDv4(UUID(uuidString: beginBody["clientNonce"]!)!)
+
+        let completeNonce = UUID.clientNonceV4()
+        let completeBody = APIPhoneAuthenticationBody.bindingComplete(
+            bindingToken: "luxbt_token",
+            clientNonce: completeNonce
+        )
+        XCTAssertEqual(
+            Set(completeBody.keys),
+            ["bindingToken", "clientNonce"]
+        )
+        assertUUIDv4(UUID(uuidString: completeBody["clientNonce"]!)!)
+    }
+
+    func testRecoveryFailuresClassifyServerCodes() {
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(
+                    status: 401,
+                    code: "PHONE_AUTH_RECOVERY_TOKEN_INVALID",
+                    message: "invalid"
+                )
+            ),
+            .recoveryTokenExpired
+        )
+        XCTAssertEqual(
+            PhoneAuthenticationFailure.classify(
+                LuxoraAPIError.server(
+                    status: 403,
+                    code: "PHONE_AUTH_RECOVERY_NOT_CONFIRMABLE",
+                    message: "Retry after 42 seconds"
+                )
+            ),
+            .recoveryNotConfirmable(seconds: 42)
+        )
+        XCTAssertFalse(PhoneAuthenticationFailure.recoveryNotConfirmable(seconds: 5).retainsIdempotencyCommand)
+    }
+
     private var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

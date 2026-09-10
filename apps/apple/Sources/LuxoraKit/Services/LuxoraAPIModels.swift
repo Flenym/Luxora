@@ -346,6 +346,33 @@ public enum PhoneCodeVerificationResult: Equatable, Sendable {
     case authenticated
     case profileRequired(PhoneRegistrationChallenge)
     case passwordRequired(PhonePasswordChallenge)
+    case bindingRequired(PhoneBindingGrant)
+}
+
+public struct PhoneRecoveryIntent: Equatable, Sendable {
+    public let recoveryToken: String
+    public let maskedPhone: String
+    public let confirmAt: Date
+    public let expiresAt: Date
+
+    init(response: APIPhoneRecoveryStarted) {
+        recoveryToken = response.recoveryToken
+        maskedPhone = response.maskedPhone
+        confirmAt = response.confirmAt
+        expiresAt = response.expiresAt
+    }
+}
+
+public struct PhoneBindingGrant: Equatable, Sendable {
+    public let bindingToken: String
+    public let maskedPhone: String
+    public let expiresAt: Date
+
+    init(response: APIPhoneBindingVerified) {
+        bindingToken = response.bindingToken
+        maskedPhone = response.maskedPhone
+        expiresAt = response.expiresAt
+    }
 }
 
 public struct PhonePasswordStatus: Equatable, Sendable {
@@ -498,6 +525,23 @@ struct APIPhonePasswordStatus: Decodable, Sendable {
     let enabled: Bool
 }
 
+struct APIPhoneRecoveryStarted: Decodable, Sendable {
+    let recoveryToken: String
+    let maskedPhone: String
+    let confirmAt: Date
+    let expiresAt: Date
+}
+
+struct APIPhoneBindingVerified: Decodable, Sendable {
+    let bindingToken: String
+    let maskedPhone: String
+    let expiresAt: Date
+}
+
+struct APIPhoneBindingCompleted: Decodable, Sendable {
+    let phonePassword: APIPhonePasswordStatus
+}
+
 struct APIPushRegistration: Decodable, Sendable {
     let id: UUID
     let platform: String
@@ -527,6 +571,7 @@ enum APIPhoneCodeVerificationResult: Decodable, Sendable {
     case authenticated(APIAuthResponse)
     case profileRequired(APIPhoneRegistrationChallenge)
     case passwordRequired(APIPhonePasswordChallenge)
+    case bindingVerified(APIPhoneBindingVerified)
 
     private enum CodingKeys: String, CodingKey {
         case status
@@ -534,6 +579,7 @@ enum APIPhoneCodeVerificationResult: Decodable, Sendable {
         case tokens
         case registrationToken
         case passwordToken
+        case bindingToken
         case maskedPhone
         case expiresAt
     }
@@ -542,6 +588,7 @@ enum APIPhoneCodeVerificationResult: Decodable, Sendable {
         case authenticated
         case profileRequired = "profile_required"
         case passwordRequired = "password_required"
+        case bindingVerified = "binding_verified"
     }
 
     init(from decoder: Decoder) throws {
@@ -566,6 +613,14 @@ enum APIPhoneCodeVerificationResult: Decodable, Sendable {
             self = .passwordRequired(
                 APIPhonePasswordChallenge(
                     passwordToken: try container.decode(String.self, forKey: .passwordToken),
+                    maskedPhone: try container.decode(String.self, forKey: .maskedPhone),
+                    expiresAt: try container.decode(Date.self, forKey: .expiresAt)
+                )
+            )
+        case .bindingVerified:
+            self = .bindingVerified(
+                APIPhoneBindingVerified(
+                    bindingToken: try container.decode(String.self, forKey: .bindingToken),
                     maskedPhone: try container.decode(String.self, forKey: .maskedPhone),
                     expiresAt: try container.decode(Date.self, forKey: .expiresAt)
                 )

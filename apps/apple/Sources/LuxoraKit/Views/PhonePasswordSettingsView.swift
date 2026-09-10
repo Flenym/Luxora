@@ -4,11 +4,12 @@ import UIKit
 
 struct PhonePasswordSettingsView: View {
     let store: PhonePasswordSettingsStore?
+    var bindingStore: PhoneBindingStore?
 
     var body: some View {
         Group {
             if let store {
-                LoadedPhonePasswordSettingsView(store: store)
+                LoadedPhonePasswordSettingsView(store: store, bindingStore: bindingStore)
             } else {
                 ContentUnavailableView(
                     "Настройка недоступна",
@@ -30,6 +31,11 @@ private struct LoadedPhonePasswordSettingsView: View {
     }
 
     @Bindable var store: PhonePasswordSettingsStore
+    let bindingStore: PhoneBindingStore?
+
+    @State private var bindingCountryCode = "7"
+    @State private var bindingNationalNumber = ""
+    @State private var bindingCode = ""
 
     @State private var currentPassword = ""
     @State private var newPassword = ""
@@ -53,6 +59,8 @@ private struct LoadedPhonePasswordSettingsView: View {
             if let status = store.status, status.eligible {
                 configureSection(status: status)
                 if status.enabled { disableSection }
+            } else if let bindingStore {
+                bindingSection(store: bindingStore)
             }
 
             if case let .failed(message) = store.mutationState {
@@ -143,8 +151,114 @@ private struct LoadedPhonePasswordSettingsView: View {
     }
 
     @ViewBuilder
-    private func configureSection(status: PhonePasswordStatus) -> some View {
-        Section(status.enabled ? "Изменить пароль" : "Включить пароль") {
+    private func bindingSection(store: PhoneBindingStore) -> some View {
+        Section("Подтвердить номер телефона") {
+            Text("Номер нужен для входа по телефону и секретного пароля. Код придёт в SMS на указанный номер.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("phone-binding-intro")
+
+            switch store.phase {
+            case .idle:
+                bindingNumberFields(store: store)
+            case .challengeSent:
+                bindingCodeFields(store: store)
+            case .verified:
+                Label(
+                    "Номер подтверждён кодом. Осталось завершить привязку.",
+                    systemImage: "checkmark.circle.fill"
+                )
+                .accessibilityIdentifier("phone-binding-verified")
+                Button("Привязать номер") {
+                    Task { await completeBinding(store: store) }
+                }
+                .accessibilityIdentifier("phone-binding-complete")
+            case .bound:
+                Label(
+                    "Номер привязан. Теперь можно включить секретный пароль.",
+                    systemImage: "checkmark.shield.fill"
+                )
+                .foregroundStyle(LuxoraTheme.success)
+                .accessibilityIdentifier("phone-binding-done")
+            }
+
+            if let failure = store.failureMessage, !failure.isEmpty {
+                Label(failure, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("phone-binding-error")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func bindingNumberFields(store: PhoneBindingStore) -> some View {
+        HStack(spacing: 10) {
+            TextField("Код", text: $bindingCountryCode)
+                .keyboardType(.numberPad)
+                .frame(maxWidth: 64)
+                .accessibilityIdentifier("phone-binding-country")
+
+            TextField("Номер без кода страны", text: $bindingNationalNumber)
+                .keyboardType(.phonePad)
+                .accessibilityIdentifier("phone-binding-number")
+        }
+        .autocorrectionDisabled()
+
+        Button("Получить код") {
+            Task {
+                let started = await store.begin(
+                    countryCode: bindingCountryCode,
+                    nationalNumber: bindingNationalNumber
+                )
+                if started { bindingCode = "" }
+            }
+        }
+        .disabled(
+            bindingNationalNumber.filter(\.isNumber).count < 4
+                || bindingCountryCode.filter(\.isNumber).isEmpty
+        )
+        .accessibilityIdentifier("phone-binding-begin")
+    }
+
+    @ViewBuilder
+    private func bindingCodeFields(store: PhoneBindingStore) -> some View {
+        if let challenge = store.challenge {
+            Text("Код отправлен на \(challenge.maskedPhone).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        TextField("Шесть цифр из SMS", text: $bindingCode)
+            .keyboardType(.numberPad)
+            .accessibilityIdentifier("phone-binding-code")
+            .onChange(of: bindingCode) { _, value in
+                if value.count > 6 { bindingCode = String(value.prefix(6)) }
+            }
+
+        Button("Подтвердить код") {
+            Task { await store.verify(code: bindingCode) }
+        }
+        .disabled(bindingCode.count != 6)
+        .accessibilityIdentifier("phone-binding-verify")
+
+        Button("Изменить номер", role: .destructive) {
+            store.reset()
+            bindingNationalNumber = ""
+            bindingCode = ""
+        }
+        .accessibilityIdentifier("phone-binding-restart")
+    }
+
+    private func completeBinding(store: PhoneBindingStore) async {
+        let bound = await store.complete()
+        if bound {
+            await self.store.refresh(force: true)
+        }
+    }
+
+    @ViewBuilder
+    private func configureSection(status: PhonePasswordStatus) -> some View {        Section(status.enabled ? "Изменить пароль" : "Включить пароль") {
             if status.enabled {
                 passwordField(
                     title: "Текущий пароль",

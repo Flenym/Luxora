@@ -73,8 +73,16 @@ import type {
   CommitPhoneAuthProfileRequired,
   CommitPhoneAuthRegistration,
   CommitPhoneAuthRejected,
+  CommitPhoneBindingCompleted,
+  CommitPhoneBindingRejected,
+  CommitPhoneBindingVerified,
+  CommitPhoneRecoveryCompleted,
+  NewPhoneBindingChallenge,
+  NewPhoneRecoveryIntent,
   PhoneAuthReceiptInput,
   PhoneAuthPasswordReceiptInput,
+  PhoneBindingReceiptInput,
+  PhoneRecoveryReceiptInput,
   PersistPasskeyLoginBegin,
   PersistPasskeyLoginRejectedAttempt,
   PersistPasskeyLoginTerminal,
@@ -123,7 +131,10 @@ import type {
   PhoneAuthChallengeState,
   PhoneAuthCommandReceiptRecord,
   PhoneAuthPasswordReceiptRecord,
+  PhoneBindingChallengeRecord,
+  PhoneBindingReceiptRecord,
   PhoneIdentityRecord,
+  PhoneRecoveryIntentRecord,
   PrivacySettingsRecord,
   PushRegistrationRecord,
   RefreshTokenRecord,
@@ -232,6 +243,64 @@ interface PhoneAuthPasswordReceiptRow {
   fingerprint: string;
   challenge_id: string;
   result_kind: PhoneAuthPasswordReceiptRecord["resultKind"];
+  response_ciphertext: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
+interface PhoneRecoveryIntentRow {
+  id: string;
+  challenge_id: string;
+  user_id: string;
+  phone_digest: string;
+  recovery_token_hash: string;
+  state: "pending" | "completed";
+  created_at: string;
+  confirm_at: string;
+  expires_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+interface PhoneRecoveryReceiptRow {
+  scope: string;
+  fingerprint: string;
+  intent_id: string;
+  result_kind: "started" | "completed";
+  response_ciphertext: string;
+  created_at: string;
+  expires_at: string;
+}
+
+interface PhoneBindingChallengeRow {
+  id: string;
+  user_id: string;
+  phone_digest: string;
+  phone_ciphertext: string;
+  code_digest: string;
+  delivery_code_ciphertext: string | null;
+  state: PhoneAuthChallengeState;
+  revision: number;
+  attempts_used: number;
+  max_attempts: number;
+  begin_client_nonce: string;
+  begin_fingerprint: string;
+  masked_phone: string;
+  created_at: string;
+  expires_at: string;
+  retry_after_seconds: number;
+  updated_at: string;
+  verified_at: string | null;
+  consumed_at: string | null;
+  binding_token_hash: string | null;
+  binding_expires_at: string | null;
+}
+
+interface PhoneBindingReceiptRow {
+  scope: string;
+  fingerprint: string;
+  challenge_id: string;
+  result_kind: PhoneBindingReceiptRecord["resultKind"];
   response_ciphertext: string | null;
   created_at: string;
   expires_at: string;
@@ -2781,15 +2850,20 @@ export class SqliteStore implements Store {
       mkdirSync(dirname(resolve(databasePath)), { recursive: true });
     }
     this.#db = new Database(databasePath);
-    // Keep each WAL bootstrap attempt shorter than the monotonic retry window;
-    // the regular transaction wait policy is restored immediately afterwards.
-    this.#db.pragma(`busy_timeout = ${WAL_BOOTSTRAP_RETRY_DELAY_MS}`);
-    this.#db.pragma("foreign_keys = ON");
-    enableWalWithBoundedBusyRetry(this.#db, databasePath);
-    this.#db.pragma("busy_timeout = 5000");
-    this.#db.pragma("synchronous = NORMAL");
-    this.#migrate();
-    this.#backfillPasskeyAuthenticatorMetadata();
+    try {
+      // Keep each WAL bootstrap attempt shorter than the monotonic retry window;
+      // the regular transaction wait policy is restored immediately afterwards.
+      this.#db.pragma(`busy_timeout = ${WAL_BOOTSTRAP_RETRY_DELAY_MS}`);
+      this.#db.pragma("foreign_keys = ON");
+      enableWalWithBoundedBusyRetry(this.#db, databasePath);
+      this.#db.pragma("busy_timeout = 5000");
+      this.#db.pragma("synchronous = NORMAL");
+      this.#migrate();
+      this.#backfillPasskeyAuthenticatorMetadata();
+    } catch (error) {
+      this.#db.close();
+      throw error;
+    }
   }
 
   #migrate(): void {
@@ -6369,6 +6443,526 @@ export class SqliteStore implements Store {
         challengeId: input.challengeId,
         observedRevision: input.expectedRevision + 1,
         eventType: "phone.challenge.password_authenticated",
+        commandScope: input.receipt.scope,
+        occurredAt: input.receipt.createdAt
+      });
+      return true;
+    }).immediate();
+  }
+
+  #mapPhoneRecoveryIntent(row: PhoneRecoveryIntentRow): PhoneRecoveryIntentRecord {
+    return {
+      id: row.id,
+      challengeId: row.challenge_id,
+      userId: row.user_id,
+      phoneDigest: row.phone_digest,
+      recoveryTokenHash: row.recovery_token_hash,
+      state: row.state,
+      createdAt: row.created_at,
+      confirmAt: row.confirm_at,
+      expiresAt: row.expires_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at
+    };
+  }
+
+  createPhoneRecoveryIntent(
+    input: { intent: NewPhoneRecoveryIntent; receipt: PhoneRecoveryReceiptInput }
+  ): boolean {
+    return this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        INSERT INTO phone_recovery_intents (
+          id, challenge_id, user_id, phone_digest, recovery_token_hash,
+          state, created_at, confirm_at, expires_at, updated_at
+        )
+        SELECT
+          @id, @challengeId, @userId, @phoneDigest, @recoveryTokenHash,
+          'pending', @createdAt, @confirmAt, @expiresAt, @createdAt
+        WHERE NOT EXISTS (
+          SELECT 1 FROM phone_recovery_intents active
+          WHERE active.user_id = @userId AND active.state = 'pending'
+        )
+      `).run(input.intent);
+      if (result.changes !== 1) return false;
+      this.#db.prepare(`
+        INSERT INTO phone_recovery_receipts (
+          scope, fingerprint, intent_id, result_kind,
+          response_ciphertext, created_at, expires_at
+        ) VALUES (
+          @scope, @fingerprint, @intentId, @resultKind,
+          @responseCiphertext, @createdAt, @expiresAt
+        )
+      `).run({
+        ...input.receipt,
+        responseCiphertext: this.contentCipher.encrypt(
+          input.receipt.responseJson,
+          `phone-recovery-receipt:${input.receipt.scope}`
+        )
+      });
+      this.#db.prepare(`
+        INSERT INTO phone_recovery_events (
+          event_id, intent_id, event_type, command_scope, occurred_at
+        ) VALUES (?, ?, 'phone.recovery.started', ?, ?)
+      `).run(
+        randomUUID(),
+        input.intent.id,
+        input.receipt.scope,
+        input.intent.createdAt
+      );
+      return true;
+    }).immediate();
+  }
+
+  findPhoneRecoveryIntentByTokenHash(tokenHash: string): PhoneRecoveryIntentRecord | null {
+    const row = this.#db.prepare(
+      "SELECT * FROM phone_recovery_intents WHERE recovery_token_hash = ?"
+    ).get(tokenHash) as PhoneRecoveryIntentRow | undefined;
+    return row === undefined ? null : this.#mapPhoneRecoveryIntent(row);
+  }
+
+  findPhoneRecoveryReceipt(scope: string): PhoneRecoveryReceiptInput | null {
+    const row = this.#db.prepare(
+      "SELECT * FROM phone_recovery_receipts WHERE scope = ?"
+    ).get(scope) as PhoneRecoveryReceiptRow | undefined;
+    if (row === undefined) return null;
+    return {
+      scope: row.scope,
+      fingerprint: row.fingerprint,
+      intentId: row.intent_id,
+      resultKind: row.result_kind,
+      responseJson: this.contentCipher.decrypt(
+        row.response_ciphertext,
+        `phone-recovery-receipt:${row.scope}`
+      ),
+      createdAt: row.created_at,
+      expiresAt: row.expires_at
+    };
+  }
+
+  commitPhoneRecoveryCompleted(input: CommitPhoneRecoveryCompleted): boolean {
+    return this.#db.transaction(() => {
+      const intent = this.#db.prepare(`
+        SELECT * FROM phone_recovery_intents
+        WHERE id = @intentId
+          AND user_id = @userId
+          AND state = 'pending'
+          AND confirm_at <= @createdAt
+          AND expires_at > @createdAt
+      `).get({ ...input, ...input.receipt }) as PhoneRecoveryIntentRow | undefined;
+      if (intent === undefined) return false;
+      const disabled = this.#db.prepare(`
+        UPDATE users
+        SET phone_password_hash = @nextPhonePasswordHash,
+            phone_password_enabled = 1,
+            updated_at = @createdAt
+        WHERE id = @userId
+          AND phone_password_enabled = 1
+          AND phone_password_hash IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM phone_identities identities WHERE identities.user_id = users.id
+          )
+      `).run({ ...input, ...input.receipt });
+      if (disabled.changes !== 1) return false;
+      this.#db.prepare(`
+        UPDATE device_sessions
+        SET revoked_at = COALESCE(revoked_at, @createdAt)
+        WHERE user_id = @userId AND revoked_at IS NULL
+      `).run({ userId: input.userId, createdAt: input.receipt.createdAt });
+      this.#db.prepare(`
+        UPDATE push_registrations
+        SET revoked_at = COALESCE(revoked_at, @createdAt)
+        WHERE user_id = @userId AND revoked_at IS NULL
+      `).run({ userId: input.userId, createdAt: input.receipt.createdAt });
+      this.createSession(input.session, input.refreshToken);
+      const completed = this.#db.prepare(`
+        UPDATE phone_recovery_intents
+        SET state = 'completed', completed_at = @createdAt, updated_at = @createdAt
+        WHERE id = @intentId
+          AND state = 'pending'
+          AND confirm_at <= @createdAt
+          AND expires_at > @createdAt
+      `).run({ ...input, ...input.receipt });
+      if (completed.changes !== 1) {
+        throw new Error("Phone recovery intent changed during completion commit");
+      }
+      this.#db.prepare(`
+        INSERT INTO phone_recovery_receipts (
+          scope, fingerprint, intent_id, result_kind,
+          response_ciphertext, created_at, expires_at
+        ) VALUES (
+          @scope, @fingerprint, @intentId, @resultKind,
+          @responseCiphertext, @createdAt, @expiresAt
+        )
+      `).run({
+        ...input.receipt,
+        responseCiphertext: this.contentCipher.encrypt(
+          input.receipt.responseJson,
+          `phone-recovery-receipt:${input.receipt.scope}`
+        )
+      });
+      this.#db.prepare(`
+        INSERT INTO phone_recovery_events (
+          event_id, intent_id, event_type, command_scope, occurred_at
+        ) VALUES (?, ?, 'phone.recovery.completed', ?, ?)
+      `).run(
+        randomUUID(),
+        input.intentId,
+        input.receipt.scope,
+        input.receipt.createdAt
+      );
+      return true;
+    }).immediate();
+  }
+
+  commitPhoneBindingIdentityTaken(input: {
+    challengeId: string;
+    expectedRevision: number;
+    bindingTokenHash: string;
+    receipt: PhoneBindingReceiptInput & { resultKind: "phone_unavailable" };
+  }): boolean {
+    return this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        UPDATE phone_binding_challenges
+        SET state = 'consumed', revision = revision + 1,
+            consumed_at = @createdAt, updated_at = @createdAt
+        WHERE id = @challengeId
+          AND revision = @expectedRevision
+          AND state = 'verified'
+          AND binding_token_hash = @bindingTokenHash
+      `).run({ ...input, ...input.receipt });
+      if (result.changes !== 1) return false;
+      this.#insertPhoneBindingReceipt(input.receipt);
+      this.#insertPhoneBindingEvent({
+        challengeId: input.challengeId,
+        revision: input.expectedRevision + 1,
+        eventType: "phone.binding.completed",
+        commandScope: input.receipt.scope,
+        occurredAt: input.receipt.createdAt
+      });
+      return true;
+    }).immediate();
+  }
+
+  #mapPhoneBindingChallenge(row: PhoneBindingChallengeRow): PhoneBindingChallengeRecord {
+    return {
+      id: row.id,
+      userId: row.user_id,
+      phoneDigest: row.phone_digest,
+      e164: this.contentCipher.decrypt(row.phone_ciphertext, `phone-binding:${row.id}:number`),
+      codeDigest: row.code_digest,
+      deliveryCode: row.delivery_code_ciphertext === null
+        ? null
+        : this.contentCipher.decrypt(
+            row.delivery_code_ciphertext,
+            `phone-binding:${row.id}:delivery-code`
+          ),
+      state: row.state,
+      revision: row.revision,
+      attemptsUsed: row.attempts_used,
+      maxAttempts: row.max_attempts,
+      beginClientNonce: row.begin_client_nonce,
+      beginFingerprint: row.begin_fingerprint,
+      maskedPhone: this.contentCipher.decrypt(
+        row.masked_phone,
+        `phone-binding:${row.id}:masked-phone`
+      ),
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      retryAfterSeconds: row.retry_after_seconds,
+      updatedAt: row.updated_at,
+      verifiedAt: row.verified_at,
+      consumedAt: row.consumed_at,
+      bindingTokenHash: row.binding_token_hash,
+      bindingExpiresAt: row.binding_expires_at
+    };
+  }
+
+  #insertPhoneBindingEvent(input: {
+    challengeId: string;
+    revision: number;
+    eventType:
+      | "phone.binding.created"
+      | "phone.binding.delivered"
+      | "phone.binding.delivery_failed"
+      | "phone.binding.verification_rejected"
+      | "phone.binding.verified"
+      | "phone.binding.completed";
+    commandScope: string;
+    occurredAt: string;
+  }): void {
+    this.#db.prepare(`
+      INSERT INTO phone_binding_events (
+        event_id, challenge_id, revision, event_type, command_scope, occurred_at
+      ) VALUES (@eventId, @challengeId, @revision, @eventType, @commandScope, @occurredAt)
+    `).run({ ...input, eventId: randomUUID() });
+  }
+
+  createPhoneBindingChallenge(
+    challenge: NewPhoneBindingChallenge
+  ): PhoneBindingChallengeRecord | null {
+    const created = this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        INSERT INTO phone_binding_challenges (
+          id, user_id, phone_digest, phone_ciphertext, code_digest,
+          delivery_code_ciphertext, state, revision, attempts_used, max_attempts,
+          begin_client_nonce, begin_fingerprint, masked_phone, created_at, expires_at,
+          retry_after_seconds, updated_at
+        )
+        SELECT
+          @id, @userId, @phoneDigest, @phoneCiphertext, @codeDigest,
+          @deliveryCodeCiphertext, 'pending_delivery', 1, 0, @maxAttempts,
+          @beginClientNonce, @beginFingerprint, @maskedPhone, @createdAt, @expiresAt,
+          @retryAfterSeconds, @createdAt
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM phone_binding_challenges recent
+          WHERE recent.user_id = @userId
+            AND recent.phone_digest = @phoneDigest
+            AND recent.state <> 'consumed'
+            AND julianday(recent.created_at)
+              + (recent.retry_after_seconds / 86400.0) > julianday(@createdAt)
+        )
+      `).run({
+        ...challenge,
+        phoneCiphertext: this.contentCipher.encrypt(
+          challenge.e164,
+          `phone-binding:${challenge.id}:number`
+        ),
+        deliveryCodeCiphertext: this.contentCipher.encrypt(
+          challenge.deliveryCode,
+          `phone-binding:${challenge.id}:delivery-code`
+        ),
+        maskedPhone: this.contentCipher.encrypt(
+          challenge.maskedPhone,
+          `phone-binding:${challenge.id}:masked-phone`
+        )
+      });
+      if (result.changes !== 1) return false;
+      this.#insertPhoneBindingEvent({
+        challengeId: challenge.id,
+        revision: 1,
+        eventType: "phone.binding.created",
+        commandScope: `binding-begin:${challenge.beginClientNonce}`,
+        occurredAt: challenge.createdAt
+      });
+      return true;
+    }).immediate();
+    return created
+      ? this.findPhoneBindingChallengeById(challenge.id) as PhoneBindingChallengeRecord
+      : null;
+  }
+
+  findPhoneBindingChallengeById(id: string): PhoneBindingChallengeRecord | null {
+    const row = this.#db.prepare("SELECT * FROM phone_binding_challenges WHERE id = ?")
+      .get(id) as PhoneBindingChallengeRow | undefined;
+    return row === undefined ? null : this.#mapPhoneBindingChallenge(row);
+  }
+
+  findPhoneBindingChallengeByBeginNonce(clientNonce: string): PhoneBindingChallengeRecord | null {
+    const row = this.#db.prepare(
+      "SELECT * FROM phone_binding_challenges WHERE begin_client_nonce = ?"
+    ).get(clientNonce) as PhoneBindingChallengeRow | undefined;
+    return row === undefined ? null : this.#mapPhoneBindingChallenge(row);
+  }
+
+  findPhoneBindingChallengeByTokenHash(tokenHash: string): PhoneBindingChallengeRecord | null {
+    const row = this.#db.prepare(
+      "SELECT * FROM phone_binding_challenges WHERE binding_token_hash = ?"
+    ).get(tokenHash) as PhoneBindingChallengeRow | undefined;
+    return row === undefined ? null : this.#mapPhoneBindingChallenge(row);
+  }
+
+  activatePhoneBindingChallenge(id: string, expectedRevision: number, at: string): boolean {
+    return this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        UPDATE phone_binding_challenges
+        SET state = 'pending', revision = revision + 1,
+            delivery_code_ciphertext = NULL, updated_at = @at
+        WHERE id = @id AND revision = @expectedRevision AND state = 'pending_delivery'
+      `).run({ id, expectedRevision, at });
+      if (result.changes !== 1) return false;
+      this.#insertPhoneBindingEvent({
+        challengeId: id,
+        revision: expectedRevision + 1,
+        eventType: "phone.binding.delivered",
+        commandScope: `binding-delivered:${id}`,
+        occurredAt: at
+      });
+      return true;
+    }).immediate();
+  }
+
+  failPhoneBindingChallengeDelivery(id: string, expectedRevision: number, at: string): boolean {
+    return this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        UPDATE phone_binding_challenges
+        SET state = 'locked', revision = revision + 1,
+            delivery_code_ciphertext = NULL, updated_at = @at
+        WHERE id = @id AND revision = @expectedRevision AND state = 'pending_delivery'
+      `).run({ id, expectedRevision, at });
+      if (result.changes !== 1) return false;
+      this.#insertPhoneBindingEvent({
+        challengeId: id,
+        revision: expectedRevision + 1,
+        eventType: "phone.binding.delivery_failed",
+        commandScope: `binding-delivery:${id}`,
+        occurredAt: at
+      });
+      return true;
+    }).immediate();
+  }
+
+  findPhoneBindingReceipt(scope: string): PhoneBindingReceiptRecord | null {
+    const row = this.#db.prepare(
+      "SELECT * FROM phone_binding_receipts WHERE scope = ?"
+    ).get(scope) as PhoneBindingReceiptRow | undefined;
+    if (row === undefined) return null;
+    return {
+      scope: row.scope,
+      fingerprint: row.fingerprint,
+      challengeId: row.challenge_id,
+      resultKind: row.result_kind,
+      responseJson: row.response_ciphertext === null
+        ? null
+        : this.contentCipher.decrypt(
+            row.response_ciphertext,
+            `phone-binding-receipt:${row.scope}`
+          ),
+      createdAt: row.created_at,
+      expiresAt: row.expires_at
+    };
+  }
+
+  #insertPhoneBindingReceipt(receipt: PhoneBindingReceiptInput): void {
+    this.#db.prepare(`
+      INSERT INTO phone_binding_receipts (
+        scope, fingerprint, challenge_id, result_kind,
+        response_ciphertext, created_at, expires_at
+      ) VALUES (
+        @scope, @fingerprint, @challengeId, @resultKind,
+        @responseCiphertext, @createdAt, @expiresAt
+      )
+    `).run({
+      ...receipt,
+      responseCiphertext: receipt.responseJson === null
+        ? null
+        : this.contentCipher.encrypt(
+            receipt.responseJson,
+            `phone-binding-receipt:${receipt.scope}`
+          )
+    });
+  }
+
+  commitPhoneBindingRejected(input: CommitPhoneBindingRejected): boolean {
+    return this.#db.transaction(() => {
+      const incrementAttempt = input.nextState === "expired" ? 0 : 1;
+      const result = this.#db.prepare(`
+        UPDATE phone_binding_challenges
+        SET state = @nextState, revision = revision + 1,
+            attempts_used = attempts_used + @incrementAttempt, updated_at = @createdAt
+        WHERE id = @challengeId
+          AND revision = @expectedRevision
+          AND state = 'pending'
+          AND attempts_used + @incrementAttempt <= max_attempts
+      `).run({
+        ...input,
+        ...input.receipt,
+        incrementAttempt
+      });
+      if (result.changes !== 1) return false;
+      this.#insertPhoneBindingReceipt(input.receipt);
+      this.#insertPhoneBindingEvent({
+        challengeId: input.challengeId,
+        revision: input.expectedRevision + 1,
+        eventType: "phone.binding.verification_rejected",
+        commandScope: input.receipt.scope,
+        occurredAt: input.receipt.createdAt
+      });
+      return true;
+    }).immediate();
+  }
+
+  commitPhoneBindingVerified(input: CommitPhoneBindingVerified): boolean {
+    return this.#db.transaction(() => {
+      const result = this.#db.prepare(`
+        UPDATE phone_binding_challenges
+        SET state = 'verified', revision = revision + 1,
+            verified_at = @createdAt, updated_at = @createdAt,
+            binding_token_hash = @bindingTokenHash,
+            binding_expires_at = @bindingExpiresAt
+        WHERE id = @challengeId
+          AND revision = @expectedRevision
+          AND state = 'pending'
+          AND expires_at > @createdAt
+      `).run({ ...input, ...input.receipt });
+      if (result.changes !== 1) return false;
+      this.#insertPhoneBindingReceipt(input.receipt);
+      this.#insertPhoneBindingEvent({
+        challengeId: input.challengeId,
+        revision: input.expectedRevision + 1,
+        eventType: "phone.binding.verified",
+        commandScope: input.receipt.scope,
+        occurredAt: input.receipt.createdAt
+      });
+      return true;
+    }).immediate();
+  }
+
+  commitPhoneBindingCompleted(input: CommitPhoneBindingCompleted): boolean {
+    return this.#db.transaction(() => {
+      const challenge = this.#db.prepare(`
+        SELECT phone_digest, phone_ciphertext FROM phone_binding_challenges
+        WHERE id = @challengeId
+          AND user_id = @userId
+          AND revision = @expectedRevision
+          AND state = 'verified'
+          AND binding_token_hash = @bindingTokenHash
+          AND binding_expires_at > @createdAt
+      `).get({ ...input, ...input.receipt }) as {
+        phone_digest: string;
+        phone_ciphertext: string;
+      } | undefined;
+      if (challenge === undefined) return false;
+      const identityExists = this.#db.prepare(
+        "SELECT 1 AS found FROM phone_identities WHERE phone_digest = ?"
+      ).get(challenge.phone_digest) as { found: number } | undefined;
+      if (identityExists !== undefined) return false;
+      const identityPhoneCiphertext = this.contentCipher.encrypt(
+        this.contentCipher.decrypt(
+          challenge.phone_ciphertext,
+          `phone-binding:${input.challengeId}:number`
+        ),
+        `phone-identity:${input.userId}:number`
+      );
+      this.#db.prepare(`
+        INSERT INTO phone_identities (
+          phone_digest, phone_ciphertext, user_id, verified_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        challenge.phone_digest,
+        identityPhoneCiphertext,
+        input.userId,
+        input.receipt.createdAt,
+        input.receipt.createdAt,
+        input.receipt.createdAt
+      );
+      const consumed = this.#db.prepare(`
+        UPDATE phone_binding_challenges
+        SET state = 'consumed', revision = revision + 1,
+            consumed_at = @createdAt, updated_at = @createdAt
+        WHERE id = @challengeId
+          AND revision = @expectedRevision
+          AND state = 'verified'
+          AND binding_token_hash = @bindingTokenHash
+      `).run({ ...input, ...input.receipt });
+      if (consumed.changes !== 1) {
+        throw new Error("Phone binding challenge changed during completion commit");
+      }
+      this.#insertPhoneBindingReceipt(input.receipt);
+      this.#insertPhoneBindingEvent({
+        challengeId: input.challengeId,
+        revision: input.expectedRevision + 1,
+        eventType: "phone.binding.completed",
         commandScope: input.receipt.scope,
         occurredAt: input.receipt.createdAt
       });

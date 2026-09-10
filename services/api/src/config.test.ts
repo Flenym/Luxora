@@ -282,11 +282,19 @@ describe("phone authentication configuration", () => {
     expect(loadConfig(production({
       PHONE_AUTH_ENABLED: "true",
       PHONE_AUTH_PROVIDER: "external",
-      PHONE_AUTH_HMAC_SECRET
+      PHONE_AUTH_HMAC_SECRET,
+      PHONE_AUTH_RECOVERY_DELAY_SECONDS: "3600"
     }))).toMatchObject({
       phoneAuthEnabled: true,
-      phoneAuthProvider: "external"
+      phoneAuthProvider: "external",
+      phoneAuthRecoveryDelaySeconds: 3600,
+      phoneAuthRecoveryTtlSeconds: 86_400
     });
+    expect(() => loadConfig(production({
+      PHONE_AUTH_ENABLED: "true",
+      PHONE_AUTH_PROVIDER: "external",
+      PHONE_AUTH_HMAC_SECRET
+    }))).toThrow("PHONE_AUTH_RECOVERY_DELAY_SECONDS must be at least 3600 seconds in production");
     expect(() => loadConfig({
       ...encryptedTestBase,
       PHONE_AUTH_ENABLED: "true",
