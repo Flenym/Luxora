@@ -28,15 +28,52 @@ luxora_truth_check() {
   shift 3
 
   local matches
-  if [[ "$include_glob" == "*" ]]; then
-    matches="$(rg -n --pcre2 "${luxora_truth_rg_args[@]}" "$pattern" "$@" || true)"
+  if command -v rg >/dev/null 2>&1; then
+    if [[ "$include_glob" == "*" ]]; then
+      matches="$(rg -n --pcre2 "${luxora_truth_rg_args[@]}" "$pattern" "$@" || true)"
+    else
+      matches="$(rg -n --pcre2 "${luxora_truth_rg_args[@]}" --glob "$include_glob" "$pattern" "$@" || true)"
+    fi
   else
-    matches="$(rg -n --pcre2 "${luxora_truth_rg_args[@]}" --glob "$include_glob" "$pattern" "$@" || true)"
+    matches="$(luxora_truth_grep "$include_glob" "$pattern" "$@" || true)"
   fi
   if [[ -n "$matches" ]]; then
     printf 'Public metadata truth failure: %s\n%s\n' "$description" "$matches" >&2
     luxora_truth_failed=1
   fi
+}
+
+# Portability shim: GitHub ubuntu-24.04 runners and plain Git Bash installs do
+# not ship ripgrep. The truth patterns are pure PCRE, so GNU grep -P covers
+# them with the same include/exclude semantics.
+luxora_truth_grep() {
+  local include_glob="$1"
+  local pattern="$2"
+  shift 2
+
+  local grep_args=(-rnP --binary-files=without-match)
+  local arg
+  for arg in "${luxora_truth_rg_args[@]}"; do
+    case "$arg" in
+      '!**/.git/**') grep_args+=(--exclude-dir=.git) ;;
+      '!**/node_modules/**') grep_args+=(--exclude-dir=node_modules) ;;
+      '!**/dist/**') grep_args+=(--exclude-dir=dist) ;;
+      '!**/build/**') grep_args+=(--exclude-dir=build) ;;
+      '!**/.build/**') grep_args+=(--exclude-dir=.build) ;;
+      '!**/.gradle/**') grep_args+=(--exclude-dir=.gradle) ;;
+      '!**/package-lock.json') grep_args+=(--exclude=package-lock.json) ;;
+      '!**/*.png'|'!**/*.jpg'|'!**/*.jpeg'|'!**/*.gif'|'!**/*.pdf') ;;
+    esac
+  done
+  if [[ "$include_glob" != "*" ]]; then
+    grep_args+=(--include="$include_glob")
+  fi
+
+  local paths=("$@")
+  if [[ ${#paths[@]} -eq 0 ]]; then
+    paths=(.)
+  fi
+  grep "${grep_args[@]}" -- "$pattern" "${paths[@]}" 2>/dev/null
 }
 
 # Product release tokens are human-facing `Beta-0.1`. The lowercase spelling is
