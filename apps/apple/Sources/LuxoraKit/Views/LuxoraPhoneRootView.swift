@@ -1,6 +1,7 @@
 #if os(iOS)
 import SwiftUI
 import UIKit
+import PhotosUI
 
 #if DEBUG
 @MainActor
@@ -40,6 +41,7 @@ public struct LuxoraPhoneRootView: View {
     private let deviceSessionsStore: DeviceSessionsStore?
     private let phonePasswordSettingsStore: PhonePasswordSettingsStore?
     private let phoneBindingStore: PhoneBindingStore?
+    private let attachmentImageCache: AuthenticatedAvatarImageCache?
     private let notificationSettingsStore: NotificationSettingsStore?
     private let pushRegistrationStore: PushRegistrationStore?
     private let chatFoldersStore: ChatFoldersStore?
@@ -61,6 +63,7 @@ public struct LuxoraPhoneRootView: View {
         deviceSessionsStore: DeviceSessionsStore? = nil,
         phonePasswordSettingsStore: PhonePasswordSettingsStore? = nil,
         phoneBindingStore: PhoneBindingStore? = nil,
+        attachmentImageCache: AuthenticatedAvatarImageCache? = nil,
         notificationSettingsStore: NotificationSettingsStore? = nil,
         pushRegistrationStore: PushRegistrationStore? = nil,
         chatFoldersStore: ChatFoldersStore? = nil,
@@ -75,6 +78,7 @@ public struct LuxoraPhoneRootView: View {
         self.deviceSessionsStore = deviceSessionsStore
         self.phonePasswordSettingsStore = phonePasswordSettingsStore
         self.phoneBindingStore = phoneBindingStore
+        self.attachmentImageCache = attachmentImageCache
         self.notificationSettingsStore = notificationSettingsStore
         self.pushRegistrationStore = pushRegistrationStore
         self.chatFoldersStore = chatFoldersStore
@@ -172,6 +176,7 @@ public struct LuxoraPhoneRootView: View {
                                     mediaGate: featureMatrix.mediaFiles,
                                     securityGate: featureMatrix.securityE2EE,
                                     communityStore: communityStore,
+                                    attachmentImageCache: attachmentImageCache,
                                     openCommunityProfile: {
                                         chatsPath.append(.communityProfile(conversationID))
                                     }
@@ -241,6 +246,7 @@ public struct LuxoraPhoneRootView: View {
                         featureMatrix: featureMatrix,
                         phonePasswordSettingsStore: phonePasswordSettingsStore,
                         phoneBindingStore: phoneBindingStore,
+                        attachmentImageCache: attachmentImageCache,
                         chatFoldersStore: chatFoldersStore,
                         openRoute: { settingsPath.append($0) },
                         openSaved: openConversationFromYou,
@@ -2165,11 +2171,16 @@ private struct PhoneDirectConversationView: View {
     let mediaGate: FeatureGate
     let securityGate: FeatureGate
     let communityStore: CommunityStore?
+    let attachmentImageCache: AuthenticatedAvatarImageCache?
     let openCommunityProfile: () -> Void
 
     @State private var presentedGate: FeatureGate?
     @State private var forwardedMessage: ChatMessage?
     @State private var deletionCandidate: ChatMessage?
+    @State private var presentsMediaPicker = false
+    @State private var presentsFilePicker = false
+    @State private var pickedPhotoItems: [PhotosPickerItem] = []
+    @State private var viewerAttachment: MessageAttachment?
     #if DEBUG
     @State private var didInstallDebugMessageMutations = false
     @State private var didApplyDebugMessageCaptureState = false
@@ -2177,6 +2188,55 @@ private struct PhoneDirectConversationView: View {
 
     private var messages: [ChatMessage] {
         store.messagesByConversation[conversation.id, default: []]
+    }
+
+    private static func pendingImage(from item: PhotosPickerItem) async -> PendingMediaAttachment? {
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              !data.isEmpty
+        else { return nil }
+        guard let image = UIImage(data: data) else { return nil }
+
+        // Normalize to JPEG so the server MIME allowlist and image metadata
+        // stay predictable regardless of the source asset encoding (HEIC, ...).
+        let maxSide: CGFloat = 2048
+        var normalized = image
+        let longSide = max(image.size.width, image.size.height)
+        if longSide > maxSide {
+            let ratio = maxSide / longSide
+            let newSize = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+            let renderer = UIGraphicsImageRenderer(size: newSize)
+            normalized = renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: newSize))
+            }
+        }
+        let jpeg = normalized.jpegData(compressionQuality: 0.86) ?? data
+        let pixelWidth = Int(normalized.size.width * normalized.scale)
+        let pixelHeight = Int(normalized.size.height * normalized.scale)
+        return PendingMediaAttachment(
+            kind: "image",
+            fileName: "photo-\(UUID().uuidString.prefix(8)).jpg",
+            mimeType: "image/jpeg",
+            data: jpeg,
+            imageWidth: pixelWidth,
+            imageHeight: pixelHeight
+        )
+    }
+
+    private static func mimeType(for pathExtension: String) -> String {
+        let ext = pathExtension.lowercased()
+        switch ext {
+        case "png": "image/png"
+        case "jpg", "jpeg": "image/jpeg"
+        case "gif": "image/gif"
+        case "pdf": "application/pdf"
+        case "zip": "application/zip"
+        case "txt": "text/plain"
+        case "mp3": "audio/mpeg"
+        case "mp4", "m4v": "video/mp4"
+        case "mov": "video/quicktime"
+        case "doc", "docx": "application/msword"
+        default: "application/octet-stream"
+        }
     }
 
     private var messageState: RemoteContentState {
@@ -2273,6 +2333,8 @@ private struct PhoneDirectConversationView: View {
                                 metadata: metadata,
                                 showsAuthorName: conversation.kind == .group || conversation.kind == .channel,
                                 isMutationInFlight: store.isMessageMutationInFlight(message.id),
+                                attachmentImageCache: attachmentImageCache,
+                                openAttachment: { viewerAttachment = $0 },
                                 retry: { store.retryMessage(message.id) },
                                 react: { emoji in store.toggleReaction(emoji, messageID: message.id) },
                                 reply: store.canReply(to: message) ? { store.beginReply(to: message) } : nil,
@@ -2347,11 +2409,92 @@ private struct PhoneDirectConversationView: View {
                    communityStore?.canPublish(in: conversation) != true {
                     PhoneChannelReadOnlyComposer(conversation: conversation)
                 } else {
-                    MessageComposer(
-                        store: store,
-                        onAttachment: { presentedGate = mediaGate }
-                    )
+                    VStack(spacing: 0) {
+                        if !store.composerMedia.isEmpty {
+                            PhoneComposerMediaStrip(
+                                media: store.composerMedia,
+                                onRemove: { store.removeComposerMedia(id: $0) }
+                            )
+                        }
+                        if store.isUploadingMedia {
+                            HStack(spacing: 8) {
+                                ProgressView(value: max(0.05, store.mediaUploadProgress))
+                                    .progressViewStyle(.linear)
+                                    .tint(LuxoraTheme.accent)
+                                Text("Загрузка…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                        }
+                        if let uploadError = store.mediaUploadError, !uploadError.isEmpty {
+                            Label(uploadError, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 4)
+                                .accessibilityIdentifier("composer-media-error")
+                        }
+                        MessageComposer(
+                            store: store,
+                            onAttachment: {
+                                presentsMediaPicker = true
+                            }
+                        )
+                    }
                 }
+            }
+            .sheet(isPresented: $presentsMediaPicker) {
+                PhoneMediaPickerSheet(
+                    onPhotosPicked: { items in
+                        pickedPhotoItems = items
+                    },
+                    onPickFile: { presentsFilePicker = true }
+                )
+                .presentationDetents([.medium])
+            }
+            .fileImporter(
+                isPresented: $presentsFilePicker,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: true
+            ) { result in
+                if case let .success(urls) = result {
+                    let media = urls.compactMap { url -> PendingMediaAttachment? in
+                        guard url.startAccessingSecurityScopedResource() else { return nil }
+                        defer { url.stopAccessingSecurityScopedResource() }
+                        guard let data = try? Data(contentsOf: url) else { return nil }
+                        let name = url.lastPathComponent
+                        let mimeType = Self.mimeType(for: url.pathExtension)
+                        return PendingMediaAttachment(
+                            kind: "file",
+                            fileName: name,
+                            mimeType: mimeType,
+                            data: data
+                        )
+                    }
+                    store.addComposerMedia(media)
+                }
+            }
+            .onChange(of: pickedPhotoItems) { _, items in
+                guard !items.isEmpty else { return }
+                Task { @MainActor in
+                    var media: [PendingMediaAttachment] = []
+                    for item in items.prefix(10) {
+                        if let pending = await Self.pendingImage(from: item) {
+                            media.append(pending)
+                        }
+                    }
+                    store.addComposerMedia(media)
+                    pickedPhotoItems = []
+                }
+            }
+            .fullScreenCover(item: $viewerAttachment) { attachment in
+                PhoneAttachmentViewer(
+                    attachment: attachment,
+                    cache: attachmentImageCache
+                )
             }
             .onChange(of: displayedMessages.count) { _, _ in
                 guard let lastID = displayedMessages.last?.id else { return }
@@ -2670,6 +2813,8 @@ private struct PhoneMessageBubble: View {
     let metadata: MessageRemoteMetadata
     let showsAuthorName: Bool
     let isMutationInFlight: Bool
+    let attachmentImageCache: AuthenticatedAvatarImageCache?
+    let openAttachment: (MessageAttachment) -> Void
     let retry: () -> Void
     let react: (String) -> Void
     let reply: (() -> Void)?
@@ -2718,17 +2863,29 @@ private struct PhoneMessageBubble: View {
                         .foregroundStyle(message.isOutgoing ? .white : Color(uiColor: .label))
                     }
 
-                    Text(message.text)
-                        .font(.body)
-                        .lineLimit(nil)
-                        // Oversized glyphs need breathing room from the bubble
-                        // chrome, especially for Cyrillic ascenders/descenders.
-                        .padding(.vertical, usesExpandedLayout ? 3 : 0)
-                        .frame(
-                            maxWidth: usesExpandedLayout ? .infinity : nil,
-                            alignment: .leading
+                    if !message.attachments.isEmpty {
+                        PhoneMessageAttachmentList(
+                            attachments: message.attachments,
+                            cache: attachmentImageCache,
+                            onOpenImage: { attachment in
+                                viewerAttachment = attachment
+                            }
                         )
-                        .layoutPriority(1)
+                    }
+
+                    if !message.text.isEmpty {
+                        Text(message.text)
+                            .font(.body)
+                            .lineLimit(nil)
+                            // Oversized glyphs need breathing room from the bubble
+                            // chrome, especially for Cyrillic ascenders/descenders.
+                            .padding(.vertical, usesExpandedLayout ? 3 : 0)
+                            .frame(
+                                maxWidth: usesExpandedLayout ? .infinity : nil,
+                                alignment: .leading
+                            )
+                            .layoutPriority(1)
+                    }
 
                     messageMetadata
                 }

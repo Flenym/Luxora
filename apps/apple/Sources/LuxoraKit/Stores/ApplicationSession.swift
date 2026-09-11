@@ -296,6 +296,7 @@ public final class ApplicationSession {
     public private(set) var globalSearchStore: GlobalSearchStore?
     public private(set) var synchronizedDraftStore: SynchronizedChatDraftStore?
     public let avatarImageCache = AuthenticatedAvatarImageCache()
+    public let attachmentImageCache = AuthenticatedAvatarImageCache(byteLimit: 128 * 1_024 * 1_024)
     public private(set) var capabilityState: CapabilityLoadState = .loading
     public private(set) var isWorking = false
     public private(set) var isAuthenticationSyncing = false
@@ -468,6 +469,7 @@ public final class ApplicationSession {
             purgeAllIfUnresolved: true
         )
         await avatarImageCache.clear()
+        await attachmentImageCache.clear()
         if let credentialCoordinator {
             await credentialCoordinator.invalidate()
         }
@@ -829,6 +831,7 @@ public final class ApplicationSession {
         cancelRealtime(resetSequence: true)
         await purgeDurableMessagingScope()
         await avatarImageCache.clear()
+        await attachmentImageCache.clear()
         if let credentialCoordinator {
             try? await credentialCoordinator.withAccessToken { [api] token in
                 try await api.revokeCurrentSession(token: token)
@@ -1052,6 +1055,32 @@ public final class ApplicationSession {
                         chatID: conversationID,
                         clientNonce: clientID,
                         body: body,
+                        token: token
+                    )
+                }
+                return message.message(currentUserID: userID)
+            },
+            mediaAttachmentUploader: { item in
+                try await coordinator.withAccessToken { token in
+                    try await api.uploadAttachment(
+                        kind: item.kind,
+                        fileName: item.fileName,
+                        mimeType: item.mimeType,
+                        data: item.data,
+                        imageWidth: item.imageWidth,
+                        imageHeight: item.imageHeight,
+                        token: token
+                    )
+                }
+            },
+            mediaMessageSender: { conversationID, clientID, body, replyToMessageID, attachmentIDs in
+                let message = try await coordinator.withAccessToken { token in
+                    try await api.sendMessage(
+                        chatID: conversationID,
+                        clientNonce: clientID,
+                        body: body,
+                        replyToMessageID: replyToMessageID,
+                        attachmentIDs: attachmentIDs,
                         token: token
                     )
                 }
@@ -1616,6 +1645,11 @@ public final class ApplicationSession {
         await avatarImageCache.configure(namespace: avatarCacheNamespace) { path in
             try await coordinator.withAccessToken { token in
                 try await api.avatarImageData(path: path, token: token)
+            }
+        }
+        await attachmentImageCache.configure(namespace: avatarCacheNamespace) { path in
+            try await coordinator.withAccessToken { token in
+                try await api.attachmentData(path: path, token: token)
             }
         }
         if let bootstrapReconciliation {

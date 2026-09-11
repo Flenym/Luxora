@@ -16,19 +16,22 @@ public struct MessageRemoteMetadata: Codable, Equatable, Hashable, Sendable {
     public var forwardedFrom: MessageForwardProvenance?
     public var isPinned: Bool
     public var isDeleted: Bool
+    public var attachmentIDs: [UUID]
 
     public init(
         revision: Int? = nil,
         replyToMessageID: UUID? = nil,
         forwardedFrom: MessageForwardProvenance? = nil,
         isPinned: Bool = false,
-        isDeleted: Bool = false
+        isDeleted: Bool = false,
+        attachmentIDs: [UUID] = []
     ) {
         self.revision = revision
         self.replyToMessageID = replyToMessageID
         self.forwardedFrom = forwardedFrom
         self.isPinned = isPinned
         self.isDeleted = isDeleted
+        self.attachmentIDs = attachmentIDs
     }
 }
 

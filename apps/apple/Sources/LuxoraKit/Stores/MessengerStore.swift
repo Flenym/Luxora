@@ -119,6 +119,12 @@ public final class MessengerStore {
     public private(set) var privacySettings: PrivacySettingsSnapshot?
     public private(set) var privacySettingsState: RemoteContentState = .idle
 
+    /// Media picked in the composer that will be uploaded on send.
+    public private(set) var composerMedia: [PendingMediaAttachment] = []
+    public private(set) var isUploadingMedia = false
+    public private(set) var mediaUploadProgress: Double = 0
+    public private(set) var mediaUploadError: String?
+
     public private(set) var currentUser: Participant
     public private(set) var currentUserBio: String
     var remoteMessageSender: (@Sendable (UUID, UUID, String) async throws -> ChatMessage)?
@@ -129,6 +135,8 @@ public final class MessengerStore {
     var remoteReadMarker: (@Sendable (UUID, UUID) async throws -> Void)?
     var remoteReactionSetter: (@Sendable (UUID, String, Bool) async throws -> [MessageReaction])?
     var remoteMessageSnapshotSender: (@Sendable (UUID, UUID, String, UUID?) async throws -> RemoteMessageSnapshot)?
+    var remoteMediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID]) async throws -> ChatMessage)?
+    var remoteAttachmentUploader: (@Sendable (PendingMediaAttachment) async throws -> MessageAttachment)?
     var remoteMessageSnapshotLoader: (@Sendable (UUID) async throws -> [RemoteMessageSnapshot])?
     var remoteMessageEditor: (@Sendable (UUID, String, Int?) async throws -> RemoteMessageSnapshot)?
     var remoteMessageDeleter: (@Sendable (UUID) async throws -> RemoteMessageSnapshot)?
@@ -716,9 +724,9 @@ public final class MessengerStore {
               let conversationID = selectedConversationID
         else { return }
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
+        guard !body.isEmpty || !composerMedia.isEmpty else { return }
 
-        if case let .edit(target) = composerMode {
+        if case let .edit(target) = composerMode, composerMedia.isEmpty {
             startEdit(messageID: target.id, body: body, expectedRevision: target.revision)
             return
         }
@@ -728,6 +736,15 @@ public final class MessengerStore {
             replyTarget = target
         } else {
             replyTarget = nil
+        }
+
+        if !composerMedia.isEmpty {
+            startMediaSend(
+                conversationID: conversationID,
+                body: body,
+                replyTarget: replyTarget
+            )
+            return
         }
 
         let clientID = UUID()
@@ -765,6 +782,19 @@ public final class MessengerStore {
               remoteMessageSnapshotSender != nil || remoteMessageSender != nil
         else { return }
         updateDelivery(message.id, in: conversationID, to: .sending)
+        let attachmentIDs = metadata(for: message.id).attachmentIDs
+        if !attachmentIDs.isEmpty, let mediaSender = remoteMediaMessageSender {
+            startMediaDelivery(
+                conversationID: conversationID,
+                clientID: message.clientID,
+                messageID: message.id,
+                body: message.text,
+                replyToMessageID: metadata(for: message.id).replyToMessageID,
+                attachmentIDs: attachmentIDs,
+                mediaSender: mediaSender
+            )
+            return
+        }
         startSend(
             conversationID: conversationID,
             clientID: message.clientID,
@@ -1072,6 +1102,8 @@ public final class MessengerStore {
 
     func configureRemote(
         sender: @escaping @Sendable (UUID, UUID, String) async throws -> ChatMessage,
+        mediaAttachmentUploader: (@Sendable (PendingMediaAttachment) async throws -> MessageAttachment)? = nil,
+        mediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID]) async throws -> ChatMessage)? = nil,
         loader: @escaping @Sendable (UUID) async throws -> [ChatMessage],
         conversationsLoader: (@Sendable () async throws -> [Conversation])? = nil,
         peopleSearcher: (@Sendable (String) async throws -> [Participant])? = nil,
@@ -1096,6 +1128,8 @@ public final class MessengerStore {
         privacySettingsUpdater: (@Sendable (Bool?, MessageRequestPolicy?) async throws -> PrivacySettingsSnapshot)? = nil
     ) {
         remoteMessageSender = sender
+        remoteAttachmentUploader = mediaAttachmentUploader
+        remoteMediaMessageSender = mediaMessageSender
         remoteMessageLoader = loader
         remoteConversationLoader = conversationsLoader
         remotePeopleSearcher = peopleSearcher
@@ -1997,6 +2031,170 @@ public final class MessengerStore {
             }
         }
         remoteOperations[operationID] = task
+    }
+
+    /// Appends picked media to the composer payload (Telegram-style chips).
+    public func addComposerMedia(_ items: [PendingMediaAttachment]) {
+        guard !items.isEmpty else { return }
+        mediaUploadError = nil
+        composerMedia.append(contentsOf: items.prefix(max(0, 10 - composerMedia.count)))
+    }
+
+    public func removeComposerMedia(id: UUID) {
+        composerMedia.removeAll { $0.id == id }
+    }
+
+    public func clearMediaUploadError() {
+        if mediaUploadError != nil { mediaUploadError = nil }
+    }
+
+    private func startMediaSend(
+        conversationID: UUID,
+        body: String,
+        replyTarget: MessageComposerTarget?
+    ) {
+        guard let uploader = remoteAttachmentUploader,
+              let mediaSender = remoteMediaMessageSender,
+              !isUploadingMedia
+        else { return }
+        let items = composerMedia
+        isUploadingMedia = true
+        mediaUploadProgress = 0
+        mediaUploadError = nil
+
+        let replyToMessageID = replyTarget?.id
+        let replyPreview = replyTarget.map { "\($0.authorName): \($0.preview)" }
+        Task { [weak self] in
+            var attachmentIDs: [UUID] = []
+            var attachments: [MessageAttachment] = []
+            for (index, item) in items.enumerated() {
+                do {
+                    let attachment = try await uploader(item)
+                    attachmentIDs.append(attachment.id)
+                    attachments.append(attachment)
+                    let completed = Double(index + 1) / Double(items.count)
+                    await MainActor.run { [weak self] in
+                        self?.mediaUploadProgress = completed
+                    }
+                } catch is CancellationError {
+                    await MainActor.run { [weak self] in
+                        self?.isUploadingMedia = false
+                    }
+                    return
+                } catch {
+                    await MainActor.run { [weak self] in
+                        self?.isUploadingMedia = false
+                        self?.mediaUploadError = Self.mediaUploadFailureMessage(error)
+                    }
+                    return
+                }
+            }
+            await MainActor.run { [weak self] in
+                self?.finishMediaSend(
+                    conversationID: conversationID,
+                    body: body,
+                    replyToMessageID: replyToMessageID,
+                    replyPreview: replyPreview,
+                    attachmentIDs: attachmentIDs,
+                    attachments: attachments,
+                    mediaSender: mediaSender
+                )
+            }
+        }
+    }
+
+    private func finishMediaSend(
+        conversationID: UUID,
+        body: String,
+        replyToMessageID: UUID?,
+        replyPreview: String?,
+        attachmentIDs: [UUID],
+        attachments: [MessageAttachment],
+        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID]) async throws -> ChatMessage)
+    ) {
+        isUploadingMedia = false
+        mediaUploadProgress = 0
+        composerMedia = []
+
+        let clientID = UUID()
+        var message = ChatMessage(
+            id: clientID,
+            clientID: clientID,
+            conversationID: conversationID,
+            author: currentUser,
+            text: body,
+            sentAt: .now,
+            delivery: .sending,
+            isOutgoing: true,
+            replyPreview: replyPreview,
+            attachments: attachments
+        )
+        messagesByConversation[conversationID, default: []].append(message)
+        messageMetadataByID[message.id] = MessageRemoteMetadata(
+            replyToMessageID: replyToMessageID,
+            attachmentIDs: attachmentIDs
+        )
+        let preview = attachments.contains { $0.isImage } && body.isEmpty ? "Фото" : (body.isEmpty ? "Файл" : body)
+        clearComposerAfterSending(chatID: conversationID)
+        updateConversationPreview(conversationID, text: preview)
+
+        startMediaDelivery(
+            conversationID: conversationID,
+            clientID: clientID,
+            messageID: message.id,
+            body: body,
+            replyToMessageID: replyToMessageID,
+            attachmentIDs: attachmentIDs,
+            mediaSender: mediaSender
+        )
+    }
+
+    private func startMediaDelivery(
+        conversationID: UUID,
+        clientID: UUID,
+        messageID: UUID,
+        body: String,
+        replyToMessageID: UUID?,
+        attachmentIDs: [UUID],
+        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID]) async throws -> ChatMessage)
+    ) {
+        let lifecycleGeneration = conversationLifecycleGenerations[conversationID] ?? 0
+        let operationID = UUID()
+        let task = Task { [weak self] in
+            defer { self?.remoteOperations[operationID] = nil }
+            do {
+                let confirmed = try await mediaSender(conversationID, clientID, body, replyToMessageID, attachmentIDs)
+                guard let self,
+                      !Task.isCancelled,
+                      ownsConversationLifecycle(conversationID, generation: lifecycleGeneration)
+                else { return }
+                replaceOptimisticMessage(clientID, in: conversationID, with: confirmed)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self,
+                      ownsConversationLifecycle(conversationID, generation: lifecycleGeneration)
+                else { return }
+                updateDelivery(messageID, in: conversationID, to: .failed)
+                lastRemoteActionError = error.localizedDescription
+            }
+        }
+        remoteOperations[operationID] = task
+    }
+
+    private static func mediaUploadFailureMessage(_ error: Error) -> String {
+        if case let LuxoraAPIError.server(_, code, message) = error {
+            switch code {
+            case "VALIDATION_FAILED":
+                return "Файл не подходит под ограничения сервера."
+            case "RATE_LIMITED":
+                return "Слишком много загрузок. Подождите немного."
+            default:
+                return "Не удалось загрузить файл: \(message)"
+            }
+        }
+        if error is CancellationError { return "" }
+        return "Нет связи с сервером. Повторите отправку."
     }
 
     private func startSend(

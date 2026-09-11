@@ -14,12 +14,36 @@ final class ChatAPIContractTests: XCTestCase {
 
     func testSendBodyPreservesTextAndCanonicalIdempotencyNonce() throws {
         let nonce = try XCTUnwrap(UUID(uuidString: "45FA51A5-700F-4AE7-96FC-A0172D991716"))
-        let body = APIChatBody.sendMessage(clientNonce: nonce, body: "Привет, Luxora")
+        let body = APIChatBody.sendMessage(
+            clientNonce: nonce,
+            body: "Привет, Luxora",
+            replyToMessageID: nil,
+            attachmentIDs: []
+        )
 
-        XCTAssertEqual(Set(body.keys), ["kind", "body", "clientNonce"])
-        XCTAssertEqual(body["kind"], "text")
-        XCTAssertEqual(body["body"], "Привет, Luxora")
-        XCTAssertEqual(body["clientNonce"], "45fa51a5-700f-4ae7-96fc-a0172d991716")
+        let data = try JSONEncoder().encode(body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["kind"] as? String, "text")
+        XCTAssertEqual(json["body"] as? String, "Привет, Luxora")
+        XCTAssertEqual(json["clientNonce"] as? String, "45fa51a5-700f-4ae7-96fc-a0172d991716")
+        XCTAssertNil(json["attachmentIds"])
+    }
+
+    func testSendMediaBodyOmitsTextAndCarriesAttachmentIds() throws {
+        let nonce = try XCTUnwrap(UUID(uuidString: "45FA51A5-700F-4AE7-96FC-A0172D991716"))
+        let attachmentID = try XCTUnwrap(UUID(uuidString: "85CE9209-F691-412B-B566-8D1AE2C56B49"))
+        let body = APIChatBody.sendMessage(
+            clientNonce: nonce,
+            body: "",
+            replyToMessageID: nil,
+            attachmentIDs: [attachmentID]
+        )
+
+        let data = try JSONEncoder().encode(body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["kind"])
+        XCTAssertNil(json["body"])
+        XCTAssertEqual(json["attachmentIds"] as? [String], ["85ce9209-f691-412b-b566-8d1ae2c56b49"])
     }
 
     func testReadAndReactionBodiesContainNoInventedFields() throws {

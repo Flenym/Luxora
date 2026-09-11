@@ -632,6 +632,58 @@ enum APIPhoneCodeVerificationResult: Decodable, Sendable {
     }
 }
 
+struct APIAttachment: Decodable, Sendable {
+    let id: UUID
+    let kind: String
+    let fileName: String
+    let mimeType: String
+    let sizeBytes: Int
+    let downloadPath: String
+    let width: Int?
+    let height: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case fileName
+        case mimeType
+        case sizeBytes
+        case downloadPath
+        case metadata
+    }
+
+    private struct APIMediaMetadata: Decodable, Sendable {
+        let width: Int?
+        let height: Int?
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        kind = try container.decode(String.self, forKey: .kind)
+        fileName = try container.decode(String.self, forKey: .fileName)
+        mimeType = try container.decode(String.self, forKey: .mimeType)
+        sizeBytes = try container.decode(Int.self, forKey: .sizeBytes)
+        downloadPath = try container.decode(String.self, forKey: .downloadPath)
+        let metadata = try container.decodeIfPresent(APIMediaMetadata.self, forKey: .metadata)
+        width = metadata?.width
+        height = metadata?.height
+    }
+
+    func attachment() -> MessageAttachment {
+        MessageAttachment(
+            id: id,
+            kind: kind,
+            fileName: fileName,
+            mimeType: mimeType,
+            sizeBytes: sizeBytes,
+            downloadPath: downloadPath,
+            imageWidth: width,
+            imageHeight: height
+        )
+    }
+}
+
 struct APIForwardProvenance: Decodable, Sendable {
     let senderDisplayName: String
     let originalCreatedAt: Date
@@ -660,6 +712,7 @@ struct APIMessage: Decodable, Sendable {
     let updatedAt: Date
     let editedAt: Date?
     let deletedAt: Date?
+    let attachments: [APIAttachment]?
 
     func message(currentUserID: UUID) -> ChatMessage {
         ChatMessage(
@@ -671,7 +724,8 @@ struct APIMessage: Decodable, Sendable {
             sentAt: createdAt,
             editedAt: editedAt,
             delivery: .sent,
-            isOutgoing: sender.id == currentUserID
+            isOutgoing: sender.id == currentUserID,
+            attachments: (attachments ?? []).map { $0.attachment() }
         )
     }
 

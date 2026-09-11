@@ -321,22 +321,27 @@ actor LuxoraAPIClient {
     }
 
     private func createAvatarUpload(
+        kind: String = "image",
+        fileName: String = "profile-avatar.png",
+        mimeType: String = "image/png",
         sizeBytes: Int,
         sha256: String,
         idempotencyKey: UUID,
+        imageWidth: Int? = nil,
+        imageHeight: Int? = nil,
         token: String
     ) async throws -> APIUploadSession {
         let response: APIUploadResponse = try await requestEncoded(
             path: "/v1/uploads",
             method: "POST",
-            body: APIAvatarUploadContract.CreateUpload(
-                kind: "image",
-                fileName: "profile-avatar.png",
-                mimeType: "image/png",
+            body: APIAttachmentCreateBody(
+                kind: kind,
+                fileName: fileName,
+                mimeType: mimeType,
                 sizeBytes: sizeBytes,
                 sha256: sha256,
                 idempotencyKey: idempotencyKey.apiPathComponent,
-                metadata: .init(width: 512, height: 512)
+                metadata: APIMediaDimensions(width: imageWidth, height: imageHeight)
             ),
             token: token
         )
@@ -390,6 +395,74 @@ actor LuxoraAPIClient {
             token: token
         )
         return response.user
+    }
+
+    /// Uploads one attachment through the resumable session pipeline and
+    /// returns the server-confirmed attachment record.
+    func uploadAttachment(
+        kind: String,
+        fileName: String,
+        mimeType: String,
+        data: Data,
+        imageWidth: Int?,
+        imageHeight: Int?,
+        token: String,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> MessageAttachment {
+        let session = try await createAvatarUpload(
+            kind: kind,
+            fileName: fileName,
+            mimeType: mimeType,
+            sizeBytes: data.count,
+            sha256: APIAvatarUploadContract.sha256Hex(data),
+            idempotencyKey: UUID.apiPathComponent,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight,
+            token: token
+        )
+        let chunkSize = max(1, session.chunkSizeBytes)
+        var offset = 0
+        var index = 0
+        while offset < data.count {
+            let end = min(offset + chunkSize, data.count)
+            let chunk = data.subdata(in: offset..<end)
+            _ = try await putAvatarUploadChunk(
+                uploadID: session.id,
+                index: index,
+                start: offset,
+                total: data.count,
+                bytes: chunk,
+                token: token
+            )
+            offset = end
+            index += 1
+            progress?(Double(offset) / Double(max(1, data.count)))
+        }
+        let completed = try await completeAvatarUpload(id: session.id, token: token)
+        guard let attachment = completed.attachment else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        return attachment.attachment()
+    }
+
+    /// Downloads raw attachment bytes (images for display, files for export).
+    func attachmentData(path: String, token: String, maxBytes: Int = 26_214_400) async throws -> Data {
+        guard path.hasPrefix("/v1/attachments/") else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        let (data, response) = try await requestRaw(
+            path: path,
+            method: "GET",
+            accept: "*/*",
+            token: token
+        )
+        guard !data.isEmpty, data.count <= maxBytes else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        return data
     }
 
     func configurePhonePassword(
@@ -589,16 +662,18 @@ actor LuxoraAPIClient {
         clientNonce: UUID,
         body: String,
         replyToMessageID: UUID? = nil,
+        attachmentIDs: [UUID] = [],
         token: String
     ) async throws -> APIMessage {
         struct Response: Decodable, Sendable { let message: APIMessage }
-        let response: Response = try await request(
+        let response: Response = try await requestEncoded(
             path: "/v1/chats/\(chatID.apiPathComponent)/messages",
             method: "POST",
             body: APIChatBody.sendMessage(
                 clientNonce: clientNonce,
                 body: body,
-                replyToMessageID: replyToMessageID
+                replyToMessageID: replyToMessageID,
+                attachmentIDs: attachmentIDs
             ),
             token: token
         )
@@ -1187,6 +1262,29 @@ actor LuxoraAPIClient {
     }
 }
 
+struct APISendMessageBody: Encodable, Sendable {
+    let kind: String?
+    let body: String?
+    let clientNonce: UUID
+    let replyToMessageId: UUID?
+    let attachmentIds: [UUID]?
+}
+
+struct APIAttachmentCreateBody: Encodable, Sendable {
+    let kind: String
+    let fileName: String
+    let mimeType: String
+    let sizeBytes: Int
+    let sha256: String
+    let idempotencyKey: String
+    let metadata: APIMediaDimensions
+}
+
+struct APIMediaDimensions: Encodable, Sendable {
+    let width: Int?
+    let height: Int?
+}
+
 enum APIChatBody {
     static func createDirect(userID: UUID) -> [String: String] {
         [
@@ -1195,16 +1293,19 @@ enum APIChatBody {
         ]
     }
 
-    static func sendMessage(clientNonce: UUID, body: String, replyToMessageID: UUID? = nil) -> [String: String] {
-        var payload = [
-            "kind": "text",
-            "body": body,
-            "clientNonce": clientNonce.apiPathComponent,
-        ]
-        if let replyToMessageID {
-            payload["replyToMessageId"] = replyToMessageID.apiPathComponent
-        }
-        return payload
+    static func sendMessage(
+        clientNonce: UUID,
+        body: String,
+        replyToMessageID: UUID?,
+        attachmentIDs: [UUID]
+    ) -> APISendMessageBody {
+        APISendMessageBody(
+            kind: body.isEmpty ? nil : "text",
+            body: body.isEmpty ? nil : body,
+            clientNonce: clientNonce,
+            replyToMessageID: replyToMessageID,
+            attachmentIds: attachmentIDs.isEmpty ? nil : attachmentIDs
+        )
     }
 
     struct EditMessage: Encodable, Sendable {

@@ -43,6 +43,7 @@ public struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
     public var isOutgoing: Bool
     public var replyPreview: String?
     public var reactions: [MessageReaction]
+    public var attachments: [MessageAttachment]
 
     public init(
         id: UUID,
@@ -55,7 +56,8 @@ public struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         delivery: MessageDelivery,
         isOutgoing: Bool,
         replyPreview: String? = nil,
-        reactions: [MessageReaction] = []
+        reactions: [MessageReaction] = [],
+        attachments: [MessageAttachment] = []
     ) {
         self.id = id
         self.clientID = clientID
@@ -68,5 +70,28 @@ public struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         self.isOutgoing = isOutgoing
         self.replyPreview = replyPreview
         self.reactions = reactions
+        self.attachments = attachments
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, clientID, conversationID, author, text, sentAt, editedAt, delivery
+        case isOutgoing, replyPreview, reactions, attachments
+    }
+
+    // Durable caches written before media support have no `attachments` key.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        clientID = try container.decode(UUID.self, forKey: .clientID)
+        conversationID = try container.decode(UUID.self, forKey: .conversationID)
+        author = try container.decode(Participant.self, forKey: .author)
+        text = try container.decode(String.self, forKey: .text)
+        sentAt = try container.decode(Date.self, forKey: .sentAt)
+        editedAt = try container.decodeIfPresent(Date.self, forKey: .editedAt)
+        delivery = try container.decode(MessageDelivery.self, forKey: .delivery)
+        isOutgoing = try container.decode(Bool.self, forKey: .isOutgoing)
+        replyPreview = try container.decodeIfPresent(String.self, forKey: .replyPreview)
+        reactions = try container.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []
+        attachments = try container.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
     }
 }
