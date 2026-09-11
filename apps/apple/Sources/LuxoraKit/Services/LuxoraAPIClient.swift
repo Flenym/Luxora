@@ -415,7 +415,7 @@ actor LuxoraAPIClient {
             mimeType: mimeType,
             sizeBytes: data.count,
             sha256: APIAvatarUploadContract.sha256Hex(data),
-            idempotencyKey: UUID.apiPathComponent,
+            idempotencyKey: UUID.clientNonceV4(),
             imageWidth: imageWidth,
             imageHeight: imageHeight,
             token: token
@@ -1266,8 +1266,16 @@ struct APISendMessageBody: Encodable, Sendable {
     let kind: String?
     let body: String?
     let clientNonce: UUID
-    let replyToMessageId: UUID?
+    let replyToMessageID: UUID?
     let attachmentIds: [UUID]?
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case body
+        case clientNonce
+        case replyToMessageID = "replyToMessageId"
+        case attachmentIds
+    }
 }
 
 struct APIAttachmentCreateBody: Encodable, Sendable {
