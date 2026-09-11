@@ -71,6 +71,7 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
 
         let commands = await deleter.commands
         XCTAssertEqual(commands.count, 1)
+        guard commands.count == 1 else { return }
         XCTAssertEqual(commands[0].expectedRevision, 3)
         XCTAssertEqual(messenger.draft, "")
         XCTAssertEqual(messenger.composerMode, .new)
@@ -109,13 +110,22 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
         messenger.configureSynchronizedDrafts(drafts)
 
         await messenger.loadSynchronizedDraft(for: chatA)
-        try await Task.sleep(nanoseconds: 500_000_000)
+
+        // The server-side correction persist is debounced (400 ms); poll
+        // instead of a fixed sleep so loaded CI runners cannot flake or
+        // crash the runner on an empty subscript.
+        let putDeadline = Date().addingTimeInterval(5)
+        var commands: [ChatDraftPutCommand] = []
+        repeat {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            commands = await putter.commands
+        } while commands.isEmpty && Date() < putDeadline
 
         XCTAssertEqual(messenger.draft, "text survives")
         XCTAssertEqual(messenger.composerMode, .new)
         XCTAssertNil(drafts.localDraft(for: chatA).replyToMessageID)
-        let commands = await putter.commands
         XCTAssertEqual(commands.count, 1)
+        guard commands.count == 1 else { return }
         XCTAssertEqual(commands[0].content.text, "text survives")
         XCTAssertNil(commands[0].content.replyToMessageID)
         XCTAssertEqual(commands[0].expectedRevision, 1)
@@ -124,7 +134,8 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000)
         let sends = await sender.calls
         XCTAssertEqual(sends.count, 1)
-        XCTAssertNil(sends[0].replyID)
+        guard let firstSend = sends.first else { return }
+        XCTAssertNil(firstSend.replyID)
     }
 
     func testConfirmedRemoteDeletionClearsOnlyReplyAndPreservesText() async throws {
@@ -163,6 +174,7 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
         XCTAssertNil(drafts.localDraft(for: chatA).replyToMessageID)
         let commands = await putter.commands
         XCTAssertEqual(commands.count, 1)
+        guard commands.count == 1 else { return }
         XCTAssertEqual(commands[0].content.text, "keep this text")
         XCTAssertNil(commands[0].content.replyToMessageID)
     }
