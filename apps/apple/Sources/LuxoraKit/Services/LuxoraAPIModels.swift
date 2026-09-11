@@ -208,6 +208,57 @@ struct APIDeviceSession: Decodable, Sendable {
 
 struct APIUploadAttachment: Decodable, Sendable {
     let id: UUID
+    let kind: String?
+    let fileName: String?
+    let mimeType: String
+    let sizeBytes: Int
+    let downloadPath: String
+    let createdAt: Date
+    let metadataWidth: Int?
+    let metadataHeight: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case fileName
+        case mimeType
+        case sizeBytes
+        case downloadPath
+        case createdAt
+        case metadata
+    }
+
+    private struct APIMetadata: Decodable, Sendable {
+        let width: Int?
+        let height: Int?
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        kind = try container.decodeIfPresent(String.self, forKey: .kind)
+        fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
+        mimeType = try container.decode(String.self, forKey: .mimeType)
+        sizeBytes = try container.decode(Int.self, forKey: .sizeBytes)
+        downloadPath = try container.decode(String.self, forKey: .downloadPath)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        let metadata = try container.decodeIfPresent(APIMetadata.self, forKey: .metadata)
+        metadataWidth = metadata?.width
+        metadataHeight = metadata?.height
+    }
+
+    func attachment() -> MessageAttachment {
+        MessageAttachment(
+            id: id,
+            kind: kind ?? "file",
+            fileName: fileName ?? id.uuidString.lowercased(),
+            mimeType: mimeType,
+            sizeBytes: sizeBytes,
+            downloadPath: downloadPath,
+            imageWidth: metadataWidth,
+            imageHeight: metadataHeight
+        )
+    }
 }
 
 struct APISearchAttachment: Decodable, Sendable {
