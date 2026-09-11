@@ -416,9 +416,16 @@ final class SynchronizedChatDraftStoreTests: XCTestCase {
         store.schedulePersist(chatID, debounceNanoseconds: 30_000_000)
         XCTAssertTrue(store.setLocalDraft(for: chatID, text: "последний"))
         store.schedulePersist(chatID, debounceNanoseconds: 30_000_000)
-        try await Task.sleep(nanoseconds: 150_000_000)
 
-        let commands = await putter.commands
+        // The debounce timer is wall-clock driven; poll instead of a fixed
+        // sleep so loaded CI runners cannot miss the coalesced persist.
+        let putDeadline = Date().addingTimeInterval(5)
+        var commands = await putter.commands
+        while commands.isEmpty && Date() < putDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            commands = await putter.commands
+        }
+
         XCTAssertEqual(commands.count, 1)
         XCTAssertEqual(commands.first?.content.text, "последний")
         XCTAssertEqual(store.confirmedState(for: chatID)?.draft?.text, "последний")
@@ -447,10 +454,16 @@ final class SynchronizedChatDraftStoreTests: XCTestCase {
 
         await suspended.release()
         _ = await load.value
-        try await Task.sleep(nanoseconds: 550_000_000)
 
-        let commands = await putter.commands
+        let typeDeadline = Date().addingTimeInterval(5)
+        var commands = await putter.commands
+        while commands.isEmpty && Date() < typeDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            commands = await putter.commands
+        }
+
         XCTAssertEqual(commands.count, 1)
+        guard commands.count == 1 else { return }
         XCTAssertEqual(commands[0].content.text, "typed before GET")
         XCTAssertEqual(commands[0].expectedRevision, 0)
         XCTAssertEqual(store.confirmedState(for: chatID)?.draft?.text, "typed before GET")
@@ -578,10 +591,16 @@ final class SynchronizedChatDraftStoreTests: XCTestCase {
         store.schedulePersist(firstChatID, debounceNanoseconds: 30_000_000)
         XCTAssertTrue(store.setLocalDraft(for: secondChatID, text: "последний B"))
         store.schedulePersist(secondChatID, debounceNanoseconds: 30_000_000)
-        try await Task.sleep(nanoseconds: 200_000_000)
 
-        let calls = await recorder.calls.sorted { $0.startedAt < $1.startedAt }
+        let parallelDeadline = Date().addingTimeInterval(5)
+        var calls = await recorder.calls.sorted { $0.startedAt < $1.startedAt }
+        while calls.count < 2 && Date() < parallelDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            calls = await recorder.calls.sorted { $0.startedAt < $1.startedAt }
+        }
+
         XCTAssertEqual(calls.count, 2, "There is no per-keystroke network queue")
+        guard calls.count == 2 else { return }
         XCTAssertEqual(Set(calls.map(\.command.content.text)), ["последний A", "последний B"])
         XCTAssertGreaterThanOrEqual(
             calls[1].startedAt - calls[0].startedAt,
