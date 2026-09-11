@@ -763,7 +763,7 @@ struct APIMessage: Decodable, Sendable {
     let updatedAt: Date
     let editedAt: Date?
     let deletedAt: Date?
-    let attachments: [APIAttachment]?
+    let attachments: [APIAttachment]? = nil
 
     func message(currentUserID: UUID) -> ChatMessage {
         ChatMessage(

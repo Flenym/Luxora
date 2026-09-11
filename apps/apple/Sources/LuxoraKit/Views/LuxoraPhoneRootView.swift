@@ -246,7 +246,6 @@ public struct LuxoraPhoneRootView: View {
                         featureMatrix: featureMatrix,
                         phonePasswordSettingsStore: phonePasswordSettingsStore,
                         phoneBindingStore: phoneBindingStore,
-                        attachmentImageCache: attachmentImageCache,
                         chatFoldersStore: chatFoldersStore,
                         openRoute: { settingsPath.append($0) },
                         openSaved: openConversationFromYou,
@@ -2868,7 +2867,7 @@ private struct PhoneMessageBubble: View {
                             attachments: message.attachments,
                             cache: attachmentImageCache,
                             onOpenImage: { attachment in
-                                viewerAttachment = attachment
+                                openAttachment(attachment)
                             }
                         )
                     }
