@@ -238,10 +238,10 @@ struct APIUploadAttachment: Decodable, Sendable {
         id = try container.decode(UUID.self, forKey: .id)
         kind = try container.decodeIfPresent(String.self, forKey: .kind)
         fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
-        mimeType = try container.decode(String.self, forKey: .mimeType)
-        sizeBytes = try container.decode(Int.self, forKey: .sizeBytes)
-        downloadPath = try container.decode(String.self, forKey: .downloadPath)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        mimeType = try container.decodeIfPresent(String.self, forKey: .mimeType) ?? "application/octet-stream"
+        sizeBytes = try container.decodeIfPresent(Int.self, forKey: .sizeBytes) ?? 0
+        downloadPath = try container.decodeIfPresent(String.self, forKey: .downloadPath) ?? ""
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .distantPast
         let metadata = try container.decodeIfPresent(APIMetadata.self, forKey: .metadata)
         metadataWidth = metadata?.width
         metadataHeight = metadata?.height
