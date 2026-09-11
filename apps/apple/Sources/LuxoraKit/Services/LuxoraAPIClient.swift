@@ -247,6 +247,8 @@ actor LuxoraAPIClient {
             sizeBytes: pngData.count,
             sha256: digest,
             idempotencyKey: idempotencyKey,
+            imageWidth: 512,
+            imageHeight: 512,
             token: token
         )
         guard upload.sizeBytes == pngData.count,
@@ -1275,6 +1277,20 @@ struct APISendMessageBody: Encodable, Sendable {
         case clientNonce
         case replyToMessageID = "replyToMessageId"
         case attachmentIds
+    }
+
+    func encode(to encoder: Encoder) throws {
+        // Server-owned UUIDs use the canonical lowercase representation.
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(kind, forKey: .kind)
+        try container.encodeIfPresent(body, forKey: .body)
+        try container.encode(clientNonce.apiPathComponent, forKey: .clientNonce)
+        if let replyToMessageID {
+            try container.encode(replyToMessageID.apiPathComponent, forKey: .replyToMessageID)
+        }
+        if let attachmentIds, !attachmentIds.isEmpty {
+            try container.encode(attachmentIds.map { $0.apiPathComponent }, forKey: .attachmentIds)
+        }
     }
 }
 

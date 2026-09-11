@@ -2222,20 +2222,21 @@ private struct PhoneDirectConversationView: View {
     }
 
     private static func mimeType(for pathExtension: String) -> String {
-        let ext = pathExtension.lowercased()
-        switch ext {
-        case "png": "image/png"
-        case "jpg", "jpeg": "image/jpeg"
-        case "gif": "image/gif"
-        case "pdf": "application/pdf"
-        case "zip": "application/zip"
-        case "txt": "text/plain"
-        case "mp3": "audio/mpeg"
-        case "mp4", "m4v": "video/mp4"
-        case "mov": "video/quicktime"
-        case "doc", "docx": "application/msword"
-        default: "application/octet-stream"
-        }
+        [
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "pdf": "application/pdf",
+            "zip": "application/zip",
+            "txt": "text/plain",
+            "mp3": "audio/mpeg",
+            "mp4": "video/mp4",
+            "m4v": "video/mp4",
+            "mov": "video/quicktime",
+            "doc": "application/msword",
+            "docx": "application/msword",
+        ][pathExtension.lowercased()] ?? "application/octet-stream"
     }
 
     private var messageState: RemoteContentState {
