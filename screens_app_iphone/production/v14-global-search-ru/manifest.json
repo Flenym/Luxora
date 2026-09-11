@@ -1,0 +1,30 @@
+{
+  "release": "Beta-0.1",
+  "evidenceKind": "production-ui fixture evidence",
+  "target": "LuxoraMobile",
+  "simulator": {
+    "name": "Luxora Accessibility iPhone 17 Pro",
+    "udid": "B8C6A79C-8F71-4A09-B141-EE1FFCA480EA",
+    "os": "iOS 26.5",
+    "pixels": "1206x2622"
+  },
+  "test": "LuxoraMobileUITests/testGlobalSearchFindsServerShapedPeopleAndMessagesAndOpensTheirChat()",
+  "xcresult": "/tmp/LuxoraGlobalSearchEvidenceFinal/Logs/Test/Test-LuxoraMobile-2026.08.15_13-22-43-+0300.xcresult",
+  "result": {
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0
+  },
+  "files": [
+    {
+      "name": "01-people-results.png",
+      "sha256": "644621ca364543bc3d8fdea843c3348a8b5f36e211648ade5f1dde858695c0e6",
+      "sourceAttachment": "search-01-people-results"
+    },
+    {
+      "name": "02-message-results.png",
+      "sha256": "20f0dfc31f137502e6589e6318c19406a0845a73599a22727f90250e94ea0a93",
+      "sourceAttachment": "search-02-message-results"
+    }
+  ]
+}

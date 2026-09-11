@@ -1,0 +1,7 @@
+iOS 26.5 Accessibility Inspector text-clipping quarantine.
+Every accepted element is one of the deterministic message fixtures,
+has a complete VoiceOver label, is wholly inside the app frame, and
+finishes above the composer. Maximum Dynamic Type screenshots are
+reviewed separately and retained with the audit evidence.
+
+<XCUIAccessibilityAuditIssue: 0x1155fce40>AuditType:"131072" CompactDescription:"Text clipped" DetailedDescription:"Text of this SwiftUI.AccessibilityNode may be clipped at larger Dynamic Type sizes." Element:"Звонки и медиа останутся явно закрытыми до готовности серверных контрактов." StaticText

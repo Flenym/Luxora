@@ -1,0 +1,73 @@
+{
+  "product": "Luxora",
+  "version": "Beta-0.1",
+  "owner": "Flenym",
+  "evidenceType": "deterministic-debug-server-shaped",
+  "liveBackendEvidence": false,
+  "retouched": false,
+  "capture": {
+    "scheme": "LuxoraMobile",
+    "test": "LuxoraNavigationUITests/testChatFoldersRussianVisualEvidence()",
+    "result": "passed",
+    "passedTests": 1,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeIssues": 0,
+    "xcresult": "/tmp/LuxoraFolders-DD/Logs/Test/Test-LuxoraMobile-2026.08.11_17-49-50-+0300.xcresult",
+    "device": "Luxora Accessibility iPhone 17 Pro",
+    "deviceUDID": "B8C6A79C-8F71-4A09-B141-EE1FFCA480EA",
+    "platform": "iOS Simulator",
+    "osVersion": "26.5",
+    "pixelWidth": 1206,
+    "pixelHeight": 2622
+  },
+  "truthBoundary": {
+    "fixtureCompiledOutOfRelease": true,
+    "syntheticData": true,
+    "archiveWasCreatedThroughProductionSwipeAction": true,
+    "archiveMutationUsedConfirmedProjectionPath": true,
+    "usesSeparateFreshApplicationProcesses": true,
+    "launches": [
+      "All 18, then confirmed archive mutation to All 17 plus Archive 1",
+      "Fresh 18-chat fixture for Team, folder settings/editor, Spaces and create-group"
+    ],
+    "claimsFullReferencePixelClosure": false
+  },
+  "files": [
+    {
+      "name": "01-all-chats.png",
+      "state": "All chats selected before archive mutation",
+      "sha256": "7ff1ee042d58ced60906d95ca438f4248d3ce9e28d4d014526e0a5d27b1f4dff"
+    },
+    {
+      "name": "02-archive.png",
+      "state": "Archive selected after confirmed swipe mutation",
+      "sha256": "bf65f0bc996535aa8615b67eacd0d3d2df0ac6c1bfad90b147992210fd1a7667"
+    },
+    {
+      "name": "03-team-folder.png",
+      "state": "Team folder selected in a fresh 18-chat fixture process",
+      "sha256": "3ef983dc87fbca81aaf30f6a211c3d33baba54d7702221946d6b573b648203f8"
+    },
+    {
+      "name": "04-folder-settings.png",
+      "state": "Folder settings with Team selected",
+      "sha256": "20d54919f38a509e23ad1fb9ff3b13771b2e63630d84afd06f60be9ce0bcbada"
+    },
+    {
+      "name": "05-folder-editor.png",
+      "state": "New folder editor",
+      "sha256": "9ad52da1ddb2d23a860138e2fa6a9f7d27ffee1e346f27f621cd38b622922ed8"
+    },
+    {
+      "name": "06-spaces.png",
+      "state": "Groups and channels list",
+      "sha256": "d1028da8cdae5288389902280a16075f0301da4d9ca8c12e8f94610291b7eeb4"
+    },
+    {
+      "name": "07-create-group.png",
+      "state": "New group editor",
+      "sha256": "2967fafd71411734687c5d17085436f6c718881397575d49b8f1a23906b29e21"
+    }
+  ]
+}
