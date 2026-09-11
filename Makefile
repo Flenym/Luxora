@@ -144,7 +144,7 @@ prometheus-check:
 		--volume "$(CURDIR)/infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
 		--volume "$(CURDIR)/infra/observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro" \
 		--entrypoint /bin/promtool \
-		prom/prometheus:v3.13.2-distroless@sha256:64f71bb84e03c855948418b0fc5dea53e9543d8e3fc9931598f583805507f05e \
+		prom/prometheus:v3.14.0-distroless@sha256:50c707e96da5ade383cb1707790576480485e93de06aa60ad8802cb5f744bd0a \
 		check config /etc/prometheus/prometheus.yml
 
 backup-restore-test:
