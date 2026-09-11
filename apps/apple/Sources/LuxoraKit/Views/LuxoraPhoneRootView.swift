@@ -154,7 +154,6 @@ public struct LuxoraPhoneRootView: View {
                         storiesGate: featureMatrix.stories,
                         securityGate: featureMatrix.securityE2EE,
                         openConversation: openConversation,
-                        openRequests: { chatsPath.append(.requests) },
                         openSpaces: { chatsPath.append(.spaces) },
                         openEdit: { chatsPath.append(.edit) },
                         chatFoldersStore: chatFoldersStore,
@@ -222,12 +221,6 @@ public struct LuxoraPhoneRootView: View {
                                     description: Text("Сервер больше не возвращает эту группу или канал.")
                                 )
                             }
-                        case .requests:
-                            PhoneMessageRequestsView(
-                                store: store,
-                                openConversation: openConversation
-                            )
-                            .toolbarVisibility(.hidden, for: .tabBar)
                         case .edit:
                             PhoneEditChatsView(
                                 store: store,
@@ -426,7 +419,6 @@ public struct LuxoraPhoneRootView: View {
         case "chats", "inbox": selectedTab = .chats
         case "you", "settings": selectedTab = .settings
         case "edit-chats": openChatRoute(.edit)
-        case "message-requests": openChatRoute(.requests)
         case "contact-profile":
             if let conversationID = store.conversations.first(where: { $0.kind == .direct })?.id {
                 selectedTab = .contacts
@@ -485,7 +477,6 @@ private enum PhoneChatRoute: Hashable {
     case conversation(UUID)
     case communityProfile(UUID)
     case spaces
-    case requests
     case edit
 }
 
@@ -1305,7 +1296,6 @@ private struct PhoneInboxView: View {
     let storiesGate: FeatureGate
     let securityGate: FeatureGate
     let openConversation: (UUID) -> Void
-    let openRequests: () -> Void
     let openSpaces: () -> Void
     let openEdit: () -> Void
     let chatFoldersStore: ChatFoldersStore?
@@ -1385,16 +1375,6 @@ private struct PhoneInboxView: View {
                     .listRowSeparator(.hidden)
                     .listRowInsets(.init(top: 3, leading: 0, bottom: 5, trailing: 0))
                 }
-            }
-
-            Section {
-                Button(action: openRequests) {
-                    PhoneInboxMessageRequestsRow(
-                        count: store.pendingIncomingMessageRequestCount
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("inbox-message-requests")
             }
 
             Section {
@@ -1643,408 +1623,6 @@ private struct PhoneInboxView: View {
     }
 }
 
-private struct PhoneInboxMessageRequestsRow: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    let count: Int
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "person.crop.circle.badge.questionmark")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(LuxoraTheme.iris)
-                .frame(width: 34, height: 34)
-                .background(LuxoraTheme.iris.opacity(0.12), in: Circle())
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(usesCompactCopy ? "Запросы" : "Запросы на переписку")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(usesCompactCopy
-                    ? "От незнакомых"
-                    : "Неизвестные отправители не видят прочтение до принятия")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 6)
-            if count > 0 {
-                Text("\(count)")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(LuxoraTheme.accent, in: Capsule())
-            }
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
-        }
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "Запросы на переписку. Неизвестные отправители не видят прочтение до принятия."
-        )
-        .accessibilityValue(count > 0 ? "Новых запросов: \(count)" : "Новых запросов нет")
-        .accessibilityHint("Открывает входящие и исходящие запросы")
-    }
-
-    private var usesCompactCopy: Bool {
-        dynamicTypeSize >= .xxLarge
-    }
-}
-
-private struct PhoneMessageRequestsView: View {
-    @Bindable var store: MessengerStore
-    let openConversation: (UUID) -> Void
-
-    @State private var direction: MessageRequestDirection = .incoming
-    @State private var presentsNewRequest = false
-    @State private var dismissalCandidate: MessageRequestItem?
-
-    private var requests: [MessageRequestItem] { store.messageRequests(direction) }
-    private var state: RemoteContentState { store.messageRequestListState(direction) }
-
-    var body: some View {
-        List {
-            Section {
-                Picker("Направление", selection: $direction) {
-                    ForEach(MessageRequestDirection.allCases) { direction in
-                        Text(direction.russianTitle).tag(direction)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .accessibilityIdentifier("message-requests-direction")
-            }
-            .listRowBackground(Color.clear)
-
-            Section {
-                Label {
-                    Text("До принятия отправитель не получает отметку о прочтении, точный статус присутствия или доступ к звонкам.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } icon: {
-                    Image(systemName: "hand.raised.fill")
-                        .foregroundStyle(LuxoraTheme.iris)
-                }
-            }
-
-            if case let .failed(message) = state {
-                Section {
-                    PhoneRemoteFailureRow(
-                        title: "Не удалось обновить \(direction == .incoming ? "входящие" : "исходящие") запросы",
-                        detail: message,
-                        retry: {
-                            Task { await store.loadMessageRequests(direction, force: true) }
-                        }
-                    )
-                }
-            }
-
-            Section(direction.russianTitle) {
-                if state == .loading, requests.isEmpty {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("Загружаем запросы…")
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityIdentifier("message-requests-loading")
-                } else if requests.isEmpty {
-                    ContentUnavailableView(
-                        direction == .incoming ? "Новых запросов нет" : "Исходящих запросов нет",
-                        systemImage: direction == .incoming ? "person.crop.circle.badge.checkmark" : "paperplane",
-                        description: Text(
-                            direction == .incoming
-                                ? "Незнакомые пользователи появятся здесь, не раскрывая им ваше прочтение."
-                                : "Создайте запрос по точному username."
-                        )
-                    )
-                    .accessibilityIdentifier("message-requests-empty-\(direction.rawValue)")
-                } else {
-                    ForEach(requests) { request in
-                        PhoneMessageRequestRow(
-                            request: request,
-                            mutationState: store.messageRequestMutationState(request.id),
-                            error: store.messageRequestMutationErrors[request.id],
-                            accept: { store.acceptMessageRequest(request.id) },
-                            dismiss: { dismissalCandidate = request },
-                            retry: { store.retryMessageRequestMutation(request.id) }
-                        )
-                    }
-                }
-            }
-        }
-        .navigationTitle("Запросы на переписку")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Новый запрос", systemImage: "square.and.pencil") {
-                    presentsNewRequest = true
-                }
-                .disabled(!store.supportsMessageRequestCreation)
-                .accessibilityIdentifier("message-request-new")
-            }
-        }
-        .refreshable {
-            await store.loadMessageRequests(.incoming, force: true)
-            await store.loadMessageRequests(.outgoing, force: true)
-        }
-        .sheet(isPresented: $presentsNewRequest) {
-            PhoneNewMessageRequestSheet(store: store)
-        }
-        .confirmationDialog(
-            "Удалить запрос?",
-            isPresented: Binding(
-                get: { dismissalCandidate != nil },
-                set: { if !$0 { dismissalCandidate = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            if let dismissalCandidate {
-                Button("Удалить", role: .destructive) {
-                    store.dismissMessageRequest(dismissalCandidate.id)
-                    self.dismissalCandidate = nil
-                }
-            }
-            Button("Отмена", role: .cancel) { dismissalCandidate = nil }
-        } message: {
-            Text("Отправитель не узнает, что вы просмотрели или удалили запрос.")
-        }
-        .task {
-            #if DEBUG
-            if ProcessInfo.processInfo.environment["LUXORA_UI_TEST_MESSAGE_REQUESTS"] == "1",
-               !store.supportsMessageRequests {
-                store.installDebugMessageRequestFixture()
-            }
-            #endif
-            await store.loadMessageRequests(.incoming)
-            await store.loadMessageRequests(.outgoing)
-        }
-        .onChange(of: store.lastAcceptedMessageRequestConversationID) { _, conversationID in
-            guard let conversationID else { return }
-            _ = store.consumeAcceptedMessageRequestConversation()
-            openConversation(conversationID)
-        }
-        .accessibilityIdentifier("message-requests-screen")
-    }
-}
-
-private struct PhoneMessageRequestRow: View {
-    let request: MessageRequestItem
-    let mutationState: RemoteContentState
-    let error: String?
-    let accept: () -> Void
-    let dismiss: () -> Void
-    let retry: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                AvatarView(participant: request.participant, size: 48)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(request.participant.displayName)
-                        .font(.body.weight(.semibold))
-                    Text("@\(request.participant.username)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(request.body)
-                        .font(.callout)
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 4)
-                }
-                Spacer(minLength: 4)
-                Text(request.createdAt, style: .relative)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.trailing)
-            }
-
-            if request.direction == .incoming, request.state == .pending {
-                if mutationState == .loading {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Подтверждаем на сервере…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityIdentifier("message-request-mutation-loading-\(request.id.uuidString.lowercased())")
-                } else {
-                    HStack(spacing: 10) {
-                        Button("Принять", action: accept)
-                            .buttonStyle(.borderedProminent)
-                            .accessibilityIdentifier("message-request-accept-\(request.id.uuidString.lowercased())")
-                        Button("Удалить", role: .destructive, action: dismiss)
-                            .buttonStyle(.bordered)
-                            .accessibilityIdentifier("message-request-dismiss-\(request.id.uuidString.lowercased())")
-                    }
-                }
-            } else {
-                Label(request.state.russianTitle, systemImage: requestStateSymbol)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(request.state == .expired ? .secondary : LuxoraTheme.iris)
-                    .accessibilityIdentifier("message-request-state-\(request.id.uuidString.lowercased())")
-            }
-
-            if let error {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 4)
-                    Button("Повторить", action: retry)
-                        .font(.caption.weight(.semibold))
-                }
-                .accessibilityIdentifier("message-request-mutation-error-\(request.id.uuidString.lowercased())")
-            }
-        }
-        .padding(.vertical, 5)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("message-request-row-\(request.id.uuidString.lowercased())")
-    }
-
-    private var requestStateSymbol: String {
-        switch request.state {
-        case .pending: "clock.fill"
-        case .accepted: "checkmark.circle.fill"
-        case .recipientDismissed: "trash.fill"
-        case .expired: "hourglass.bottomhalf.filled"
-        }
-    }
-}
-
-private struct PhoneNewMessageRequestSheet: View {
-    @Bindable var store: MessengerStore
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var username = ""
-    @State private var requestBody = ""
-    @State private var didSubmit = false
-
-    private var normalizedBody: String {
-        requestBody.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Точный username") {
-                    TextField("@username", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .submitLabel(.search)
-                        .onSubmit(search)
-                        .accessibilityIdentifier("message-request-username")
-                    Button("Найти", systemImage: "magnifyingglass", action: search)
-                        .disabled(username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("message-request-lookup")
-                }
-
-                Section("Получатель") {
-                    switch store.messageRequestLookupState {
-                    case .idle:
-                        Text("Введите точный username. Глобальный список пользователей не раскрывается.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    case .loading:
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Проверяем доступность…")
-                        }
-                    case .loaded:
-                        if let participant = store.messageRequestLookupResult {
-                            HStack(spacing: 12) {
-                                AvatarView(participant: participant, size: 46)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(participant.displayName)
-                                        .font(.body.weight(.semibold))
-                                    Text("@\(participant.username)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .accessibilityIdentifier("message-request-recipient")
-                        } else {
-                            Label("Пользователь недоступен", systemImage: "person.crop.circle.badge.xmark")
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier("message-request-recipient-unavailable")
-                        }
-                    case let .failed(message):
-                        PhoneRemoteFailureRow(title: "Поиск не выполнен", detail: message, retry: search)
-                    }
-                }
-
-                if store.messageRequestLookupResult != nil {
-                    Section("Первое сообщение") {
-                        TextEditor(text: $requestBody)
-                            .frame(minHeight: 110)
-                            .accessibilityIdentifier("message-request-body")
-                        Text("\(requestBody.unicodeScalars.count) из 1000 · вложения недоступны до принятия")
-                            .font(.caption2)
-                            .foregroundStyle(requestBody.unicodeScalars.count > 1_000 ? .red : .secondary)
-                    }
-                }
-
-                if case let .failed(message) = store.messageRequestCreationState {
-                    Section {
-                        PhoneRemoteFailureRow(
-                            title: "Запрос не отправлен",
-                            detail: store.messageRequestCreationError ?? message,
-                            retry: {
-                                didSubmit = true
-                                store.retryMessageRequestCreation()
-                            }
-                        )
-                    }
-                }
-
-                Section {
-                    Text("Получатель увидит только ваше публичное имя, username и это сообщение. До принятия Luxora не отправляет вам отметку о прочтении.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("Новый запрос")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(store.messageRequestCreationState == .loading ? "Отправляем…" : "Отправить") {
-                        guard let recipient = store.messageRequestLookupResult else { return }
-                        didSubmit = true
-                        store.createMessageRequest(to: recipient.id, body: normalizedBody)
-                    }
-                    .disabled(
-                        store.messageRequestLookupResult == nil
-                            || normalizedBody.isEmpty
-                            || requestBody.unicodeScalars.count > 1_000
-                            || store.messageRequestCreationState == .loading
-                    )
-                    .accessibilityIdentifier("message-request-send")
-                }
-            }
-        }
-        .onChange(of: requestBody) { _, value in
-            if value.unicodeScalars.count > 1_000 {
-                requestBody = String(value.unicodeScalars.prefix(1_000))
-            }
-        }
-        .onChange(of: store.messageRequestCreationState) { _, state in
-            if didSubmit, state == .loaded { dismiss() }
-        }
-        .accessibilityIdentifier("message-request-new-sheet")
-    }
-
-    private func search() {
-        store.lookupMessageRequestRecipient(username)
-    }
-}
 
 private struct PhoneChatsTitleStack: View {
     let conversations: [Conversation]
@@ -5032,12 +4610,6 @@ private struct PhoneNotificationPreferencesSections: View {
                     identifier: "notifications-message-alerts"
                 ) { NotificationSettingsPatch(messageAlerts: $0) }
                 settingToggle(
-                    "Запросы на переписку",
-                    symbol: "person.crop.circle.badge.questionmark",
-                    value: settings.messageRequestAlerts,
-                    identifier: "notifications-request-alerts"
-                ) { NotificationSettingsPatch(messageRequestAlerts: $0) }
-                settingToggle(
                     "Упоминания и ответы",
                     symbol: "at",
                     value: settings.mentionAlerts,
@@ -5166,7 +4738,7 @@ private struct PhonePrivacySettingsView: View {
                     .accessibilityIdentifier("privacy-username-discoverable")
 
                     Picker(
-                        "Запросы на переписку",
+                        "Кто может написать мне",
                         selection: Binding(
                             get: { settings.messageRequests },
                             set: { store.updatePrivacySettings(messageRequests: $0) }

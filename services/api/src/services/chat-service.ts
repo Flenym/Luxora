@@ -110,7 +110,8 @@ export class ChatService {
         input.userId !== actorUserId &&
         (
           this.store.isBlockedBetween(actorUserId, input.userId) ||
-          !this.store.hasAcceptedRelationship(actorUserId, input.userId)
+          (!this.store.hasAcceptedRelationship(actorUserId, input.userId) &&
+            this.store.getPrivacySettings(input.userId).messageRequests === "nobody")
         )
       ) {
         throw this.#relationshipUnavailable();
@@ -130,7 +131,8 @@ export class ChatService {
             input.userId !== actorUserId &&
             (
               this.store.isBlockedBetween(actorUserId, input.userId) ||
-              !this.store.hasAcceptedRelationship(actorUserId, input.userId)
+              (!this.store.hasAcceptedRelationship(actorUserId, input.userId) &&
+                this.store.getPrivacySettings(input.userId).messageRequests === "nobody")
             )
           ) {
             throw this.#relationshipUnavailable();

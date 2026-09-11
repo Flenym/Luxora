@@ -194,13 +194,14 @@ describe("IA-1 identity and relationship boundary", () => {
     const nonceConflict = await createRequest(alice, bob, "Changed body", nonce);
     expect(nonceConflict.statusCode).toBe(409);
 
-    const beforeAccept = await app.inject({
+    const strangerDirect = await app.inject({
       method: "POST",
       url: "/v1/chats",
       headers: auth(alice),
       payload: { kind: "direct", userId: bob.id }
     });
-    expect(beforeAccept.statusCode).toBe(403);
+    expect(strangerDirect.statusCode).toBe(201);
+    expect(strangerDirect.json().chat.kind).toBe("direct");
     const groupBypass = await app.inject({
       method: "POST",
       url: "/v1/chats",

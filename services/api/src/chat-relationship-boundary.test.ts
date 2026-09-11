@@ -123,20 +123,28 @@ describe("chat relationship and block boundary", () => {
     });
   }
 
-  it("requires acceptance for another user while preserving self chat", () => {
+  it("creates stranger direct chats by default while the nobody privacy gate blocks them", () => {
     const alice = createUser("alice");
     const bob = createUser("bob_user");
 
-    expectRelationshipUnavailable(() =>
-      service.createChat(alice.id, { kind: "direct", userId: bob.id })
-    );
+    // Default privacy ("everyone") mirrors Telegram: strangers open a direct
+    // chat immediately instead of routing through message requests.
+    const strangerChat = service.createChat(alice.id, { kind: "direct", userId: bob.id });
+    expect(strangerChat.kind).toBe("direct");
 
     const selfChat = service.createChat(alice.id, { kind: "direct", userId: alice.id });
     expect(selfChat.kind).toBe("direct");
 
-    acceptRelationship(alice, bob);
-    const direct = service.createChat(alice.id, { kind: "direct", userId: bob.id });
-    expect(direct.kind).toBe("direct");
+    // The recipient can still restrict stranger chats to accepted contacts.
+    store.updatePrivacySettings(bob.id, { messageRequests: "nobody" }, NOW);
+    const carol = createUser("carol_user");
+    expectRelationshipUnavailable(() =>
+      service.createChat(carol.id, { kind: "direct", userId: bob.id })
+    );
+
+    acceptRelationship(carol, bob);
+    const accepted = service.createChat(carol.id, { kind: "direct", userId: bob.id });
+    expect(accepted.kind).toBe("direct");
   });
 
   it("cuts off active direct-chat mutations after either-direction block but permits own deletion", () => {

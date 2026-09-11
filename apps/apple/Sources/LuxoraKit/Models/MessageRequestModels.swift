@@ -67,7 +67,7 @@ public enum MessageRequestPolicy: String, CaseIterable, Codable, Identifiable, S
     public var russianTitle: String {
         switch self {
         case .everyone: "Все пользователи"
-        case .nobody: "Никто"
+        case .nobody: "Только контакты"
         }
     }
 }
