@@ -5122,6 +5122,28 @@ private struct PhonePrivacySettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section("Заблокированные") {
+                NavigationLink {
+                    PhoneBlockedUsersView(store: store)
+                } label: {
+                    HStack {
+                        Label("Заблокированные пользователи", systemImage: "person.crop.circle.badge.xmark.fill")
+                        Spacer()
+                        if store.blockedUsersState == .loading {
+                            ProgressView()
+                        } else {
+                            Text("\(store.blockedUsers.count)")
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("privacy-blocked-users")
+                Text("Заблокированные не могут написать, позвонить или найти вас. Разблокировать можно в любой момент.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Разрешения этого iPhone") {
                 PhoneSystemPermissionRow(title: "Контакты", symbol: "person.crop.circle", state: permissions.contacts)
                 PhoneSystemPermissionRow(title: "Камера", symbol: "camera.fill", state: permissions.camera)

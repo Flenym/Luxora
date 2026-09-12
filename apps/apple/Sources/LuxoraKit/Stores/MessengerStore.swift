@@ -119,6 +119,9 @@ public final class MessengerStore {
     public private(set) var privacySettings: PrivacySettingsSnapshot?
     public private(set) var privacySettingsState: RemoteContentState = .idle
 
+    public private(set) var blockedUsers: [Participant] = []
+    public private(set) var blockedUsersState: RemoteContentState = .idle
+
     /// Media picked in the composer that will be uploaded on send.
     public private(set) var composerMedia: [PendingMediaAttachment] = []
     public private(set) var isUploadingMedia = false
@@ -157,6 +160,9 @@ public final class MessengerStore {
     var remoteMessageRequestDismisser: (@Sendable (UUID) async throws -> Void)?
     var remotePrivacySettingsLoader: (@Sendable () async throws -> PrivacySettingsSnapshot)?
     var remotePrivacySettingsUpdater: (@Sendable (Bool?, MessageRequestPolicy?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?) async throws -> PrivacySettingsSnapshot)?
+    var remoteBlockedUsersLoader: (@Sendable () async throws -> [Participant])?
+    var remoteBlocker: (@Sendable (UUID) async throws -> Void)?
+    var remoteUnblocker: (@Sendable (UUID) async throws -> Void)?
     private var loadedConversationIDs: Set<UUID>
     @ObservationIgnored private var remoteOperations: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var profileUpdateOperation: Task<CurrentUserProfileSnapshot, Error>?
@@ -722,6 +728,44 @@ public final class MessengerStore {
         )
     }
 
+    public func loadBlockedUsers(force: Bool = false) async {
+        guard let remoteBlockedUsersLoader else {
+            blockedUsersState = .failed("Список заблокированных недоступен.")
+            return
+        }
+        if !force, blockedUsersState == .loading { return }
+        blockedUsersState = .loading
+        do {
+            blockedUsers = try await remoteBlockedUsersLoader()
+            blockedUsersState = .loaded
+        } catch is CancellationError {
+            blockedUsersState = blockedUsers.isEmpty ? .idle : .loaded
+        } catch {
+            blockedUsersState = .failed(error.localizedDescription)
+        }
+    }
+
+    public func blockUser(id: UUID) async {
+        guard let remoteBlocker else { return }
+        do {
+            try await remoteBlocker(id)
+            // Optimistically keep local list; next load will refresh.
+            await loadBlockedUsers(force: true)
+        } catch {
+            blockedUsersState = .failed(error.localizedDescription)
+        }
+    }
+
+    public func unblockUser(id: UUID) async {
+        guard let remoteUnblocker else { return }
+        do {
+            try await remoteUnblocker(id)
+            blockedUsers.removeAll { $0.id == id }
+        } catch {
+            blockedUsersState = .failed(error.localizedDescription)
+        }
+    }
+
     public func markConversationRead(_ conversationID: UUID) async {
         guard let remoteReadMarker,
               let index = conversations.firstIndex(where: { $0.id == conversationID }),
@@ -1221,7 +1265,10 @@ public final class MessengerStore {
         messageRequestAccepter: (@Sendable (UUID) async throws -> MessageRequestAcceptResult)? = nil,
         messageRequestDismisser: (@Sendable (UUID) async throws -> Void)? = nil,
         privacySettingsLoader: (@Sendable () async throws -> PrivacySettingsSnapshot)? = nil,
-        privacySettingsUpdater: (@Sendable (Bool?, MessageRequestPolicy?) async throws -> PrivacySettingsSnapshot)? = nil
+        privacySettingsUpdater: (@Sendable (Bool?, MessageRequestPolicy?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?) async throws -> PrivacySettingsSnapshot)? = nil,
+        blockedUsersLoader: (@Sendable () async throws -> [Participant])? = nil,
+        blocker: (@Sendable (UUID) async throws -> Void)? = nil,
+        unblocker: (@Sendable (UUID) async throws -> Void)? = nil
     ) {
         remoteMessageSender = sender
         remoteAttachmentUploader = mediaAttachmentUploader
@@ -1247,6 +1294,9 @@ public final class MessengerStore {
         remoteAvatarClearer = avatarClearer
         remoteMessageRequestLoader = messageRequestLoader
         remoteExactUserLookup = exactUserLookup
+        remoteBlockedUsersLoader = blockedUsersLoader
+        remoteBlocker = blocker
+        remoteUnblocker = unblocker
         remoteMessageRequestCreator = messageRequestCreator
         remoteMessageRequestAccepter = messageRequestAccepter
         remoteMessageRequestDismisser = messageRequestDismisser

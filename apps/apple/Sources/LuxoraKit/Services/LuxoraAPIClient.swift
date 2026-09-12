@@ -870,6 +870,22 @@ actor LuxoraAPIClient {
         (try await searchUsersPage(query: query, cursor: nil, token: token)).items
     }
 
+    func blockedUsers(limit: Int = 30, cursor: String? = nil, token: String) async throws -> APIList<APIBlockedEntry> {
+        var path = "/v1/blocks?limit=\(limit)"
+        if let cursor, let encoded = cursor.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            path += "&cursor=\(encoded)"
+        }
+        return try await request(path: path, token: token)
+    }
+
+    func blockUser(id: UUID, token: String) async throws {
+        try await requestWithoutResponse(path: "/v1/blocks/\(id.apiPathComponent)", method: "PUT", token: token)
+    }
+
+    func unblockUser(id: UUID, token: String) async throws {
+        try await requestWithoutResponse(path: "/v1/blocks/\(id.apiPathComponent)", method: "DELETE", token: token)
+    }
+
     func searchUsersPage(
         query: String,
         cursor: String?,

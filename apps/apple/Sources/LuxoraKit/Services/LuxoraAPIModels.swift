@@ -119,6 +119,12 @@ struct APIPublicProfile: Decodable, Sendable {
     }
 }
 
+struct APIBlockedEntry: Decodable, Sendable {
+    let accountId: UUID
+    let profileSnapshot: APIPublicProfile
+    let blockedAt: Date
+}
+
 struct APIPrivacySettings: Decodable, Sendable {
     let usernameDiscoverable: Bool
     let messageRequests: MessageRequestPolicy

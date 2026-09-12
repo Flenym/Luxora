@@ -1317,6 +1317,22 @@ public final class ApplicationSession {
                         token: token
                     )
                 }.snapshot
+            },
+            blockedUsersLoader: {
+                let page = try await coordinator.withAccessToken { token in
+                    try await api.blockedUsers(token: token)
+                }
+                return page.items.map { $0.profileSnapshot.participant }
+            },
+            blocker: { id in
+                try await coordinator.withAccessToken { token in
+                    try await api.blockUser(id: id, token: token)
+                }
+            },
+            unblocker: { id in
+                try await coordinator.withAccessToken { token in
+                    try await api.unblockUser(id: id, token: token)
+                }
             }
         )
 
