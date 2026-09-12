@@ -135,7 +135,7 @@
 - [ ] Production provider public-access-block/account controls, workload IAM, managed KMS key policy/rotation/audit, observed lifecycle execution and version/delete propagation evidence.
 - [ ] Polyglot/zip-bomb corpus plus Moderated malware quarantine/probe/transcode pipeline.
 - [x] Image/video/video-message/audio/voice/file contracts with explicitly client-declared metadata trust.
-- [x] Voice-note server bounds (no migration: metadata is an encrypted envelope): `voice`/`audio` uploads reject client-declared `durationMs` above 60 minutes (`VOICE_NOTE_MAX_DURATION_MS`) and require a non-empty `waveform` when one is declared; protocol keeps duration/waveform additive and bounded. Evidence: API media voice-policy integration test (create-only, no bytes moved) green. Client recording/playback UI and transcript-consent UX remain open.
+- [x] Voice-note server bounds (no migration: metadata is an encrypted envelope): `voice`/`audio` uploads reject client-declared `durationMs` above 60 minutes (`VOICE_NOTE_MAX_DURATION_MS`) and require a non-empty `waveform` when one is declared; protocol keeps duration/waveform additive and bounded. Evidence: API media voice-policy integration test (create-only, no bytes moved) green. Client recording/playback UI is written (`PhoneVoiceRecorder`, waveform bubble, inline player, composer voice button) but awaits Xcode/CI verification — GitHub Actions is billing-blocked as of 2026-09-12. Transcript-consent UX remains open.
 - [ ] Verified photo/video/audio metadata extraction, GIF/sticker/custom-emoji/document/large-file processing.
 - [ ] Voice/video notes, waveform/thumbnail/duration and transcript consent boundary.
 - [ ] Encrypted Private blob/derivative design after crypto gate.
