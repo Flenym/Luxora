@@ -816,9 +816,9 @@ struct APIMessage: Decodable, Sendable {
     let updatedAt: Date
     let editedAt: Date?
     let deletedAt: Date?
-    let attachments: [APIAttachment]? = nil
-    let transcriptionAllowed: Bool = false
-    let transcript: String? = nil
+    let attachments: [APIAttachment]?
+    let transcriptionAllowed: Bool
+    let transcript: String?
 
     private enum CodingKeys: String, CodingKey {
         case id

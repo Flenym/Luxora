@@ -45,7 +45,10 @@ final class MessengerReconciliationTests: XCTestCase {
             createdAt: now,
             updatedAt: now,
             editedAt: nil,
-            deletedAt: nil
+            deletedAt: nil,
+            attachments: nil,
+            transcriptionAllowed: false,
+            transcript: nil
         )
         let request = APIMessageRequest(
             id: UUID(),
@@ -311,7 +314,10 @@ final class MessengerReconciliationTests: XCTestCase {
             createdAt: outgoing.sentAt,
             updatedAt: now,
             editedAt: now,
-            deletedAt: nil
+            deletedAt: nil,
+            attachments: nil,
+            transcriptionAllowed: false,
+            transcript: nil
         )
         let bundle = LuxoraReconciliationBundle(
             boundary: Self.boundary(),
