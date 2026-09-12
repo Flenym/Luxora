@@ -216,6 +216,8 @@ struct APIUploadAttachment: Decodable, Sendable {
     let createdAt: Date
     let metadataWidth: Int?
     let metadataHeight: Int?
+    let metadataDurationMs: Int?
+    let metadataWaveform: [Int]?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -231,6 +233,8 @@ struct APIUploadAttachment: Decodable, Sendable {
     private struct APIMetadata: Decodable, Sendable {
         let width: Int?
         let height: Int?
+        let durationMs: Int?
+        let waveform: [Int]?
     }
 
     init(from decoder: Decoder) throws {
