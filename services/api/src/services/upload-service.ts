@@ -50,6 +50,9 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 const BIDI_CONTROL_PATTERN = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
+/** Honest Beta-0.1 bound for voice/audio notes, mirroring long-form messengers. */
+export const VOICE_NOTE_MAX_DURATION_MS = 3_600_000;
+
 interface ChunkInput {
   index: number;
   start: number;
@@ -155,6 +158,16 @@ export class UploadService {
     const fileName = safeFileName(input.fileName);
     if (input.sizeBytes > this.config.maxAttachmentBytes) {
       throw new AppError(413, "BAD_REQUEST", `Attachment exceeds the ${this.config.maxAttachmentBytes}-byte limit`);
+    }
+    if (input.kind === "voice" || input.kind === "audio") {
+      const durationMs = input.metadata.durationMs;
+      if (durationMs !== undefined && durationMs > VOICE_NOTE_MAX_DURATION_MS) {
+        throw badRequest(`Voice notes are limited to ${VOICE_NOTE_MAX_DURATION_MS / 60_000} minutes`);
+      }
+      const waveform = input.metadata.waveform;
+      if (waveform !== undefined && waveform.length === 0) {
+        throw badRequest("Voice waveform must be omitted or contain at least one sample");
+      }
     }
     const existing = this.store.findUploadByIdempotency(userId, input.idempotencyKey);
     if (existing !== null) {

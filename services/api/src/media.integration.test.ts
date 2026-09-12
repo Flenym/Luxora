@@ -527,4 +527,63 @@ describe("resumable media uploads", () => {
     })).statusCode).toBe(404);
     expect(app.luxora.store.findAttachmentRecord(attachmentId)).toBeNull();
   });
+
+  it("bounds voice-note duration and waveform shape without touching the transport", async () => {
+    const key = Buffer.alloc(32, 43).toString("base64url");
+    const storageRoot = await mkdtemp(join(tmpdir(), "luxora-voice-test-"));
+    temporaryRoots.push(storageRoot);
+    app = await buildApp({
+      config: testConfig({
+        dataEncryptionKeys: { test: key },
+        activeDataEncryptionKeyId: "test",
+        storageLocalPath: join(storageRoot, "blobs"),
+        uploadStagingPath: join(storageRoot, "uploads")
+      }),
+      logger: false
+    });
+    const alice = await register("voice_alice");
+    const headers = { authorization: `Bearer ${alice.accessToken}` };
+    const voice = (metadata: Record<string, unknown>) => ({
+      kind: "voice",
+      fileName: "note.ogg",
+      mimeType: "audio/ogg",
+      sizeBytes: 4_096,
+      sha256: sha256(Buffer.alloc(4_096, 7)),
+      idempotencyKey: randomUUID(),
+      metadata
+    });
+
+    const tooLong = await app.inject({
+      method: "POST",
+      url: "/v1/uploads",
+      headers,
+      payload: voice({ durationMs: 3_600_001, waveform: [10, 20, 30] })
+    });
+    expect(tooLong.statusCode, tooLong.body).toBe(400);
+
+    const emptyWaveform = await app.inject({
+      method: "POST",
+      url: "/v1/uploads",
+      headers,
+      payload: voice({ durationMs: 60_000, waveform: [] })
+    });
+    expect(emptyWaveform.statusCode, emptyWaveform.body).toBe(400);
+
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/v1/uploads",
+      headers,
+      payload: voice({ durationMs: 60_000, waveform: [0, 128, 255] })
+    });
+    expect(accepted.statusCode, accepted.body).toBe(201);
+    expect(accepted.json().upload.attachment).toBeNull();
+
+    const audioAccepted = await app.inject({
+      method: "POST",
+      url: "/v1/uploads",
+      headers,
+      payload: { ...voice({}), kind: "audio", fileName: "track.mp3", mimeType: "audio/mpeg" }
+    });
+    expect(audioAccepted.statusCode, audioAccepted.body).toBe(201);
+  });
 });
