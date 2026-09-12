@@ -820,6 +820,46 @@ struct APIMessage: Decodable, Sendable {
     let transcriptionAllowed: Bool
     let transcript: String?
 
+    init(
+        id: UUID,
+        chatId: UUID,
+        sender: APIUser,
+        kind: String,
+        body: String?,
+        replyToMessageId: UUID?,
+        topicId: UUID?,
+        forwardedFrom: APIForwardProvenance?,
+        isPinned: Bool,
+        clientNonce: UUID,
+        revision: Int,
+        createdAt: Date,
+        updatedAt: Date,
+        editedAt: Date?,
+        deletedAt: Date?,
+        attachments: [APIAttachment]? = nil,
+        transcriptionAllowed: Bool = false,
+        transcript: String? = nil
+    ) {
+        self.id = id
+        self.chatId = chatId
+        self.sender = sender
+        self.kind = kind
+        self.body = body
+        self.replyToMessageId = replyToMessageId
+        self.topicId = topicId
+        self.forwardedFrom = forwardedFrom
+        self.isPinned = isPinned
+        self.clientNonce = clientNonce
+        self.revision = revision
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.editedAt = editedAt
+        self.deletedAt = deletedAt
+        self.attachments = attachments
+        self.transcriptionAllowed = transcriptionAllowed
+        self.transcript = transcript
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case chatId
