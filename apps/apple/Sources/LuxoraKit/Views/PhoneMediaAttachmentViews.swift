@@ -114,6 +114,7 @@ struct PhoneMediaPickerSheet: View {
 
 struct PhoneMessageAttachmentList: View {
     let attachments: [MessageAttachment]
+    let voiceCache: AuthenticatedAvatarImageCache?
     let cache: AuthenticatedAvatarImageCache?
     let onOpenImage: (MessageAttachment) -> Void
 
@@ -125,6 +126,11 @@ struct PhoneMessageAttachmentList: View {
                         attachment: attachment,
                         cache: cache,
                         onOpen: { onOpenImage(attachment) }
+                    )
+                } else if attachment.isVoice {
+                    PhoneVoiceMessageView(
+                        attachment: attachment,
+                        cache: voiceCache
                     )
                 } else {
                     PhoneFileAttachmentRow(attachment: attachment)

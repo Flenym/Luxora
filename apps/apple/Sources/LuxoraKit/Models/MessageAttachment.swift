@@ -10,6 +10,8 @@ public struct MessageAttachment: Identifiable, Hashable, Codable, Sendable {
     public let downloadPath: String
     public let imageWidth: Int?
     public let imageHeight: Int?
+    public let durationMs: Int?
+    public let waveform: [Int]?
 
     public init(
         id: UUID,
@@ -19,7 +21,9 @@ public struct MessageAttachment: Identifiable, Hashable, Codable, Sendable {
         sizeBytes: Int,
         downloadPath: String,
         imageWidth: Int? = nil,
-        imageHeight: Int? = nil
+        imageHeight: Int? = nil,
+        durationMs: Int? = nil,
+        waveform: [Int]? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -29,9 +33,18 @@ public struct MessageAttachment: Identifiable, Hashable, Codable, Sendable {
         self.downloadPath = downloadPath
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
+        self.durationMs = durationMs
+        self.waveform = waveform
     }
 
     public var isImage: Bool { kind == "image" }
+    public var isVoice: Bool { kind == "voice" }
+
+    public var formattedDuration: String? {
+        guard let durationMs, durationMs > 0 else { return nil }
+        let totalSeconds = durationMs / 1_000
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
 
     public var formattedSize: String {
         ByteCountFormatter.string(fromByteCount: Int64(sizeBytes), countStyle: .file)
@@ -47,6 +60,8 @@ public struct PendingMediaAttachment: Identifiable, Sendable {
     public let data: Data
     public let imageWidth: Int?
     public let imageHeight: Int?
+    public let durationMs: Int?
+    public let waveform: [Int]?
 
     public init(
         id: UUID = UUID(),
@@ -55,7 +70,9 @@ public struct PendingMediaAttachment: Identifiable, Sendable {
         mimeType: String,
         data: Data,
         imageWidth: Int? = nil,
-        imageHeight: Int? = nil
+        imageHeight: Int? = nil,
+        durationMs: Int? = nil,
+        waveform: [Int]? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -64,5 +81,7 @@ public struct PendingMediaAttachment: Identifiable, Sendable {
         self.data = data
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
+        self.durationMs = durationMs
+        self.waveform = waveform
     }
 }

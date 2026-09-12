@@ -2180,6 +2180,7 @@ private struct PhoneDirectConversationView: View {
     @State private var presentsFilePicker = false
     @State private var pickedPhotoItems: [PhotosPickerItem] = []
     @State private var viewerAttachment: MessageAttachment?
+    @State private var voiceRecorder = PhoneVoiceRecorder()
     #if DEBUG
     @State private var didInstallDebugMessageMutations = false
     @State private var didApplyDebugMessageCaptureState = false
@@ -2187,6 +2188,20 @@ private struct PhoneDirectConversationView: View {
 
     private var messages: [ChatMessage] {
         store.messagesByConversation[conversation.id, default: []]
+    }
+
+    private func toggleVoiceRecording() {
+        if voiceRecorder.isRecording {
+            finishVoiceRecording()
+        } else {
+            voiceRecorder.start()
+        }
+    }
+
+    private func finishVoiceRecording() {
+        if let pending = voiceRecorder.stop() {
+            store.addComposerMedia([pending])
+        }
     }
 
     private static func pendingImage(from item: PhotosPickerItem) async -> PendingMediaAttachment? {
@@ -2410,6 +2425,14 @@ private struct PhoneDirectConversationView: View {
                     PhoneChannelReadOnlyComposer(conversation: conversation)
                 } else {
                     VStack(spacing: 0) {
+                        if voiceRecorder.isRecording {
+                            PhoneVoiceRecordingBar(
+                                elapsedSeconds: voiceRecorder.elapsedSeconds,
+                                levels: voiceRecorder.levels,
+                                onStop: finishVoiceRecording,
+                                onCancel: { voiceRecorder.cancel() }
+                            )
+                        }
                         if !store.composerMedia.isEmpty {
                             PhoneComposerMediaStrip(
                                 media: store.composerMedia,
@@ -2441,7 +2464,9 @@ private struct PhoneDirectConversationView: View {
                             store: store,
                             onAttachment: {
                                 presentsMediaPicker = true
-                            }
+                            },
+                            onVoiceRecord: toggleVoiceRecording,
+                            isRecordingVoice: voiceRecorder.isRecording
                         )
                     }
                 }
@@ -2866,6 +2891,7 @@ private struct PhoneMessageBubble: View {
                     if !message.attachments.isEmpty {
                         PhoneMessageAttachmentList(
                             attachments: message.attachments,
+                            voiceCache: attachmentImageCache,
                             cache: attachmentImageCache,
                             onOpenImage: { attachment in
                                 openAttachment(attachment)

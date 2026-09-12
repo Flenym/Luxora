@@ -1069,6 +1069,8 @@ public final class ApplicationSession {
                         data: item.data,
                         imageWidth: item.imageWidth,
                         imageHeight: item.imageHeight,
+                        durationMs: item.durationMs,
+                        waveform: item.waveform,
                         token: token
                     )
                 }

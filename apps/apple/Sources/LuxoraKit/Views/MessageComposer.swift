@@ -4,11 +4,20 @@ struct MessageComposer: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var store: MessengerStore
     var onAttachment: (() -> Void)?
+    var onVoiceRecord: (() -> Void)?
+    var isRecordingVoice: Bool = false
     @FocusState private var isFocused: Bool
 
-    init(store: MessengerStore, onAttachment: (() -> Void)? = nil) {
+    init(
+        store: MessengerStore,
+        onAttachment: (() -> Void)? = nil,
+        onVoiceRecord: (() -> Void)? = nil,
+        isRecordingVoice: Bool = false
+    ) {
         self.store = store
         self.onAttachment = onAttachment
+        self.onVoiceRecord = onVoiceRecord
+        self.isRecordingVoice = isRecordingVoice
     }
 
     var body: some View {
@@ -73,6 +82,20 @@ struct MessageComposer: View {
                 .accessibilityLabel(LuxoraL10n.text("conversation.attachment"))
                 .accessibilityHint("Открывает честное объяснение статуса медиа")
                 .accessibilityIdentifier("message-attachment")
+            }
+
+            if let onVoiceRecord {
+                Button(action: onVoiceRecord) {
+                    Image(systemName: isRecordingVoice ? "stop.circle.fill" : "mic.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 40, height: 40)
+                        .foregroundStyle(isRecordingVoice ? .red : .secondary)
+                }
+                .buttonStyle(.plain)
+                .frame(minWidth: 44, minHeight: 44)
+                .background(Color.secondary.opacity(0.08), in: Circle())
+                .accessibilityLabel(isRecordingVoice ? "Остановить запись" : "Записать голосовое")
+                .accessibilityIdentifier("message-voice-record")
             }
 
             TextField(composerPlaceholder, text: $store.draft, axis: .vertical)

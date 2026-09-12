@@ -329,10 +329,17 @@ actor LuxoraAPIClient {
         sizeBytes: Int,
         sha256: String,
         idempotencyKey: UUID,
+        metadata: APIMediaDimensions? = nil,
         imageWidth: Int? = nil,
         imageHeight: Int? = nil,
         token: String
     ) async throws -> APIUploadSession {
+        let resolvedMetadata = metadata ?? APIMediaDimensions(
+            width: imageWidth,
+            height: imageHeight,
+            durationMs: nil,
+            waveform: nil
+        )
         let response: APIUploadResponse = try await requestEncoded(
             path: "/v1/uploads",
             method: "POST",
@@ -343,7 +350,7 @@ actor LuxoraAPIClient {
                 sizeBytes: sizeBytes,
                 sha256: sha256,
                 idempotencyKey: idempotencyKey.apiPathComponent,
-                metadata: APIMediaDimensions(width: imageWidth, height: imageHeight)
+                metadata: resolvedMetadata
             ),
             token: token
         )
@@ -408,6 +415,8 @@ actor LuxoraAPIClient {
         data: Data,
         imageWidth: Int?,
         imageHeight: Int?,
+        durationMs: Int? = nil,
+        waveform: [Int]? = nil,
         token: String,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> MessageAttachment {
@@ -418,8 +427,12 @@ actor LuxoraAPIClient {
             sizeBytes: data.count,
             sha256: APIAvatarUploadContract.sha256Hex(data),
             idempotencyKey: UUID.clientNonceV4(),
-            imageWidth: imageWidth,
-            imageHeight: imageHeight,
+            metadata: APIMediaDimensions(
+                width: imageWidth,
+                height: imageHeight,
+                durationMs: durationMs,
+                waveform: waveform
+            ),
             token: token
         )
         let chunkSize = max(1, session.chunkSizeBytes)
@@ -1307,6 +1320,8 @@ struct APIAttachmentCreateBody: Encodable, Sendable {
 struct APIMediaDimensions: Encodable, Sendable {
     let width: Int?
     let height: Int?
+    let durationMs: Int?
+    let waveform: [Int]?
 }
 
 enum APIChatBody {
