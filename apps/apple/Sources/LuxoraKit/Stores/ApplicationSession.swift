@@ -1115,9 +1115,7 @@ public final class ApplicationSession {
                 return scheduled.scheduled()
             },
             scheduledListLoader: { conversationID in
-                var items: [ScheduledMessage] = []
-                var cursor: String? = nil
-                repeat {
+                func load(cursor: String?, into items: [ScheduledMessage]) async throws -> [ScheduledMessage] {
                     let page = try await coordinator.withAccessToken { token in
                         try await api.scheduledMessagesPage(
                             chatID: conversationID,
@@ -1126,10 +1124,13 @@ public final class ApplicationSession {
                             token: token
                         )
                     }
-                    items.append(contentsOf: page.items)
-                    cursor = page.nextCursor
-                } while cursor != nil && items.count < 200
-                return items.sorted { $0.sendAt < $1.sendAt }
+                    let merged = items + page.items
+                    guard let next = page.nextCursor, merged.count < 200 else {
+                        return merged.sorted { $0.sendAt < $1.sendAt }
+                    }
+                    return try await load(cursor: next, into: merged)
+                }
+                return try await load(cursor: nil, into: [])
             },
             scheduledCanceller: { id in
                 try await coordinator.withAccessToken { token in
