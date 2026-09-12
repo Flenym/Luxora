@@ -2194,6 +2194,31 @@ private struct PhoneDirectConversationView: View {
         store.messagesByConversation[conversation.id, default: []]
     }
 
+    @ViewBuilder
+    private func messageBubbleRow(for message: ChatMessage) -> some View {
+        let metadata = store.metadata(for: message.id)
+        PhoneMessageBubble(
+            message: message,
+            metadata: metadata,
+            showsAuthorName: conversation.kind == .group || conversation.kind == .channel,
+            isMutationInFlight: store.isMessageMutationInFlight(message.id),
+            attachmentImageCache: attachmentImageCache,
+            openAttachment: { viewerAttachment = $0 },
+            retry: { store.retryMessage(message.id) },
+            react: { emoji in store.toggleReaction(emoji, messageID: message.id) },
+            reply: store.canReply(to: message) ? { store.beginReply(to: message) } : nil,
+            edit: store.canEdit(message) ? { store.beginEditing(message) } : nil,
+            delete: store.canDelete(message) ? { deletionCandidate = message } : nil,
+            forward: store.canForward(message) ? { forwardedMessage = message } : nil,
+            togglePin: store.canPin(message, in: conversation)
+                ? { store.togglePin(message.id, in: conversation.id) }
+                : nil,
+            submitTranscript: { messageID, text in
+                Task { await store.transcribeMessage(messageID, text: text) }
+            }
+        )
+    }
+
     private func toggleVoiceRecording() {
         if voiceRecorder.isRecording {
             finishVoiceRecording()
@@ -2346,27 +2371,8 @@ private struct PhoneDirectConversationView: View {
                         .padding(.top, 48)
                     } else {
                         ForEach(displayedMessages) { message in
-                            let metadata = store.metadata(for: message.id)
-                            PhoneMessageBubble(
-                                message: message,
-                                metadata: metadata,
-                                showsAuthorName: conversation.kind == .group || conversation.kind == .channel,
-                                isMutationInFlight: store.isMessageMutationInFlight(message.id),
-                                attachmentImageCache: attachmentImageCache,
-                                openAttachment: { viewerAttachment = $0 },
-                                retry: { store.retryMessage(message.id) },
-                                react: { emoji in store.toggleReaction(emoji, messageID: message.id) },
-                                reply: store.canReply(to: message) ? { store.beginReply(to: message) } : nil,
-                                edit: store.canEdit(message) ? { store.beginEditing(message) } : nil,
-                                delete: store.canDelete(message) ? { deletionCandidate = message } : nil,
-                                forward: store.canForward(message) ? { forwardedMessage = message } : nil,
-                                togglePin: store.canPin(message, in: conversation)
-                                    ? { store.togglePin(message.id, in: conversation.id) }
-                                    : nil,
-                                submitTranscript: { messageID, text in
-                                    Task { await store.transcribeMessage(messageID, text: text) }
-                                }
-                            )
+                            messageBubbleRow(for: message)
+                        }
                                 .padding(
                                     .bottom,
                                     usesExpandedMessageLayout && message.id == displayedMessages.last?.id
