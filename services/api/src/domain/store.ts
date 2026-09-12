@@ -22,6 +22,9 @@ import type {
   PersistCeremonyMutation
 } from "@luxora/passkey-domain";
 import type {
+  AdminChatRecord,
+  AdminStatusRecord,
+  AdminUserRecord,
   AttachmentRecord,
   BlockRecord,
   ClaimedRealtimeOutboxEvent,
@@ -657,6 +660,19 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   transaction<T>(operation: () => T): T;
   immediateTransaction<T>(operation: () => T): T;
 
+  /**
+   * Read-only operator projections for the loopback admin console.
+   * They never expose password material, digests, ciphertext or tokens.
+   */
+  adminUserPage(limit: number, cursor?: { createdAt: string; id: string }): {
+    items: AdminUserRecord[];
+    nextCursor: { createdAt: string; id: string } | null;
+  };
+  adminChatPage(limit: number, cursor?: { createdAt: string; id: string }): {
+    items: AdminChatRecord[];
+    nextCursor: { createdAt: string; id: string } | null;
+  };
+  adminStatus(): AdminStatusRecord;
   createUser(user: NewUser): UserRecord;
   findUserById(id: string): UserRecord | null;
   updateUserProfile(
@@ -793,8 +809,7 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   commitPasskeySignupExpired(input: PersistPasskeySignupExpired): Promise<void>;
   commitVerifiedPasskeySignup(input: PersistVerifiedPasskeySignup): Promise<void>;
 
-  getPrivacySettings(userId: string): PrivacySettingsRecord;
-  updatePrivacySettings(
+  getPrivacySettings(userId: string): PrivacySettingsRecord;  updatePrivacySettings(
     userId: string,
     update: Partial<Pick<PrivacySettingsRecord, "usernameDiscoverable" | "messageRequests">>,
     at: string

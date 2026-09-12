@@ -135,6 +135,9 @@ import type {
   PhoneBindingReceiptRecord,
   PhoneIdentityRecord,
   PhoneRecoveryIntentRecord,
+  AdminChatRecord,
+  AdminStatusRecord,
+  AdminUserRecord,
   PrivacySettingsRecord,
   PushRegistrationRecord,
   RefreshTokenRecord,
@@ -6097,6 +6100,162 @@ export class SqliteStore implements Store {
       userId: row.user_id,
       verifiedAt: row.verified_at
     };
+  }
+
+  adminUserPage(limit: number, cursor?: { createdAt: string; id: string }): {
+    items: AdminUserRecord[];
+    nextCursor: { createdAt: string; id: string } | null;
+  } {
+    const now = new Date().toISOString();
+    const rows = this.#db.prepare(`
+      SELECT
+        u.id, u.username, u.display_name,
+        u.phone_password_enabled, u.password_auth_enabled,
+        u.created_at, u.last_seen_at,
+        CASE WHEN pi.user_id IS NULL THEN 0 ELSE 1 END AS phone_bound,
+        (
+          SELECT COUNT(*) FROM device_sessions s
+          WHERE s.user_id = u.id AND s.revoked_at IS NULL AND s.expires_at > @now
+        ) AS active_sessions,
+        (
+          SELECT COUNT(*) FROM chat_members m WHERE m.user_id = u.id
+        ) AS chat_count
+      FROM users u
+      LEFT JOIN phone_identities pi ON pi.user_id = u.id
+      WHERE @cursorCreatedAt IS NULL
+        OR u.created_at < @cursorCreatedAt
+        OR (u.created_at = @cursorCreatedAt AND u.id < @cursorId)
+      ORDER BY u.created_at DESC, u.id DESC
+      LIMIT @take
+    `).all({
+      now,
+      cursorCreatedAt: cursor?.createdAt ?? null,
+      cursorId: cursor?.id ?? null,
+      take: limit + 1
+    }) as {
+      id: string;
+      username: string;
+      display_name: string;
+      phone_password_enabled: number;
+      password_auth_enabled: number;
+      created_at: string;
+      last_seen_at: string | null;
+      phone_bound: number;
+      active_sessions: number;
+      chat_count: number;
+    }[];
+    const page = rows.slice(0, limit);
+    const last = rows.length > limit ? page[page.length - 1] : undefined;
+    return {
+      items: page.map((row) => ({
+        id: row.id,
+        username: row.username,
+        displayName: row.display_name,
+        phoneBound: row.phone_bound === 1,
+        phonePasswordEnabled: row.phone_password_enabled === 1,
+        passwordAuthEnabled: row.password_auth_enabled === 1,
+        activeSessions: row.active_sessions,
+        chatCount: row.chat_count,
+        createdAt: row.created_at,
+        lastSeenAt: row.last_seen_at
+      })),
+      nextCursor: last === undefined
+        ? null
+        : { createdAt: last.created_at, id: last.id }
+    };
+  }
+
+  adminChatPage(limit: number, cursor?: { createdAt: string; id: string }): {
+    items: AdminChatRecord[];
+    nextCursor: { createdAt: string; id: string } | null;
+  } {
+    const rows = this.#db.prepare(`
+      SELECT
+        c.id, c.kind, c.title, c.created_at,
+        (
+          SELECT COUNT(*) FROM chat_members m WHERE m.chat_id = c.id
+        ) AS member_count,
+        (
+          SELECT COUNT(*) FROM messages msg WHERE msg.chat_id = c.id
+        ) AS message_count
+      FROM chats c
+      WHERE @cursorCreatedAt IS NULL
+        OR c.created_at < @cursorCreatedAt
+        OR (c.created_at = @cursorCreatedAt AND c.id < @cursorId)
+      ORDER BY c.created_at DESC, c.id DESC
+      LIMIT @take
+    `).all({
+      cursorCreatedAt: cursor?.createdAt ?? null,
+      cursorId: cursor?.id ?? null,
+      take: limit + 1
+    }) as {
+      id: string;
+      kind: "direct" | "group" | "channel";
+      title: string | null;
+      created_at: string;
+      member_count: number;
+      message_count: number;
+    }[];
+    const page = rows.slice(0, limit);
+    const last = rows.length > limit ? page[page.length - 1] : undefined;
+    return {
+      items: page.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        title: row.title,
+        memberCount: row.member_count,
+        messageCount: row.message_count,
+        createdAt: row.created_at
+      })),
+      nextCursor: last === undefined
+        ? null
+        : { createdAt: last.created_at, id: last.id }
+    };
+  }
+
+  adminStatus(): AdminStatusRecord {
+    return this.#db.transaction(() => {
+      const users = (this.#db.prepare("SELECT COUNT(*) AS count FROM users")
+        .get() as { count: number }).count;
+      const now = new Date().toISOString();
+      const activeSessions = (this.#db.prepare(`
+        SELECT COUNT(*) AS count FROM device_sessions
+        WHERE revoked_at IS NULL AND expires_at > ?
+      `).get(now) as { count: number }).count;
+      const chatKinds = this.#db.prepare(`
+        SELECT kind, COUNT(*) AS count FROM chats GROUP BY kind
+      `).all() as { kind: string; count: number }[];
+      const chatsByKind = { direct: 0, group: 0, channel: 0 };
+      for (const row of chatKinds) {
+        if (row.kind === "direct" || row.kind === "group" || row.kind === "channel") {
+          chatsByKind[row.kind] = row.count;
+        }
+      }
+      const messages = (this.#db.prepare("SELECT COUNT(*) AS count FROM messages")
+        .get() as { count: number }).count;
+      const phoneIdentities = (this.#db.prepare("SELECT COUNT(*) AS count FROM phone_identities")
+        .get() as { count: number }).count;
+      const pendingOutbox = (this.#db.prepare(`
+        SELECT COUNT(*) AS count FROM realtime_outbox
+        WHERE published_at IS NULL AND failed_at IS NULL
+      `).get() as { count: number }).count;
+      const failedOutbox = (this.#db.prepare(`
+        SELECT COUNT(*) AS count FROM realtime_outbox WHERE failed_at IS NOT NULL
+      `).get() as { count: number }).count;
+      const migrationId = (this.#db.prepare(
+        "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1"
+      ).get() as { id: string }).id;
+      return {
+        migrationId,
+        users,
+        activeSessions,
+        chatsByKind,
+        messages,
+        phoneIdentities,
+        pendingOutbox,
+        failedOutbox
+      };
+    }).immediate();
   }
 
   findPhoneAuthCommandReceipt(scope: string): PhoneAuthCommandReceiptRecord | null {

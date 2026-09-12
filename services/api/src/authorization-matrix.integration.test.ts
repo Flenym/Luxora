@@ -94,6 +94,9 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
       clientNonce: SECOND_RESOURCE_ID
     }
   },
+  { key: "GET /v1/admin/status", method: "GET", url: "/v1/admin/status" },
+  { key: "GET /v1/admin/users", method: "GET", url: "/v1/admin/users?limit=5" },
+  { key: "GET /v1/admin/chats", method: "GET", url: "/v1/admin/chats?limit=5" },
   {
     key: "GET /v1/push/registrations/current",
     method: "GET",
@@ -551,7 +554,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(76);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(79);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

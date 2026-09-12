@@ -52,6 +52,25 @@ Clients branch on `code`, not English `message`. Details are optional and must n
 
 Health endpoints reveal no dependency credentials or internal stack.
 
+### Operator administration (loopback, Beta-0.1 local preview)
+
+Read-only projections behind a dedicated `ADMIN_TOKEN` bearer (minimum 32
+characters). Without the token every `/v1/admin/*` route answers `503`; a
+wrong token answers `401`. Responses are `private, no-store` and never carry
+password material, digests, ciphertext blobs, bearer material or phone
+numbers. Pagination uses opaque `limit`/`cursor` (cursor is a base64url
+envelope; garbage input restarts from the head instead of failing).
+
+| Method/path | Result |
+| --- | --- |
+| `GET /v1/admin/status` | `{migrationId,users,activeSessions,chatsByKind,messages,phoneIdentities,pendingOutbox,failedOutbox}` |
+| `GET /v1/admin/users?limit=&cursor=` | `{items:[{id,username,displayName,phoneBound,phonePasswordEnabled,passwordAuthEnabled,activeSessions,chatCount,createdAt,lastSeenAt}],nextCursor}` |
+| `GET /v1/admin/chats?limit=&cursor=` | `{items:[{id,kind,title,memberCount,messageCount,createdAt}],nextCursor}` |
+
+The `apps/admin` console (port 4174) consumes exactly these three routes: a
+server status board plus user and chat tables with «Ещё» page fetching.
+Moderation, blocking and deletion operator actions are intentionally absent.
+
 ## 5. Authentication and sessions
 
 ### Provider-gated phone-first flow

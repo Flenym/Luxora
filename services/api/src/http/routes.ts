@@ -56,6 +56,7 @@ import type { ByteRange, StorageProvider } from "../infrastructure/storage.js";
 import type { Metrics } from "../metrics.js";
 import type { AttachmentService } from "../services/attachment-service.js";
 import type { AuthService } from "../services/auth-service.js";
+import type { AdminService } from "../services/admin-service.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { ChatDraftService } from "../services/chat-draft-service.js";
 import type { ChatFolderService } from "../services/chat-folder-service.js";
@@ -96,6 +97,7 @@ interface RouteDependencies {
   uploads: UploadService;
   attachments: AttachmentService;
   search: SearchService;
+  admin: AdminService;
   storage: StorageProvider;
   metrics: Metrics;
   serverSearchConfigured: boolean;
@@ -156,6 +158,21 @@ function hasMetricsToken(request: FastifyRequest, expected: string): boolean {
   const actual = Buffer.from(header.slice(7));
   const target = Buffer.from(expected);
   return actual.length === target.length && timingSafeEqual(actual, target);
+}
+
+function requireAdminToken(request: FastifyRequest, configured: string | undefined): void {
+  if (configured === undefined) {
+    throw new AppError(503, "SERVICE_UNAVAILABLE", "Administration is not enabled");
+  }
+  const header = request.headers.authorization;
+  if (header === undefined || !header.startsWith("Bearer ")) {
+    throw unauthenticated("Admin token required");
+  }
+  const actual = Buffer.from(header.slice(7));
+  const target = Buffer.from(configured);
+  if (actual.length !== target.length || !timingSafeEqual(actual, target)) {
+    throw unauthenticated("Admin token required");
+  }
 }
 
 export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDependencies): void {
@@ -750,6 +767,31 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   app.get("/v1/search/files", { preHandler: dependencies.authGuard }, async (request) => {
     const query = FileSearchQuerySchema.parse(request.query);
     return dependencies.search.attachments(request.auth.userId, query.q, query.limit, query.cursor);
+  });
+
+  app.get("/v1/admin/status", {
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    requireAdminToken(request, dependencies.config.adminToken);
+    return reply.header("cache-control", "private, no-store").send(dependencies.admin.status());
+  });
+
+  app.get("/v1/admin/users", {
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    requireAdminToken(request, dependencies.config.adminToken);
+    const query = CursorQuerySchema.parse(request.query);
+    return reply.header("cache-control", "private, no-store")
+      .send(dependencies.admin.users(query.limit, query.cursor ?? undefined));
+  });
+
+  app.get("/v1/admin/chats", {
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    requireAdminToken(request, dependencies.config.adminToken);
+    const query = CursorQuerySchema.parse(request.query);
+    return reply.header("cache-control", "private, no-store")
+      .send(dependencies.admin.chats(query.limit, query.cursor ?? undefined));
   });
 
   app.post("/v1/chats/:id/read", { preHandler: dependencies.authGuard }, async (request, reply) => {

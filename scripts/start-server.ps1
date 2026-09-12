@@ -67,11 +67,13 @@ if (-not (Test-Path $envFile)) {
   $dataKey = New-Secret 32
   $phoneHmac = New-Secret 48
   $otp = (Get-Random -Minimum 0 -Maximum 1000000).ToString("D6")
+  $admin = New-Secret 48
   $lines = @(
     "JWT_SECRET=$jwt",
     "LUXORA_DATA_ENCRYPTION_KEY=$dataKey",
     "LUXORA_PHONE_HMAC_SECRET=$phoneHmac",
-    "LUXORA_DEV_OTP_CODE=$otp"
+    "LUXORA_DEV_OTP_CODE=$otp",
+    "LUXORA_ADMIN_TOKEN=$admin"
   )
   $lines | Set-Content -Path $envFile -Encoding ascii
   Step-Message "Local development OTP code for phone login: $otp (stored in data\luxora-server.env)"
@@ -83,7 +85,16 @@ Get-Content $envFile | ForEach-Object {
     $secrets[$Matches[1]] = $Matches[2]
   }
 }
-if ($secrets.Keys.Count -lt 4) {
+if ($secrets.Keys.Count -ge 4 -and -not $secrets.ContainsKey("LUXORA_ADMIN_TOKEN")) {
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  $buf = New-Object byte[] 48
+  $rng.GetBytes($buf)
+  $adminToken = [Convert]::ToBase64String($buf).TrimEnd('=').Replace('+','-').Replace('/','_')
+  Add-Content -Path $envFile -Value "LUXORA_ADMIN_TOKEN=$adminToken" -Encoding ascii
+  $secrets["LUXORA_ADMIN_TOKEN"] = $adminToken
+  Step-Message "Added a local admin token to data\luxora-server.env."
+}
+if ($secrets.Keys.Count -lt 5) {
   Write-Host "[Luxora] Secrets file is damaged. Delete data\luxora-server.env and start again." -ForegroundColor Red
   exit 1
 }
@@ -104,7 +115,8 @@ $env:PHONE_AUTH_HMAC_SECRET = $secrets["LUXORA_PHONE_HMAC_SECRET"]
 $env:PHONE_AUTH_DEVELOPMENT_CODE = $secrets["LUXORA_DEV_OTP_CODE"]
 $env:PHONE_AUTH_RECOVERY_DELAY_SECONDS = "0"
 $env:PHONE_AUTH_RECOVERY_TTL_SECONDS = "86400"
-$env:CORS_ORIGINS = "http://localhost:4173,http://localhost:5173,http://localhost:3000,http://127.0.0.1:4173"
+$env:ADMIN_TOKEN = $secrets["LUXORA_ADMIN_TOKEN"]
+$env:CORS_ORIGINS = "http://localhost:4173,http://localhost:4174,http://localhost:5173,http://localhost:3000,http://127.0.0.1:4173,http://127.0.0.1:4174"
 
 Step-Message "Starting API on http://127.0.0.1:2222 (Ctrl+C to stop)"
 node --enable-source-maps services/api/dist/server.js

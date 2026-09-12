@@ -67,6 +67,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     phoneAuthMaxAttempts: 5,
     phoneAuthRecoveryDelaySeconds: 0,
     phoneAuthRecoveryTtlSeconds: 600,
+    adminToken: "test-only-admin-token-with-at-least-32-bytes",
     syncInvalidationEnabled: true,
     ...overrides
   };

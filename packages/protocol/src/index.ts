@@ -1962,6 +1962,63 @@ export const MessageRequestFirstTextSchema = z.string().trim().min(1).superRefin
   }
 });
 
+// Operator administration (Beta-0.1 local preview only). These read-only
+// projections are for the loopback operator console: they deliberately omit
+// password material, digests, ciphertexts, tokens and phone numbers. The
+// routes are token-gated and absent without an admin token.
+export const AdminUserListItemSchema = z.object({
+  id: IdSchema,
+  username: UsernameSchema,
+  displayName: z.string().min(1).max(MAX_DISPLAY_NAME_LENGTH),
+  phoneBound: z.boolean(),
+  phonePasswordEnabled: z.boolean(),
+  passwordAuthEnabled: z.boolean(),
+  activeSessions: z.number().int().nonnegative(),
+  chatCount: z.number().int().nonnegative(),
+  createdAt: TimestampSchema,
+  lastSeenAt: TimestampSchema.nullable()
+}).strict();
+
+export const AdminUserListResponseSchema = z.object({
+  items: z.array(AdminUserListItemSchema).max(MAX_PAGE_SIZE),
+  nextCursor: z.string().min(1).max(512).nullable()
+}).strict();
+
+export const AdminChatListItemSchema = z.object({
+  id: IdSchema,
+  kind: z.enum(["direct", "group", "channel"]),
+  title: z.string().nullable(),
+  memberCount: z.number().int().nonnegative(),
+  messageCount: z.number().int().nonnegative(),
+  createdAt: TimestampSchema
+}).strict();
+
+export const AdminChatListResponseSchema = z.object({
+  items: z.array(AdminChatListItemSchema).max(MAX_PAGE_SIZE),
+  nextCursor: z.string().min(1).max(512).nullable()
+}).strict();
+
+export const AdminStatusResponseSchema = z.object({
+  migrationId: z.string().min(1).max(64),
+  users: z.number().int().nonnegative(),
+  activeSessions: z.number().int().nonnegative(),
+  chatsByKind: z.object({
+    direct: z.number().int().nonnegative(),
+    group: z.number().int().nonnegative(),
+    channel: z.number().int().nonnegative()
+  }).strict(),
+  messages: z.number().int().nonnegative(),
+  phoneIdentities: z.number().int().nonnegative(),
+  pendingOutbox: z.number().int().nonnegative(),
+  failedOutbox: z.number().int().nonnegative()
+}).strict();
+
+export type AdminUserListItem = z.infer<typeof AdminUserListItemSchema>;
+export type AdminUserListResponse = z.infer<typeof AdminUserListResponseSchema>;
+export type AdminChatListItem = z.infer<typeof AdminChatListItemSchema>;
+export type AdminChatListResponse = z.infer<typeof AdminChatListResponseSchema>;
+export type AdminStatusResponse = z.infer<typeof AdminStatusResponseSchema>;
+
 export const MessageRequestHttpLinkSchema = z.string()
   .max(2_048)
   .url()

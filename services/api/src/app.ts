@@ -16,6 +16,7 @@ import { registerPasskeyAuthenticatorManagementRoutes } from "./http/passkey-aut
 import { registerPasskeyLoginRoutes } from "./http/passkey-login-routes.js";
 import { registerPasskeyRoutes } from "./http/passkey-routes.js";
 import { registerPasskeySignupRoutes } from "./http/passkey-signup-routes.js";
+import { AdminService } from "./services/admin-service.js";
 import { registerHttpRoutes } from "./http/routes.js";
 import { SqliteStore } from "./infrastructure/sqlite-store.js";
 import { contentCipherFromConfig } from "./infrastructure/content-cipher.js";
@@ -451,6 +452,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     config.syncInvalidationEnabled
   );
   const search = new SearchService(store, searchHasher);
+  const admin = new AdminService(store);
   const authGuard = createAuthGuard(security, store);
   app.luxora = { config, store, metrics, hub, outbox, storage, uploads };
 
@@ -630,6 +632,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     identity,
     notifications,
     search,
+    admin,
     storage,
     metrics,
     serverSearchConfigured: searchHasher.available,

@@ -88,6 +88,40 @@ export interface PhoneIdentityRecord {
   verifiedAt: string;
 }
 
+/** Operator projection for the loopback admin console. No secret material. */
+export interface AdminUserRecord {
+  id: string;
+  username: string;
+  displayName: string;
+  phoneBound: boolean;
+  phonePasswordEnabled: boolean;
+  passwordAuthEnabled: boolean;
+  activeSessions: number;
+  chatCount: number;
+  createdAt: string;
+  lastSeenAt: string | null;
+}
+
+export interface AdminChatRecord {
+  id: string;
+  kind: "direct" | "group" | "channel";
+  title: string | null;
+  memberCount: number;
+  messageCount: number;
+  createdAt: string;
+}
+
+export interface AdminStatusRecord {
+  migrationId: string;
+  users: number;
+  activeSessions: number;
+  chatsByKind: { direct: number; group: number; channel: number };
+  messages: number;
+  phoneIdentities: number;
+  pendingOutbox: number;
+  failedOutbox: number;
+}
+
 export interface PhoneAuthCommandReceiptRecord {
   scope: string;
   operation: "verify" | "register";

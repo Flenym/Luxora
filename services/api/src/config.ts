@@ -59,6 +59,7 @@ const ConfigSchema = z.object({
   PHONE_AUTH_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5),
   PHONE_AUTH_RECOVERY_DELAY_SECONDS: z.coerce.number().int().min(0).max(604_800).default(300),
   PHONE_AUTH_RECOVERY_TTL_SECONDS: z.coerce.number().int().min(600).max(1_209_600).default(86_400),
+  ADMIN_TOKEN: z.string().min(32).optional(),
   SYNC_INVALIDATION_ENABLED: strictDefaultOnFeatureFlag
 });
 
@@ -118,6 +119,8 @@ export interface AppConfig {
   phoneAuthRecoveryDelaySeconds: number;
   /** Bounded completion window measured from confirmAt. */
   phoneAuthRecoveryTtlSeconds: number;
+  /** Dedicated loopback-operator token for the read-only admin surface. Absent by default. */
+  adminToken?: string;
   /** Emergency rollback seam; false suppresses only sync.invalidated emission and delivery. */
   syncInvalidationEnabled: boolean;
 }
@@ -446,6 +449,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     phoneAuthMaxAttempts: parsed.PHONE_AUTH_MAX_ATTEMPTS,
     phoneAuthRecoveryDelaySeconds: parsed.PHONE_AUTH_RECOVERY_DELAY_SECONDS,
     phoneAuthRecoveryTtlSeconds: parsed.PHONE_AUTH_RECOVERY_TTL_SECONDS,
+    ...(parsed.ADMIN_TOKEN === undefined ? {} : { adminToken: parsed.ADMIN_TOKEN }),
     syncInvalidationEnabled: parsed.SYNC_INVALIDATION_ENABLED
   };
 }

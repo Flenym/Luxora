@@ -24,6 +24,13 @@
   local evidence; cloud scanning, signing and provenance remain release gates.
 - [ ] First clean-checkout runs are PASS and retained as release evidence.
 - [ ] Branch protection and mandatory sensitive-path review are configured.
+- [x] Loopback operator console foundation: token-gated read-only `/v1/admin/status`,
+  `/v1/admin/users` and `/v1/admin/chats` with secret-free cursor pagination and
+  `private, no-store` responses (migration-free, explicit 503 without
+  `ADMIN_TOKEN`); the `apps/admin` console (Vite+React, port 4174) shows server
+  status, user and chat tables. Protocol 12 files/92 tests PASS, API 74
+  files/635 tests PASS. Write/moderation operator actions are intentionally out
+  of scope for Beta-0.1.
 
 ## Server Phase 1 — finish text vertical slice
 
