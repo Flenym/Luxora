@@ -2362,7 +2362,10 @@ private struct PhoneDirectConversationView: View {
                                 forward: store.canForward(message) ? { forwardedMessage = message } : nil,
                                 togglePin: store.canPin(message, in: conversation)
                                     ? { store.togglePin(message.id, in: conversation.id) }
-                                    : nil
+                                    : nil,
+                                submitTranscript: { messageID, text in
+                                    Task { await store.transcribeMessage(messageID, text: text) }
+                                }
                             )
                                 .padding(
                                     .bottom,
@@ -2881,6 +2884,7 @@ private struct PhoneMessageBubble: View {
     let isMutationInFlight: Bool
     let attachmentImageCache: AuthenticatedAvatarImageCache?
     let openAttachment: (MessageAttachment) -> Void
+    let submitTranscript: (UUID, String) -> Void
     let retry: () -> Void
     let react: (String) -> Void
     let reply: (() -> Void)?
@@ -2940,7 +2944,7 @@ private struct PhoneMessageBubble: View {
                             transcriptionAllowed: message.transcriptionAllowed,
                             transcript: message.transcript,
                             onSubmitTranscript: { text in
-                                Task { await store.transcribeMessage(message.id, text: text) }
+                                submitTranscript(message.id, text)
                             }
                         )
                     }

@@ -303,8 +303,13 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
         let historyLoad = Task { await messenger.loadMessages(for: chatB) }
         await messageLoader.waitUntilStarted()
         messenger.draft = "typed before history"
-        try await Task.sleep(nanoseconds: 500_000_000)
-        let commandsBeforeHistory = await putter.commands
+        let typingDeadline = Date().addingTimeInterval(5)
+        var commandsBeforeHistory = await putter.commands
+        while commandsBeforeHistory.last?.content.text != "typed before history",
+              Date() < typingDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            commandsBeforeHistory = await putter.commands
+        }
         XCTAssertEqual(commandsBeforeHistory.last?.content.text, "typed before history")
         XCTAssertEqual(commandsBeforeHistory.last?.content.replyToMessageID, messageID)
         XCTAssertFalse(messenger.canSend)

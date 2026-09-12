@@ -34,7 +34,6 @@ struct VoiceNoteContractTests {
         #expect(attachment.waveform == [0, 128, 255])
         #expect(attachment.formattedDuration == "1:01")
     }
-
     @Test func attachmentWithoutMediaMetadataStaysValid() throws {
         let payload = """
         {"id":"\(UUID().uuidString.lowercased())","kind":"file","fileName":"doc.pdf",\
@@ -63,7 +62,9 @@ struct VoiceNoteContractTests {
         "revision":0,"createdAt":"2026-09-12T00:00:00.000Z",\
         "updatedAt":"2026-09-12T00:00:00.000Z","editedAt":null,"deletedAt":null}
         """
-        let decoded = try JSONDecoder().decode(APIMessage.self, from: Data(payload.utf8))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(APIMessage.self, from: Data(payload.utf8))
         let viewer = UUID()
         let message = decoded.message(currentUserID: viewer)
         #expect(message.transcriptionAllowed)
