@@ -2204,6 +2204,9 @@ private struct PhoneDirectConversationView: View {
             isMutationInFlight: store.isMessageMutationInFlight(message.id),
             attachmentImageCache: attachmentImageCache,
             openAttachment: { viewerAttachment = $0 },
+            submitTranscript: { messageID, text in
+                Task { await store.transcribeMessage(messageID, text: text) }
+            },
             retry: { store.retryMessage(message.id) },
             react: { emoji in store.toggleReaction(emoji, messageID: message.id) },
             reply: store.canReply(to: message) ? { store.beginReply(to: message) } : nil,
@@ -2212,10 +2215,7 @@ private struct PhoneDirectConversationView: View {
             forward: store.canForward(message) ? { forwardedMessage = message } : nil,
             togglePin: store.canPin(message, in: conversation)
                 ? { store.togglePin(message.id, in: conversation.id) }
-                : nil,
-            submitTranscript: { messageID, text in
-                Task { await store.transcribeMessage(messageID, text: text) }
-            }
+                : nil
         )
         .padding(.bottom, usesExpandedMessageLayout && isLast ? 2 : 0)
         .id(message.id)

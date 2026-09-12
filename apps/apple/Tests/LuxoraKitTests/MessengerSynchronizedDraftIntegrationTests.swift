@@ -167,12 +167,17 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
                 metadata: MessageRemoteMetadata(revision: 1, isDeleted: true)
             )
         )
-        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let deletionDeadline = Date().addingTimeInterval(5)
+        var commands = await putter.commands
+        while commands.isEmpty && Date() < deletionDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            commands = await putter.commands
+        }
 
         XCTAssertEqual(messenger.draft, "keep this text")
         XCTAssertEqual(messenger.composerMode, .new)
         XCTAssertNil(drafts.localDraft(for: chatA).replyToMessageID)
-        let commands = await putter.commands
         XCTAssertEqual(commands.count, 1)
         guard commands.count == 1 else { return }
         XCTAssertEqual(commands[0].content.text, "keep this text")
