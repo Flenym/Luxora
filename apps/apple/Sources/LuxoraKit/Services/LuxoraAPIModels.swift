@@ -739,10 +739,6 @@ struct APIAttachment: Decodable, Sendable {
     let height: Int?
     let durationMs: Int?
     let waveform: [Int]?
-    let metadataWidth: Int?
-    let metadataHeight: Int?
-    let metadataDurationMs: Int?
-    let metadataWaveform: [Int]?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -772,6 +768,8 @@ struct APIAttachment: Decodable, Sendable {
         let metadata = try container.decodeIfPresent(APIMediaMetadata.self, forKey: .metadata)
         width = metadata?.width
         height = metadata?.height
+        durationMs = metadata?.durationMs
+        waveform = metadata?.waveform
     }
 
     func attachment() -> MessageAttachment {
@@ -783,7 +781,9 @@ struct APIAttachment: Decodable, Sendable {
             sizeBytes: sizeBytes,
             downloadPath: downloadPath,
             imageWidth: width,
-            imageHeight: height
+            imageHeight: height,
+            durationMs: durationMs,
+            waveform: waveform
         )
     }
 }
