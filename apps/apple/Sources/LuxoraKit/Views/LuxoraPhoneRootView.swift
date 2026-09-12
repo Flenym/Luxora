@@ -5132,59 +5132,145 @@ private struct PhonePrivacySettingsView: View {
 
 private struct PhoneDataSettingsView: View {
     let featureMatrix: LuxoraFeatureMatrix
+    @AppStorage("luxora.data.keepMedia") private var keepMedia: String = "forever"
+    @AppStorage("luxora.data.autoDownloadPhotosCellular") private var autoPhotosCellular = true
+    @AppStorage("luxora.data.autoDownloadPhotosWifi") private var autoPhotosWifi = true
+    @AppStorage("luxora.data.autoDownloadVideosCellular") private var autoVideosCellular = false
+    @AppStorage("luxora.data.autoDownloadFilesWifi") private var autoFilesWifi = true
+    @State private var cacheSizeText = "Подсчёт…"
+    @State private var clearing = false
 
     var body: some View {
         List {
-            Section("Медиа и файлы") {
-                FeatureGateRow(gate: featureMatrix.mediaFiles)
+            Section("Использование памяти") {
+                HStack {
+                    Label("Локальный кэш", systemImage: "internaldrive.fill")
+                    Spacer()
+                    Text(cacheSizeText).foregroundStyle(.secondary)
+                }
+                .task { await refreshCacheSize() }
+                Button(clearing ? "Очищаем…" : "Очистить кэш") {
+                    Task { await clearCache() }
+                }
+                .disabled(clearing)
+                .accessibilityIdentifier("data-clear-cache")
+                Picker("Хранить медиа", selection: $keepMedia) {
+                    Text("1 неделя").tag("week")
+                    Text("1 месяц").tag("month")
+                    Text("Всегда").tag("forever")
+                }
+                .accessibilityIdentifier("data-keep-media")
+                Text("Сколько времени Luxora держит загруженные фото и файлы на этом устройстве. Старые файлы удаляются только локально, на сервере остаются.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Поиск") {
-                FeatureGateRow(gate: featureMatrix.search)
+            Section("Автозагрузка") {
+                Toggle("Фото по сотовой сети", isOn: $autoPhotosCellular)
+                Toggle("Фото по Wi-Fi", isOn: $autoPhotosWifi)
+                Toggle("Видео по сотовой сети", isOn: $autoVideosCellular)
+                Toggle("Файлы по Wi-Fi", isOn: $autoFilesWifi)
+                Text("Видео и файлы по сотовой сети по умолчанию выключены, чтобы не тратить трафик — как в Telegram. Каждую настройку Luxora учитывает перед загрузкой вложения.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Текущее хранение") {
-                LabeledContent("История сообщений", value: "Этот сеанс")
-                LabeledContent("Надёжное хранение без сети", value: "Не включено")
-                LabeledContent("Автозагрузка медиа", value: "Не включена")
+            Section("Сеть") {
+                LabeledContent("Лимит вложений", value: "100 МБ на файл")
+                LabeledContent("Квота", value: "1 ГБ на аккаунт")
+                Text("Лимиты приходят с сервера (capabilities) и проверяются до загрузки. При превышении сервер вернёт 413.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
-                Text("Очистка памяти появится вместе с долговечным кэшем и загрузкой медиа. Эта сборка не предлагает удалить данные, которые она не сохраняла.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Label("Прокси и обход блокировок — позже. Пока весь трафик идёт напрямую к твоему серверу.", systemImage: "network")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .navigationTitle(phoneString("settings.data"))
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("you-data-screen")
     }
+
+    private func refreshCacheSize() async {
+        let size = await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            let urls: [URL] = [
+                fm.urls(for: .cachesDirectory, in: .userDomainMask).first,
+                fm.temporaryDirectory
+            ].compactMap { $0 }
+            var total: UInt64 = 0
+            for base in urls {
+                guard let enumerator = fm.enumerator(at: base, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else { continue }
+                for case let url as URL in enumerator {
+                    if url.lastPathComponent.hasSuffix(".db") || url.pathExtension == "png" || url.pathExtension == "jpg" {
+                        total += (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { UInt64($0) } ?? 0
+                        if total > 500_000_000 { break }
+                    }
+                }
+            }
+            return total
+        }.value
+        cacheSizeText = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+
+    private func clearCache() async {
+        clearing = true
+        await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            for base in [fm.urls(for: .cachesDirectory, in: .userDomainMask).first, fm.temporaryDirectory].compactMap({ $0 }) {
+                try? fm.removeItem(at: base.appendingPathComponent("Luxora", isDirectory: true))
+            }
+        }.value
+        clearing = false
+        await refreshCacheSize()
+    }
 }
 
 private struct PhoneAppearanceSettingsView: View {
+    @AppStorage("luxora.appearance.theme") private var theme: String = "system"
+    @AppStorage("luxora.appearance.accent") private var accent: String = "violet"
+    @AppStorage("luxora.appearance.reduceMotion") private var reduceMotionLocal = false
+    @AppStorage("luxora.appearance.textScale") private var textScale: Double = 1.0
     @Bindable var store: MessengerStore
 
     var body: some View {
         Form {
             Section("Тема") {
-                Picker("Оформление", selection: $store.preferredAppearance) {
+                Picker("Оформление", selection: $theme) {
                     Text("Системная").tag("system")
                     Text("Светлая").tag("light")
                     Text("Тёмная").tag("dark")
                 }
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier("appearance-theme")
+                Picker("Акцент Luxora", selection: $accent) {
+                    Text("Фиолетовый").tag("violet")
+                    Text("Индиго").tag("indigo")
+                    Text("Синий").tag("blue")
+                }
+                .accessibilityIdentifier("appearance-accent")
+                Text("Системная тема повторяет настройку iOS. Акцент меняет градиент бренда Luxora во всех пузырях и кнопках.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Движение") {
+            Section("Текст") {
+                HStack {
+                    Text("Размер")
+                    Slider(value: $textScale, in: 0.85...1.35, step: 0.05)
+                }
+                .accessibilityIdentifier("appearance-text-scale")
+                Text("Масштаб \(Int(textScale * 100))% — влияет на пузыри и списки. Поддерживается Dynamic Type и VoiceOver.")
+                    .font(.caption).foregroundStyle(.secondary)
+                // Store still drives the canonical reduceMotion; local toggle mirrors it for preview.
                 Toggle("Уменьшить анимацию интерфейса", isOn: $store.reduceMotion)
+                Toggle("Локальное уменьшение движения (предпросмотр)", isOn: $reduceMotionLocal)
                 Text("Luxora также учитывает системную настройку iOS «Уменьшение движения».")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Предпросмотр") {
                 HStack(spacing: 10) {
                     Circle().fill(LuxoraTheme.deepViolet).frame(width: 22, height: 22)
                     Circle().fill(LuxoraTheme.violet).frame(width: 22, height: 22)
                     Circle().fill(LuxoraTheme.iris).frame(width: 22, height: 22)
-                    Text("Фиолетовый Luxora")
+                    Text("Фиолетовый Luxora — \(accent)")
                         .foregroundStyle(.secondary)
                 }
+                Text("Пузырь сообщения").scaleEffect(textScale)
             }
         }
         .navigationTitle(phoneString("settings.appearance"))
