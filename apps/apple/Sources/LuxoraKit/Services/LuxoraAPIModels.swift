@@ -820,6 +820,49 @@ struct APIMessage: Decodable, Sendable {
     let transcriptionAllowed: Bool = false
     let transcript: String? = nil
 
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case chatId
+        case sender
+        case kind
+        case body
+        case replyToMessageId
+        case topicId
+        case forwardedFrom
+        case isPinned
+        case clientNonce
+        case revision
+        case createdAt
+        case updatedAt
+        case editedAt
+        case deletedAt
+        case attachments
+        case transcriptionAllowed
+        case transcript
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        chatId = try container.decode(UUID.self, forKey: .chatId)
+        sender = try container.decode(APIUser.self, forKey: .sender)
+        kind = try container.decode(String.self, forKey: .kind)
+        body = try container.decodeIfPresent(String.self, forKey: .body)
+        replyToMessageId = try container.decodeIfPresent(UUID.self, forKey: .replyToMessageId)
+        topicId = try container.decodeIfPresent(UUID.self, forKey: .topicId)
+        forwardedFrom = try container.decodeIfPresent(APIForwardProvenance.self, forKey: .forwardedFrom)
+        isPinned = try container.decode(Bool.self, forKey: .isPinned)
+        clientNonce = try container.decode(UUID.self, forKey: .clientNonce)
+        revision = try container.decode(Int.self, forKey: .revision)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        editedAt = try container.decodeIfPresent(Date.self, forKey: .editedAt)
+        deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
+        attachments = try container.decodeIfPresent([APIAttachment].self, forKey: .attachments)
+        transcriptionAllowed = try container.decodeIfPresent(Bool.self, forKey: .transcriptionAllowed) ?? false
+        transcript = try container.decodeIfPresent(String.self, forKey: .transcript)
+    }
+
     func message(currentUserID: UUID) -> ChatMessage {
         ChatMessage(
             id: id,
