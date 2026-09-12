@@ -65,6 +65,8 @@ struct VoiceNoteContractTests {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let decoded = try decoder.decode(APIMessage.self, from: Data(payload.utf8))
+        #expect(decoded.transcriptionAllowed)
+        #expect(decoded.transcript == "Текст расшифровки")
         let viewer = UUID()
         let message = decoded.message(currentUserID: viewer)
         #expect(message.transcriptionAllowed)
