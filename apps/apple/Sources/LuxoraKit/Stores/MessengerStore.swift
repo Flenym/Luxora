@@ -1901,11 +1901,11 @@ public final class MessengerStore {
         messagesByConversation[conversationID]![index].delivery = state
     }
 
-    private func replaceMessage(_ messageID: UUID, with message: ChatMessage) {
+    private func replaceMessage(_ messageID: UUID, with updated: ChatMessage) {
         guard let (conversationID, _) = message(withID: messageID),
               let index = messagesByConversation[conversationID]?.firstIndex(where: { $0.id == messageID })
         else { return }
-        messagesByConversation[conversationID]![index] = message
+        messagesByConversation[conversationID]![index] = updated
     }
 
     private func replaceOptimisticMessage(_ clientID: UUID, in conversationID: UUID, with message: ChatMessage) {
