@@ -2195,7 +2195,7 @@ private struct PhoneDirectConversationView: View {
     }
 
     @ViewBuilder
-    private func messageBubbleRow(for message: ChatMessage) -> some View {
+    private func messageBubbleRow(for message: ChatMessage, isLast: Bool) -> some View {
         let metadata = store.metadata(for: message.id)
         PhoneMessageBubble(
             message: message,
@@ -2217,6 +2217,9 @@ private struct PhoneDirectConversationView: View {
                 Task { await store.transcribeMessage(messageID, text: text) }
             }
         )
+        .padding(.bottom, usesExpandedMessageLayout && isLast ? 2 : 0)
+        .id(message.id)
+        .accessibilityIdentifier("message-\(message.id.uuidString.lowercased())")
     }
 
     private func toggleVoiceRecording() {
@@ -2371,16 +2374,10 @@ private struct PhoneDirectConversationView: View {
                         .padding(.top, 48)
                     } else {
                         ForEach(displayedMessages) { message in
-                            messageBubbleRow(for: message)
-                        }
-                                .padding(
-                                    .bottom,
-                                    usesExpandedMessageLayout && message.id == displayedMessages.last?.id
-                                        ? 2
-                                        : 0
-                                )
-                                .id(message.id)
-                                .accessibilityIdentifier("message-\(message.id.uuidString.lowercased())")
+                            messageBubbleRow(
+                                for: message,
+                                isLast: message.id == displayedMessages.last?.id
+                            )
                         }
                     }
                 }
