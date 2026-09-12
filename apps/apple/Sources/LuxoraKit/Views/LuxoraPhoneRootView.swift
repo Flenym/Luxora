@@ -2181,6 +2181,10 @@ private struct PhoneDirectConversationView: View {
     @State private var pickedPhotoItems: [PhotosPickerItem] = []
     @State private var viewerAttachment: MessageAttachment?
     @State private var voiceRecorder = PhoneVoiceRecorder()
+    @State private var presentsScheduleSheet = false
+    @State private var scheduleDraft = ""
+    @State private var scheduleDate = Date().addingTimeInterval(3_600)
+    @State private var scheduleError: String?
     #if DEBUG
     @State private var didInstallDebugMessageMutations = false
     @State private var didApplyDebugMessageCaptureState = false
@@ -2474,19 +2478,48 @@ private struct PhoneDirectConversationView: View {
                                 presentsMediaPicker = true
                             },
                             onVoiceRecord: toggleVoiceRecording,
-                            isRecordingVoice: voiceRecorder.isRecording
+                            isRecordingVoice: voiceRecorder.isRecording,
+                            onSchedule: {
+                                scheduleDraft = store.draft
+                                presentsScheduleSheet = true
+                            }
                         )
                     }
                 }
             }
-            .sheet(isPresented: $presentsMediaPicker) {
-                PhoneMediaPickerSheet(
+            .sheet(isPresented: $presentsMediaPicker) {                PhoneMediaPickerSheet(
                     onPhotosPicked: { items in
                         pickedPhotoItems = items
                     },
                     onPickFile: { presentsFilePicker = true }
                 )
                 .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $presentsScheduleSheet) {
+                PhoneScheduleMessageSheet(
+                    draft: scheduleDraft,
+                    sendAt: $scheduleDate,
+                    errorMessage: scheduleError,
+                    onSchedule: { text, date in
+                        Task { @MainActor in
+                            let scheduled = await store.scheduleMessage(body: text, sendAt: date)
+                            if scheduled {
+                                presentsScheduleSheet = false
+                                scheduleError = nil
+                            } else {
+                                scheduleError = store.scheduledError ?? "Не удалось запланировать."
+                            }
+                        }
+                    },
+                    scheduled: store.scheduledMessages,
+                    onCancel: { id in
+                        Task { await store.cancelScheduledMessage(id) }
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .task {
+                    await store.loadScheduledMessages()
+                }
             }
             .fileImporter(
                 isPresented: $presentsFilePicker,

@@ -88,6 +88,23 @@ export interface PhoneIdentityRecord {
   verifiedAt: string;
 }
 
+export type ScheduledMessageState = "pending" | "sent" | "cancelled" | "failed";
+
+export interface ScheduledMessageRecord {
+  id: string;
+  chatId: string;
+  senderId: string;
+  clientNonce: string;
+  body: string;
+  replyToMessageId: string | null;
+  topicId: string | null;
+  sendAt: string;
+  state: ScheduledMessageState;
+  failureCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Operator projection for the loopback admin console. No secret material. */
 export interface AdminUserRecord {
   id: string;

@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  SCHEDULED_SEND_MAX_HORIZON_DAYS,
+  SCHEDULED_SEND_MIN_LEAD_SECONDS
+} from "@luxora/protocol";
 import type {
   AddChatMemberRequest,
   Attachment,
@@ -19,6 +23,8 @@ import type {
   PutMessageTranscript,
   RealtimeEvent,
   RemoveChatMemberRequest,
+  ScheduleMessageRequest,
+  ScheduledMessage,
   SendMessageRequest,
   Topic,
   UpdateChatMemberRoleRequest,
@@ -33,7 +39,7 @@ import type {
   StoredEvent,
   UserRecord
 } from "../domain/types.js";
-import { conflict, forbidden, notFound } from "../errors.js";
+import { AppError, badRequest, conflict, forbidden, notFound } from "../errors.js";
 import type { SearchHasher } from "../infrastructure/search-hasher.js";
 import type { EventPublisher } from "./event-publisher.js";
 
@@ -81,8 +87,49 @@ function forwardRequestFingerprint(
   });
 }
 
-function membershipRequestFingerprint(
-  operation: ChatMembershipCommandReceiptRecord["operation"],
+function dispatchFailureCode(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("statusCode" in error)) {
+    return "dispatch_failed";
+  }
+  const statusCode = (error as { statusCode: unknown }).statusCode;
+  const details = (error as { details?: unknown }).details;
+  const reason = typeof details === "object" && details !== null && "reason" in details
+    ? (details as { reason: unknown }).reason
+    : undefined;
+  if (reason === "relationship_unavailable") return "relationship_unavailable";
+  if (statusCode === 404) {
+    const message = (error as { message?: unknown }).message;
+    if (message === "Reply target is gone") return "reply_gone";
+    if (typeof message === "string" && message.startsWith("Topic")) return "topic_gone";
+    return "chat_gone";
+  }
+  if (statusCode === 403) {
+    const message = (error as { message?: unknown }).message;
+    if (message === "Author is no longer a chat member") return "membership_lost";
+    return "posting_forbidden";
+  }
+  return "dispatch_failed";
+}
+
+function encodeScheduledCursor(cursor: { sendAt: string; id: string }): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeScheduledCursor(raw: string): { sendAt: string; id: string } | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const { sendAt, id } = parsed as { sendAt?: unknown; id?: unknown };
+  if (typeof sendAt !== "string" || typeof id !== "string") return undefined;
+  if (Number.isNaN(Date.parse(sendAt))) return undefined;
+  return { sendAt, id };
+}
+
+function membershipRequestFingerprint(  operation: ChatMembershipCommandReceiptRecord["operation"],
   chatId: string,
   targetUserId: string,
   input: AddChatMemberRequest | UpdateChatMemberRoleRequest | RemoveChatMemberRequest
@@ -576,8 +623,180 @@ export class ChatService {
     return result.message;
   }
 
-  attachTranscript(userId: string, messageId: string, input: PutMessageTranscript): Message {
-    const original = this.#requireVisibleMessage(messageId, userId, "Message not found");
+  scheduleMessage(userId: string, chatId: string, input: ScheduleMessageRequest): ScheduledMessage {
+    const member = this.#requireMember(chatId, userId);
+    const chat = this.store.findChatRecord(chatId);
+    if (chat === null) throw notFound("Chat not found");
+    this.#requirePostingPermission(chat, member);
+    if (input.attachmentIds.length !== 0) {
+      throw new AppError(400, "BAD_REQUEST", "Scheduled messages with attachments are not supported in Beta-0.1");
+    }
+    const nowMs = Date.now();
+    const sendAtMs = Date.parse(input.sendAt);
+    if (!Number.isFinite(sendAtMs)) throw badRequest("sendAt must be a valid timestamp");
+    if (sendAtMs < nowMs + SCHEDULED_SEND_MIN_LEAD_SECONDS * 1_000) {
+      throw badRequest(`Scheduled messages must be at least ${SCHEDULED_SEND_MIN_LEAD_SECONDS} seconds in the future`);
+    }
+    if (sendAtMs > nowMs + SCHEDULED_SEND_MAX_HORIZON_DAYS * 86_400_000) {
+      throw badRequest(`Scheduled messages are limited to ${SCHEDULED_SEND_MAX_HORIZON_DAYS} days ahead`);
+    }
+    this.#requireTopic(chatId, input.topicId, false);
+    if (input.replyToMessageId !== null) {
+      const replied = this.store.findMessageRecord(input.replyToMessageId);
+      if (replied === null || replied.chatId !== chatId || replied.deletedAt !== null) {
+        throw notFound("Reply target not found in this chat");
+      }
+    }
+    const now = new Date(nowMs).toISOString();
+    try {
+      const record = this.store.createScheduledMessage({
+        id: randomUUID(),
+        chatId,
+        senderId: userId,
+        body: input.body,
+        replyToMessageId: input.replyToMessageId,
+        topicId: input.topicId,
+        clientNonce: input.clientNonce,
+        sendAt: new Date(sendAtMs).toISOString(),
+        createdAt: now
+      });
+      return this.#scheduledView(record);
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error
+        && typeof error.code === "string" && error.code.startsWith("SQLITE_CONSTRAINT_UNIQUE")) {
+        throw conflict("clientNonce was already used for a different scheduled message");
+      }
+      throw error;
+    }
+  }
+
+  listScheduled(userId: string, chatId: string, limit: number, cursor?: string): {
+    items: ScheduledMessage[];
+    nextCursor: string | null;
+  } {
+    this.#requireMember(chatId, userId);
+    if (this.store.findChatRecord(chatId) === null) throw notFound("Chat not found");
+    const decoded = cursor === undefined ? undefined : decodeScheduledCursor(cursor);
+    const page = this.store.listScheduledForChat(chatId, userId, limit, decoded);
+    return {
+      items: page.items.map((record) => this.#scheduledView(record)),
+      nextCursor: page.nextCursor === null ? null : encodeScheduledCursor(page.nextCursor)
+    };
+  }
+
+  cancelScheduled(userId: string, scheduledId: string): void {
+    const cancelled = this.store.cancelScheduledMessage(
+      scheduledId,
+      userId,
+      new Date().toISOString()
+    );
+    if (!cancelled) throw notFound("Scheduled message not found");
+  }
+
+  /**
+   * Dispatches due scheduled messages through the same guards as live sends.
+   * Never throws: every row resolves to sent or to a bounded failure code.
+   */
+  dispatchDueScheduledMessages(now: Date, limit = 50): { sent: number; failed: number } {
+    const due = this.store.listDueScheduledMessages(now.toISOString(), limit);
+    let sent = 0;
+    let failed = 0;
+    for (const row of due) {
+      try {
+        this.#dispatchScheduled(row, now);
+        sent += 1;
+      } catch (error) {
+        this.store.markScheduledFailed(row.id, dispatchFailureCode(error), now.toISOString());
+        failed += 1;
+      }
+    }
+    return { sent, failed };
+  }
+
+  #dispatchScheduled(
+    row: { id: string; chatId: string; senderId: string; body: string; replyToMessageId: string | null; topicId: string | null; clientNonce: string },
+    now: Date
+  ): void {
+    const at = timestampAfter(new Date().toISOString(), now.toISOString());
+    const outcome = this.store.immediateTransaction(() => {
+      const chat = this.store.findChatRecord(row.chatId);
+      if (chat === null) throw notFound("Chat not found");
+      const member = this.store.getChatMember(row.chatId, row.senderId);
+      if (member === null) throw forbidden("Author is no longer a chat member");
+      this.#requirePostingPermission(chat, member);
+      this.#requireActiveDirectRelationship(chat, row.senderId);
+      this.#requireTopic(row.chatId, row.topicId, false);
+      if (row.replyToMessageId !== null) {
+        const replied = this.store.findMessageRecord(row.replyToMessageId);
+        if (replied === null || replied.chatId !== row.chatId || replied.deletedAt !== null) {
+          throw notFound("Reply target is gone");
+        }
+      }
+      const duplicate = this.store.findMessageByNonce(row.senderId, row.clientNonce);
+      if (duplicate !== null) {
+        this.store.markScheduledSent(row.id, at);
+        return { message: this.store.getMessage(duplicate.id) as Message, events: [] as StoredEvent[] };
+      }
+      const requestFingerprint = JSON.stringify({
+        version: 1,
+        operation: "send",
+        chatId: row.chatId,
+        body: row.body,
+        replyToMessageId: row.replyToMessageId,
+        topicId: row.topicId,
+        attachmentIds: []
+      });
+      const record = this.store.createMessage({
+        id: randomUUID(),
+        chatId: row.chatId,
+        senderId: row.senderId,
+        body: row.body,
+        replyToMessageId: row.replyToMessageId,
+        topicId: row.topicId,
+        forwardedFromMessageId: null,
+        forwardedFromChatId: null,
+        forwardedFromSenderId: null,
+        forwardedFromSenderName: null,
+        forwardedFromCreatedAt: null,
+        forwardSourceMessageId: null,
+        requestFingerprint,
+        clientNonce: row.clientNonce,
+        createdAt: at
+      });
+      this.store.replaceMessageSearchTokens(record.id, this.search.index(row.body));
+      const message = this.store.getMessage(record.id) as Message;
+      const events = this.store.appendChatEvent(row.chatId, { type: "message.created", message }, at);
+      this.store.markScheduledSent(row.id, at);
+      return { message, events };
+    });
+    this.publisher.publish(outcome.events);
+  }
+
+  #scheduledView(record: {
+    id: string;
+    chatId: string;
+    body: string;
+    replyToMessageId: string | null;
+    topicId: string | null;
+    sendAt: string;
+    state: ScheduledMessage["state"];
+    failureCode: string | null;
+    createdAt: string;
+  }): ScheduledMessage {
+    return {
+      id: record.id,
+      chatId: record.chatId,
+      body: record.body,
+      replyToMessageId: record.replyToMessageId,
+      topicId: record.topicId,
+      sendAt: record.sendAt,
+      state: record.state,
+      failureCode: record.failureCode,
+      createdAt: record.createdAt
+    };
+  }
+
+  attachTranscript(userId: string, messageId: string, input: PutMessageTranscript): Message {    const original = this.#requireVisibleMessage(messageId, userId, "Message not found");
     if (original.deletedAt !== null) throw notFound("Message not found");
     const now = new Date().toISOString();
     const outcome = this.store.attachMessageTranscript({

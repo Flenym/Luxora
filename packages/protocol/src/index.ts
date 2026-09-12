@@ -1637,6 +1637,35 @@ export const PutMessageTranscriptSchema = z.object({
   clientNonce: IdSchema
 }).strict();
 
+export const SCHEDULED_SEND_MIN_LEAD_SECONDS = 60;
+export const SCHEDULED_SEND_MAX_HORIZON_DAYS = 365;
+
+export const ScheduleMessageRequestSchema = z.object({
+  body: MessageBodySchema,
+  clientNonce: IdSchema,
+  replyToMessageId: IdSchema.nullable().default(null),
+  topicId: IdSchema.nullable().default(null),
+  attachmentIds: z.array(IdSchema).max(MAX_ATTACHMENTS_PER_MESSAGE).default([]),
+  sendAt: TimestampSchema
+}).strict();
+
+export const ScheduledMessageSchema = z.object({
+  id: IdSchema,
+  chatId: IdSchema,
+  body: z.string(),
+  replyToMessageId: IdSchema.nullable(),
+  topicId: IdSchema.nullable(),
+  sendAt: TimestampSchema,
+  state: z.enum(["pending", "sent", "cancelled", "failed"]),
+  failureCode: z.string().nullable(),
+  createdAt: TimestampSchema
+}).strict();
+
+export const ScheduledMessageListResponseSchema = z.object({
+  items: z.array(ScheduledMessageSchema).max(MAX_PAGE_SIZE),
+  nextCursor: z.string().min(1).max(512).nullable()
+}).strict();
+
 export const EditMessageRequestSchema = z.object({
   body: MessageBodySchema.nullable(),
   expectedRevision: z.number().int().nonnegative().optional()
@@ -2847,6 +2876,9 @@ export type CreateChatRequest = z.infer<typeof CreateChatRequestSchema>;
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
 export type EditMessageRequest = z.infer<typeof EditMessageRequestSchema>;
 export type PutMessageTranscript = z.infer<typeof PutMessageTranscriptSchema>;
+export type ScheduleMessageRequest = z.infer<typeof ScheduleMessageRequestSchema>;
+export type ScheduledMessage = z.infer<typeof ScheduledMessageSchema>;
+export type ScheduledMessageListResponse = z.infer<typeof ScheduledMessageListResponseSchema>;
 export type ForwardMessageRequest = z.infer<typeof ForwardMessageRequestSchema>;
 export type CreateUploadRequest = z.infer<typeof CreateUploadRequestSchema>;
 export type UploadSession = z.infer<typeof UploadSessionSchema>;

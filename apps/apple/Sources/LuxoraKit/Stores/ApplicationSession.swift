@@ -1100,6 +1100,42 @@ public final class ApplicationSession {
                 }
                 return message.message(currentUserID: userID)
             },
+            scheduleMessage: { conversationID, body, replyToMessageID, sendAt in
+                let scheduled = try await coordinator.withAccessToken { token in
+                    try await api.scheduleMessage(
+                        chatID: conversationID,
+                        body: body,
+                        replyToMessageID: replyToMessageID,
+                        topicId: nil,
+                        sendAt: sendAt,
+                        clientNonce: UUID.clientNonceV4(),
+                        token: token
+                    )
+                }
+                return scheduled.scheduled()
+            },
+            scheduledListLoader: { conversationID in
+                var items: [ScheduledMessage] = []
+                var cursor: String? = nil
+                repeat {
+                    let page = try await coordinator.withAccessToken { token in
+                        try await api.scheduledMessagesPage(
+                            chatID: conversationID,
+                            limit: 50,
+                            cursor: cursor,
+                            token: token
+                        )
+                    }
+                    items.append(contentsOf: page.items)
+                    cursor = page.nextCursor
+                } while cursor != nil && items.count < 200
+                return items.sorted { $0.sendAt < $1.sendAt }
+            },
+            scheduledCanceller: { id in
+                try await coordinator.withAccessToken { token in
+                    try await api.cancelScheduledMessage(id: id, token: token)
+                }
+            },
             loader: { conversationID in
                 try await coordinator.withAccessToken { token in
                     try await api.messages(chatID: conversationID, token: token)

@@ -3967,5 +3967,42 @@ export const migrations: Migration[] = [
         SELECT RAISE(ABORT, 'message transcript command cannot be deleted');
       END;
     `
+  },
+  {
+    id: "029_scheduled_messages",
+    sql: `
+      CREATE TABLE scheduled_messages (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        body_ciphertext TEXT NOT NULL,
+        reply_to_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+        topic_id TEXT,
+        client_nonce TEXT NOT NULL CHECK (length(client_nonce) = 36),
+        send_at TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'sent', 'cancelled', 'failed')),
+        failure_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        sent_at TEXT,
+        CHECK (julianday(send_at) IS NOT NULL),
+        CHECK (julianday(created_at) IS NOT NULL),
+        CHECK (julianday(updated_at) IS NOT NULL),
+        CHECK (julianday(send_at) > julianday(created_at)),
+        CHECK (
+          (state IN ('pending', 'cancelled') AND sent_at IS NULL)
+          OR (state IN ('sent', 'failed'))
+        ),
+        CHECK (
+          (state <> 'failed' AND failure_code IS NULL)
+          OR (state = 'failed' AND failure_code IS NOT NULL)
+        ),
+        UNIQUE (sender_id, client_nonce)
+      ) STRICT;
+      CREATE INDEX idx_scheduled_messages_due
+        ON scheduled_messages(state, send_at, id);
+      CREATE INDEX idx_scheduled_messages_chat
+        ON scheduled_messages(chat_id, sender_id, send_at, id);
+    `
   }
 ];

@@ -66,6 +66,8 @@ import type {
   PhoneBindingReceiptRecord,
   PhoneIdentityRecord,
   PhoneRecoveryIntentRecord,
+  ScheduledMessageRecord,
+  ScheduledMessageState,
   PrivacySettingsRecord,
   PushRegistrationRecord,
   RefreshTokenRecord,
@@ -738,6 +740,28 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     | { status: "attached" | "replayed"; message: MessageRecord }
     | { status: "nonce_conflict" }
     | null;
+
+  createScheduledMessage(input: {
+    id: string;
+    chatId: string;
+    senderId: string;
+    body: string;
+    replyToMessageId: string | null;
+    topicId: string | null;
+    clientNonce: string;
+    sendAt: string;
+    createdAt: string;
+  }): ScheduledMessageRecord;
+  listDueScheduledMessages(now: string, limit: number): ScheduledMessageRecord[];
+  listScheduledForChat(
+    chatId: string,
+    senderId: string,
+    limit: number,
+    cursor?: { sendAt: string; id: string }
+  ): { items: ScheduledMessageRecord[]; nextCursor: { sendAt: string; id: string } | null };
+  cancelScheduledMessage(id: string, senderId: string, at: string): boolean;
+  markScheduledSent(id: string, at: string): void;
+  markScheduledFailed(id: string, failureCode: string, at: string): void;
   createPhoneRecoveryIntent(input: {
     intent: NewPhoneRecoveryIntent;
     receipt: PhoneRecoveryReceiptInput;

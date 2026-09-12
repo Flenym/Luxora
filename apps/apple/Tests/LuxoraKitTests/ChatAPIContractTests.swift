@@ -56,6 +56,23 @@ final class ChatAPIContractTests: XCTestCase {
         XCTAssertEqual(APIChatBody.reaction(emoji: "🔥"), ["emoji": "🔥"])
     }
 
+    func testScheduledMessageDecodesBoundedProjection() throws {
+        let payload = """
+        {"id":"85ce9209-f691-412b-b566-8d1ae2c56b49",\
+        "chatId":"85ce9209-f691-412b-b566-8d1ae2c56b49",\
+        "body":"Напомнить","replyToMessageId":null,"topicId":null,\
+        "sendAt":"2026-09-13T00:00:00.000Z","state":"pending",\
+        "failureCode":null,"createdAt":"2026-09-12T00:00:00.000Z"}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(APIScheduledMessage.self, from: Data(payload.utf8))
+        let scheduled = decoded.scheduled()
+        XCTAssertEqual(scheduled.body, "Напомнить")
+        XCTAssertEqual(scheduled.state, "pending")
+        XCTAssertNil(scheduled.failureCode)
+    }
+
     func testUserSearchEscapesQueryDelimitersInsteadOfCreatingExtraParameters() {
         XCTAssertEqual(LuxoraAPIClient.encodedQueryValue("mira&limit=999"), "mira%26limit%3D999")
         XCTAssertEqual(LuxoraAPIClient.encodedQueryValue("Егор Flenym"), "%D0%95%D0%B3%D0%BE%D1%80%20Flenym")

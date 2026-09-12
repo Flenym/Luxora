@@ -596,8 +596,45 @@ struct APIPhoneBindingVerified: Decodable, Sendable {
     let expiresAt: Date
 }
 
-struct APIPhoneBindingCompleted: Decodable, Sendable {
-    let phonePassword: APIPhonePasswordStatus
+struct APIPhoneBindingCompleted: Decodable, Sendable {    let phonePassword: APIPhonePasswordStatus
+}
+
+struct APIScheduledMessage: Decodable, Sendable {
+    let id: UUID
+    let chatId: UUID
+    let body: String
+    let replyToMessageId: UUID?
+    let topicId: UUID?
+    let sendAt: Date
+    let state: String
+    let failureCode: String?
+    let createdAt: Date
+
+    func scheduled() -> ScheduledMessage {
+        ScheduledMessage(
+            id: id,
+            chatId: chatId,
+            body: body,
+            replyToMessageId: replyToMessageId,
+            topicId: topicId,
+            sendAt: sendAt,
+            state: state,
+            failureCode: failureCode,
+            createdAt: createdAt
+        )
+    }
+}
+
+public struct ScheduledMessage: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let chatId: UUID
+    public let body: String
+    public let replyToMessageId: UUID?
+    public let topicId: UUID?
+    public let sendAt: Date
+    public let state: String
+    public let failureCode: String?
+    public let createdAt: Date
 }
 
 struct APIPushRegistration: Decodable, Sendable {

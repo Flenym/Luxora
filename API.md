@@ -605,6 +605,12 @@ Media messages pass `attachmentIds` (owned, completed uploads) instead of/in add
 
 Any chat member may attach one transcript to a message that (a) is not deleted, (b) carries a `voice`/`audio` attachment and (c) was sent with `transcriptionConsent: true`. First writer wins: the same nonce replays the stored message, a different nonce or different text conflicts (`409`). Without consent or voice content the server answers `403 transcript_unavailable`. Transcripts are stored server-side and visible to chat members — Beta-0.1 is cloud preview without E2EE, and the client must disclose this before submitting. A successful attach emits `message.updated` so members converge.
 
+### Scheduled messages (text-only Beta-0.1)
+
+`POST /v1/chats/:id/scheduled` accepts `{body,clientNonce,replyToMessageId?,topicId?,sendAt}`. `sendAt` must be at least 60 seconds in the future and at most 365 days ahead; attachment payloads are rejected with `400` (attachments would outlive their orphan retention, so the Beta-0.1 contract is text-only). `201` returns `{scheduled}` with `state:"pending"`. `GET /v1/chats/:id/scheduled` lists the caller's pending/failed rows with opaque cursors; `DELETE /v1/scheduled/:id` cancels an own pending row (`204`, `404` otherwise).
+
+A 30-second server dispatcher sends due rows through the exact live-send guards evaluated at send time (membership, relationship/privacy, channel posting permission, topic, reply target). Guard failures resolve to bounded `failureCode` values (`membership_lost`, `relationship_unavailable`, `posting_forbidden`, `topic_gone`, `reply_gone`, `chat_gone`, `dispatch_failed`) visible in the list. The scheduled `clientNonce` becomes the message nonce, so a crash between send and mark-sent replays instead of duplicating.
+
 ### `PATCH /v1/messages/:messageId`
 
 ```json

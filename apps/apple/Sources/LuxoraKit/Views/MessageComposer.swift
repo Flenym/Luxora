@@ -6,18 +6,21 @@ struct MessageComposer: View {
     var onAttachment: (() -> Void)?
     var onVoiceRecord: (() -> Void)?
     var isRecordingVoice: Bool = false
+    var onSchedule: (() -> Void)?
     @FocusState private var isFocused: Bool
 
     init(
         store: MessengerStore,
         onAttachment: (() -> Void)? = nil,
         onVoiceRecord: (() -> Void)? = nil,
-        isRecordingVoice: Bool = false
+        isRecordingVoice: Bool = false,
+        onSchedule: (() -> Void)? = nil
     ) {
         self.store = store
         self.onAttachment = onAttachment
         self.onVoiceRecord = onVoiceRecord
         self.isRecordingVoice = isRecordingVoice
+        self.onSchedule = onSchedule
     }
 
     var body: some View {
@@ -96,6 +99,20 @@ struct MessageComposer: View {
                 .background(Color.secondary.opacity(0.08), in: Circle())
                 .accessibilityLabel(isRecordingVoice ? "Остановить запись" : "Записать голосовое")
                 .accessibilityIdentifier("message-voice-record")
+            }
+
+            if let onSchedule {
+                Button(action: onSchedule) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.plain)
+                .frame(minWidth: 44, minHeight: 44)
+                .foregroundStyle(.secondary)
+                .background(Color.secondary.opacity(0.08), in: Circle())
+                .accessibilityLabel("Отправить позже")
+                .accessibilityIdentifier("message-schedule")
             }
 
             TextField(composerPlaceholder, text: $store.draft, axis: .vertical)

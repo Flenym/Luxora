@@ -28,6 +28,7 @@ import {
   PatchPrivacySettingsSchema,
   PutChatDraftRequestSchema,
   PutMessageTranscriptSchema,
+  ScheduleMessageRequestSchema,
   CompletePhoneRegistrationSchema,
   CompletePhoneRecoverySchema,
   CompletePhoneBindingSchema,
@@ -638,6 +639,32 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { messageId } = MessageIdParamSchema.parse(request.params);
     const input = PutMessageTranscriptSchema.parse(request.body);
     return { message: dependencies.chats.attachTranscript(request.auth.userId, messageId, input) };
+  });
+
+  app.post("/v1/chats/:id/scheduled", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = ScheduleMessageRequestSchema.parse(request.body);
+    return reply.code(201).send({
+      scheduled: dependencies.chats.scheduleMessage(request.auth.userId, id, input)
+    });
+  });
+
+  app.get("/v1/chats/:id/scheduled", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const query = CursorQuerySchema.parse(request.query);
+    return dependencies.chats.listScheduled(request.auth.userId, id, query.limit, query.cursor ?? undefined);
+  });
+
+  app.delete("/v1/scheduled/:id", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    dependencies.chats.cancelScheduled(request.auth.userId, id);
+    return reply.code(204).send();
   });
 
   app.delete("/v1/messages/:messageId", { preHandler: dependencies.authGuard }, async (request) => {

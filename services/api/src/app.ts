@@ -716,9 +716,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   });
 
   let cleanupTimer: NodeJS.Timeout | undefined;
+  let scheduledTimer: NodeJS.Timeout | undefined;
   app.addHook("onClose", async () => {
     if (cleanupTimer !== undefined) clearInterval(cleanupTimer);
     cleanupTimer = undefined;
+    if (scheduledTimer !== undefined) clearInterval(scheduledTimer);
+    scheduledTimer = undefined;
     outbox.close();
     hub.closeAll();
     await uploads.close();
@@ -769,8 +772,26 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   } catch (error) {
     app.log.error({ err: error }, "Initial chat-folder receipt cleanup failed");
   }
-  cleanupTimer = setInterval(() => {
-    void uploads.cleanup().then((result) => {
+  try {
+    const dispatched = chats.dispatchDueScheduledMessages(new Date());
+    if (dispatched.sent > 0 || dispatched.failed > 0) {
+      app.log.info(dispatched, "Due scheduled messages dispatched on startup");
+    }
+  } catch (error) {
+    app.log.error({ err: error }, "Initial scheduled message dispatch failed");
+  }
+  scheduledTimer = setInterval(() => {
+    try {
+      const dispatched = chats.dispatchDueScheduledMessages(new Date());
+      if (dispatched.sent > 0 || dispatched.failed > 0) {
+        app.log.info(dispatched, "Due scheduled messages dispatched");
+      }
+    } catch (error) {
+      app.log.error({ err: error }, "Periodic scheduled message dispatch failed");
+    }
+  }, 30_000);
+  scheduledTimer.unref();
+  cleanupTimer = setInterval(() => {    void uploads.cleanup().then((result) => {
       if (result.cleanupFailures > 0) {
         app.log.warn(result, "Upload cleanup completed with retryable failures");
       } else if (result.expiredUploads > 0 || result.orphanAttachments > 0) {

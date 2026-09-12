@@ -139,6 +139,8 @@ import type {
   AdminChatRecord,
   AdminStatusRecord,
   AdminUserRecord,
+  ScheduledMessageRecord,
+  ScheduledMessageState,
   PrivacySettingsRecord,
   PushRegistrationRecord,
   RefreshTokenRecord,
@@ -308,6 +310,22 @@ interface PhoneBindingReceiptRow {
   response_ciphertext: string | null;
   created_at: string;
   expires_at: string;
+}
+
+interface ScheduledMessageRow {
+  id: string;
+  chat_id: string;
+  sender_id: string;
+  body_ciphertext: string;
+  reply_to_message_id: string | null;
+  topic_id: string | null;
+  client_nonce: string;
+  send_at: string;
+  state: ScheduledMessageState;
+  failure_code: string | null;
+  created_at: string;
+  updated_at: string;
+  sent_at: string | null;
 }
 
 interface PrivacySettingsRow {
@@ -6613,6 +6631,119 @@ export class SqliteStore implements Store {
       });
       return true;
     }).immediate();
+  }
+
+  #mapScheduledMessage(row: ScheduledMessageRow): ScheduledMessageRecord {
+    return {
+      id: row.id,
+      chatId: row.chat_id,
+      senderId: row.sender_id,
+      clientNonce: row.client_nonce,
+      body: this.contentCipher.decrypt(row.body_ciphertext, `scheduled:${row.id}`),
+      replyToMessageId: row.reply_to_message_id,
+      topicId: row.topic_id,
+      sendAt: row.send_at,
+      state: row.state,
+      failureCode: row.failure_code,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  createScheduledMessage(input: {
+    id: string;
+    chatId: string;
+    senderId: string;
+    body: string;
+    replyToMessageId: string | null;
+    topicId: string | null;
+    clientNonce: string;
+    sendAt: string;
+    createdAt: string;
+  }): ScheduledMessageRecord {
+    this.#db.prepare(`
+      INSERT INTO scheduled_messages (
+        id, chat_id, sender_id, body_ciphertext, reply_to_message_id, topic_id,
+        client_nonce, send_at, state, created_at, updated_at
+      ) VALUES (
+        @id, @chatId, @senderId, @bodyCiphertext, @replyToMessageId, @topicId,
+        @clientNonce, @sendAt, 'pending', @createdAt, @createdAt
+      )
+    `).run({
+      ...input,
+      bodyCiphertext: this.contentCipher.encrypt(input.body, `scheduled:${input.id}`)
+    });
+    const row = this.#db.prepare("SELECT * FROM scheduled_messages WHERE id = ?")
+      .get(input.id) as ScheduledMessageRow;
+    return this.#mapScheduledMessage(row);
+  }
+
+  listDueScheduledMessages(now: string, limit: number): ScheduledMessageRecord[] {
+    const rows = this.#db.prepare(`
+      SELECT * FROM scheduled_messages
+      WHERE state = 'pending' AND send_at <= @now
+      ORDER BY send_at ASC, id ASC
+      LIMIT @limit
+    `).all({ now, limit }) as ScheduledMessageRow[];
+    return rows.map((row) => this.#mapScheduledMessage(row));
+  }
+
+  listScheduledForChat(
+    chatId: string,
+    senderId: string,
+    limit: number,
+    cursor?: { sendAt: string; id: string }
+  ): { items: ScheduledMessageRecord[]; nextCursor: { sendAt: string; id: string } | null } {
+    const rows = this.#db.prepare(`
+      SELECT * FROM scheduled_messages
+      WHERE chat_id = @chatId
+        AND sender_id = @senderId
+        AND state IN ('pending', 'failed')
+        AND (
+          @cursorSendAt IS NULL
+          OR send_at > @cursorSendAt
+          OR (send_at = @cursorSendAt AND id > @cursorId)
+        )
+      ORDER BY send_at ASC, id ASC
+      LIMIT @take
+    `).all({
+      chatId,
+      senderId,
+      cursorSendAt: cursor?.sendAt ?? null,
+      cursorId: cursor?.id ?? null,
+      take: limit + 1
+    }) as ScheduledMessageRow[];
+    const page = rows.slice(0, limit);
+    const last = rows.length > limit ? page[page.length - 1] : undefined;
+    return {
+      items: page.map((row) => this.#mapScheduledMessage(row)),
+      nextCursor: last === undefined ? null : { sendAt: last.send_at, id: last.id }
+    };
+  }
+
+  cancelScheduledMessage(id: string, senderId: string, at: string): boolean {
+    const result = this.#db.prepare(`
+      UPDATE scheduled_messages
+      SET state = 'cancelled', updated_at = @at
+      WHERE id = @id AND sender_id = @senderId AND state = 'pending'
+    `).run({ id, senderId, at });
+    return result.changes === 1;
+  }
+
+  markScheduledSent(id: string, at: string): void {
+    this.#db.prepare(`
+      UPDATE scheduled_messages
+      SET state = 'sent', sent_at = @at, updated_at = @at
+      WHERE id = @id AND state = 'pending'
+    `).run({ id, at });
+  }
+
+  markScheduledFailed(id: string, failureCode: string, at: string): void {
+    this.#db.prepare(`
+      UPDATE scheduled_messages
+      SET state = 'failed', failure_code = @failureCode, updated_at = @at
+      WHERE id = @id AND state = 'pending'
+    `).run({ id, failureCode, at });
   }
 
   #mapPhoneRecoveryIntent(row: PhoneRecoveryIntentRow): PhoneRecoveryIntentRecord {

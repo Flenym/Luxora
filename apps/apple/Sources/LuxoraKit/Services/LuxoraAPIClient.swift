@@ -717,6 +717,66 @@ actor LuxoraAPIClient {
         return response.message
     }
 
+    func scheduleMessage(
+        chatID: UUID,
+        body: String,
+        replyToMessageID: UUID?,
+        topicId: UUID?,
+        sendAt: Date,
+        clientNonce: UUID,
+        token: String
+    ) async throws -> APIScheduledMessage {
+        struct Body: Encodable, Sendable {
+            let body: String
+            let clientNonce: String
+            let replyToMessageId: String?
+            let topicId: String?
+            let sendAt: String
+        }
+        struct Response: Decodable, Sendable { let scheduled: APIScheduledMessage }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let response: Response = try await requestEncoded(
+            path: "/v1/chats/\(chatID.apiPathComponent)/scheduled",
+            method: "POST",
+            body: Body(
+                body: body,
+                clientNonce: clientNonce.apiPathComponent,
+                replyToMessageId: replyToMessageID?.apiPathComponent,
+                topicId: topicId?.apiPathComponent,
+                sendAt: formatter.string(from: sendAt)
+            ),
+            token: token
+        )
+        return response.scheduled
+    }
+
+    func scheduledMessagesPage(
+        chatID: UUID,
+        limit: Int,
+        cursor: String?,
+        token: String
+    ) async throws -> (items: [ScheduledMessage], nextCursor: String?) {
+        struct Response: Decodable, Sendable {
+            let items: [APIScheduledMessage]
+            let nextCursor: String?
+        }
+        var path = "/v1/chats/\(chatID.apiPathComponent)/scheduled?limit=\(limit)"
+        if let cursor, let encoded = cursor.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            path += "&cursor=\(encoded)"
+        }
+        let response: Response = try await request(path: path, token: token)
+        return (response.items.map { $0.scheduled() }, response.nextCursor)
+    }
+
+    func cancelScheduledMessage(id: UUID, token: String) async throws {
+        try await requestWithoutResponse(
+            path: "/v1/scheduled/\(id.apiPathComponent)",
+            method: "DELETE",
+            token: token
+        )
+    }
+
     func editMessage(
         messageID: UUID,
         body: String,

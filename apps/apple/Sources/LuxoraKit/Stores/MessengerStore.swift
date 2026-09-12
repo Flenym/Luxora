@@ -139,6 +139,9 @@ public final class MessengerStore {
     var remoteMediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)?
     var remoteAttachmentUploader: (@Sendable (PendingMediaAttachment) async throws -> MessageAttachment)?
     var remoteTranscriptPutter: (@Sendable (UUID, String) async throws -> ChatMessage)?
+    var remoteScheduleMessage: (@Sendable (UUID, String, UUID?, Date) async throws -> ScheduledMessage)?
+    var remoteScheduledListLoader: (@Sendable (UUID) async throws -> [ScheduledMessage])?
+    var remoteScheduledCanceller: (@Sendable (UUID) async throws -> Void)?
     var remoteMessageSnapshotLoader: (@Sendable (UUID) async throws -> [RemoteMessageSnapshot])?
     var remoteMessageEditor: (@Sendable (UUID, String, Int?) async throws -> RemoteMessageSnapshot)?
     var remoteMessageDeleter: (@Sendable (UUID) async throws -> RemoteMessageSnapshot)?
@@ -836,6 +839,53 @@ public final class MessengerStore {
         composerMode = .new
     }
 
+    public private(set) var scheduledMessages: [ScheduledMessage] = []
+    public private(set) var scheduledError: String?
+
+    /// Schedules the current composer text for later delivery (text-only v1).
+    public func scheduleMessage(body: String, sendAt: Date) async -> Bool {
+        guard let conversationID = selectedConversationID, let remote = remoteScheduleMessage else { return false }
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, sendAt > Date().addingTimeInterval(60) else {
+            scheduledError = "Выберите время минимум на минуту вперёд."
+            return false
+        }
+        do {
+            let replyID: UUID?
+            if case let .reply(target) = composerMode { replyID = target.id } else { replyID = nil }
+            let scheduled = try await remote(conversationID, text, replyID, sendAt)
+            scheduledMessages.append(scheduled)
+            scheduledMessages.sort { $0.sendAt < $1.sendAt }
+            scheduledError = nil
+            return true
+        } catch {
+            scheduledError = error.localizedDescription
+            return false
+        }
+    }
+
+    public func loadScheduledMessages() async {
+        guard let conversationID = selectedConversationID, let loader = remoteScheduledListLoader else { return }
+        do {
+            scheduledMessages = try await loader(conversationID)
+            scheduledError = nil
+        } catch {
+            scheduledError = error.localizedDescription
+        }
+    }
+
+    public func cancelScheduledMessage(_ id: UUID) async -> Bool {
+        guard let remote = remoteScheduledCanceller else { return false }
+        do {
+            try await remote(id)
+            scheduledMessages.removeAll { $0.id == id }
+            return true
+        } catch {
+            scheduledError = error.localizedDescription
+            return false
+        }
+    }
+
     public func deleteMessage(_ messageID: UUID) {
         guard let (_, message) = message(withID: messageID), canDelete(message) else { return }
         startDelete(messageID: messageID)
@@ -1130,6 +1180,9 @@ public final class MessengerStore {
         mediaAttachmentUploader: (@Sendable (PendingMediaAttachment) async throws -> MessageAttachment)? = nil,
         mediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)? = nil,
         transcriptPutter: (@Sendable (UUID, String) async throws -> ChatMessage)? = nil,
+        scheduleMessage: (@Sendable (UUID, String, UUID?, Date) async throws -> ScheduledMessage)? = nil,
+        scheduledListLoader: (@Sendable (UUID) async throws -> [ScheduledMessage])? = nil,
+        scheduledCanceller: (@Sendable (UUID) async throws -> Void)? = nil,
         loader: @escaping @Sendable (UUID) async throws -> [ChatMessage],
         conversationsLoader: (@Sendable () async throws -> [Conversation])? = nil,
         peopleSearcher: (@Sendable (String) async throws -> [Participant])? = nil,
@@ -1157,6 +1210,9 @@ public final class MessengerStore {
         remoteAttachmentUploader = mediaAttachmentUploader
         remoteMediaMessageSender = mediaMessageSender
         remoteTranscriptPutter = transcriptPutter
+        remoteScheduleMessage = scheduleMessage
+        remoteScheduledListLoader = scheduledListLoader
+        remoteScheduledCanceller = scheduledCanceller
         remoteMessageLoader = loader
         remoteConversationLoader = conversationsLoader
         remotePeopleSearcher = peopleSearcher

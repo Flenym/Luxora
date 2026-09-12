@@ -314,4 +314,76 @@ struct PhoneAttachmentViewer: View {
     }
 }
 
+struct PhoneScheduleMessageSheet: View {
+    let draft: String
+    @Binding var sendAt: Date
+    let errorMessage: String?
+    let onSchedule: (String, Date) -> Void
+    let scheduled: [ScheduledMessage]
+    let onCancel: (UUID) -> Void
+
+    @State private var text: String = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Новое отложенное") {
+                    TextField("Текст сообщения", text: $text, axis: .vertical)
+                        .lineLimit(2...6)
+                        .accessibilityIdentifier("schedule-text")
+                    DatePicker("Отправить", selection: $sendAt, in: Date().addingTimeInterval(60)...Date().addingTimeInterval(366 * 86_400), displayedComponents: [.date, .hourAndMinute])
+                        .accessibilityIdentifier("schedule-date")
+                    Button("Запланировать") {
+                        onSchedule(text, sendAt)
+                    }
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("schedule-confirm")
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("schedule-error")
+                    }
+                }
+
+                if !scheduled.isEmpty {
+                    Section("Ожидают отправки") {
+                        ForEach(scheduled) { item in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.body)
+                                    .lineLimit(2)
+                                Text(item.sendAt, style: .date)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                + Text(" ") + Text(item.sendAt, style: .time)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    onCancel(item.id)
+                                } label: {
+                                    Label("Отменить", systemImage: "trash")
+                                }
+                                .accessibilityIdentifier("schedule-cancel")
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Отправить позже")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Закрыть") { dismiss() }
+                }
+            }
+            .onAppear {
+                if text.isEmpty { text = draft }
+            }
+        }
+        .accessibilityIdentifier("schedule-sheet")
+    }
+}
 #endif
