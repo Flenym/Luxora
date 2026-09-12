@@ -934,6 +934,11 @@ actor LuxoraAPIClient {
     func updatePrivacySettings(
         usernameDiscoverable: Bool? = nil,
         messageRequests: MessageRequestPolicy? = nil,
+        lastSeen: PrivacyVisibility? = nil,
+        profilePhoto: PrivacyVisibility? = nil,
+        forwards: PrivacyVisibility? = nil,
+        voiceMessages: PrivacyVisibility? = nil,
+        calls: PrivacyVisibility? = nil,
         token: String
     ) async throws -> APIPrivacySettings {
         struct Response: Decodable, Sendable { let settings: APIPrivacySettings }
@@ -942,7 +947,12 @@ actor LuxoraAPIClient {
             method: "PATCH",
             body: APIIdentityBody.PrivacyPatch(
                 usernameDiscoverable: usernameDiscoverable,
-                messageRequests: messageRequests
+                messageRequests: messageRequests,
+                lastSeen: lastSeen,
+                profilePhoto: profilePhoto,
+                forwards: forwards,
+                voiceMessages: voiceMessages,
+                calls: calls
             ),
             token: token
         )
@@ -1642,6 +1652,11 @@ enum APIIdentityBody {
     struct PrivacyPatch: Encodable, Sendable {
         let usernameDiscoverable: Bool?
         let messageRequests: MessageRequestPolicy?
+        let lastSeen: PrivacyVisibility?
+        let profilePhoto: PrivacyVisibility?
+        let forwards: PrivacyVisibility?
+        let voiceMessages: PrivacyVisibility?
+        let calls: PrivacyVisibility?
     }
 
     struct CreateMessageRequest: Encodable, Sendable {

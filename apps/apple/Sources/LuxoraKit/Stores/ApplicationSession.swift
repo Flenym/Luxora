@@ -1304,11 +1304,16 @@ public final class ApplicationSession {
                     try await api.privacySettings(token: token)
                 }.snapshot
             },
-            privacySettingsUpdater: { usernameDiscoverable, messageRequests in
+            privacySettingsUpdater: { usernameDiscoverable, messageRequests, lastSeen, profilePhoto, forwards, voiceMessages, calls in
                 try await coordinator.withAccessToken { token in
                     try await api.updatePrivacySettings(
                         usernameDiscoverable: usernameDiscoverable,
                         messageRequests: messageRequests,
+                        lastSeen: lastSeen,
+                        profilePhoto: profilePhoto,
+                        forwards: forwards,
+                        voiceMessages: voiceMessages,
+                        calls: calls,
                         token: token
                     )
                 }.snapshot

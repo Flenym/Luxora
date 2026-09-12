@@ -122,11 +122,21 @@ struct APIPublicProfile: Decodable, Sendable {
 struct APIPrivacySettings: Decodable, Sendable {
     let usernameDiscoverable: Bool
     let messageRequests: MessageRequestPolicy
+    let lastSeen: PrivacyVisibility?
+    let profilePhoto: PrivacyVisibility?
+    let forwards: PrivacyVisibility?
+    let voiceMessages: PrivacyVisibility?
+    let calls: PrivacyVisibility?
 
     var snapshot: PrivacySettingsSnapshot {
         PrivacySettingsSnapshot(
             usernameDiscoverable: usernameDiscoverable,
-            messageRequests: messageRequests
+            messageRequests: messageRequests,
+            lastSeen: lastSeen ?? .everyone,
+            profilePhoto: profilePhoto ?? .everyone,
+            forwards: forwards ?? .everyone,
+            voiceMessages: voiceMessages ?? .everyone,
+            calls: calls ?? .everyone
         )
     }
 }

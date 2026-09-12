@@ -212,10 +212,17 @@ export interface PhoneBindingReceiptRecord {
   expiresAt: string;
 }
 
+export type PrivacyVisibility = "everyone" | "contacts" | "nobody";
+
 export interface PrivacySettingsRecord {
   userId: string;
   usernameDiscoverable: boolean;
   messageRequests: "everyone" | "nobody";
+  lastSeen: PrivacyVisibility;
+  profilePhoto: PrivacyVisibility;
+  forwards: PrivacyVisibility;
+  voiceMessages: PrivacyVisibility;
+  calls: PrivacyVisibility;
   updatedAt: string;
 }
 

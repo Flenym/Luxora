@@ -116,7 +116,8 @@ export const PublicProfileSchema = z.object({
   displayName: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
   bio: z.string().max(500),
   avatarUrl: z.string().url().nullable(),
-  avatarPath: z.string().startsWith("/v1/attachments/").nullable().optional()
+  avatarPath: z.string().startsWith("/v1/attachments/").nullable().optional(),
+  lastSeenAt: TimestampSchema.nullable().optional()
 }).strict();
 
 export const UserLookupResponseSchema = z.object({
@@ -125,16 +126,34 @@ export const UserLookupResponseSchema = z.object({
 
 export const MessageRequestPolicySchema = z.enum(["everyone", "nobody"]);
 
+export const PrivacyVisibilitySchema = z.enum(["everyone", "contacts", "nobody"]);
+
 export const PrivacySettingsSchema = z.object({
   usernameDiscoverable: z.boolean(),
-  messageRequests: MessageRequestPolicySchema
+  messageRequests: MessageRequestPolicySchema,
+  lastSeen: PrivacyVisibilitySchema,
+  profilePhoto: PrivacyVisibilitySchema,
+  forwards: PrivacyVisibilitySchema,
+  voiceMessages: PrivacyVisibilitySchema,
+  calls: PrivacyVisibilitySchema
 }).strict();
 
 export const PatchPrivacySettingsSchema = z.object({
   usernameDiscoverable: z.boolean().optional(),
-  messageRequests: MessageRequestPolicySchema.optional()
+  messageRequests: MessageRequestPolicySchema.optional(),
+  lastSeen: PrivacyVisibilitySchema.optional(),
+  profilePhoto: PrivacyVisibilitySchema.optional(),
+  forwards: PrivacyVisibilitySchema.optional(),
+  voiceMessages: PrivacyVisibilitySchema.optional(),
+  calls: PrivacyVisibilitySchema.optional()
 }).strict().refine(
-  (value) => value.usernameDiscoverable !== undefined || value.messageRequests !== undefined,
+  (value) => value.usernameDiscoverable !== undefined
+    || value.messageRequests !== undefined
+    || value.lastSeen !== undefined
+    || value.profilePhoto !== undefined
+    || value.forwards !== undefined
+    || value.voiceMessages !== undefined
+    || value.calls !== undefined,
   { message: "At least one privacy setting must be changed" }
 );
 

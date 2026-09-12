@@ -4004,5 +4004,20 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_scheduled_messages_chat
         ON scheduled_messages(chat_id, sender_id, send_at, id);
     `
+  },
+  {
+    id: "030_privacy_visibility_policies",
+    sql: `
+      ALTER TABLE account_privacy_settings ADD COLUMN last_seen_visibility TEXT NOT NULL DEFAULT 'everyone'
+        CHECK (last_seen_visibility IN ('everyone', 'contacts', 'nobody'));
+      ALTER TABLE account_privacy_settings ADD COLUMN profile_photo_visibility TEXT NOT NULL DEFAULT 'everyone'
+        CHECK (profile_photo_visibility IN ('everyone', 'contacts', 'nobody'));
+      ALTER TABLE account_privacy_settings ADD COLUMN forwards_visibility TEXT NOT NULL DEFAULT 'everyone'
+        CHECK (forwards_visibility IN ('everyone', 'contacts', 'nobody'));
+      ALTER TABLE account_privacy_settings ADD COLUMN voice_messages_visibility TEXT NOT NULL DEFAULT 'everyone'
+        CHECK (voice_messages_visibility IN ('everyone', 'contacts', 'nobody'));
+      ALTER TABLE account_privacy_settings ADD COLUMN calls_visibility TEXT NOT NULL DEFAULT 'everyone'
+        CHECK (calls_visibility IN ('everyone', 'contacts', 'nobody'));
+    `
   }
 ];

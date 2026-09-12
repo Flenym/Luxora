@@ -156,7 +156,7 @@ public final class MessengerStore {
     var remoteMessageRequestAccepter: (@Sendable (UUID) async throws -> MessageRequestAcceptResult)?
     var remoteMessageRequestDismisser: (@Sendable (UUID) async throws -> Void)?
     var remotePrivacySettingsLoader: (@Sendable () async throws -> PrivacySettingsSnapshot)?
-    var remotePrivacySettingsUpdater: (@Sendable (Bool?, MessageRequestPolicy?) async throws -> PrivacySettingsSnapshot)?
+    var remotePrivacySettingsUpdater: (@Sendable (Bool?, MessageRequestPolicy?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?) async throws -> PrivacySettingsSnapshot)?
     private var loadedConversationIDs: Set<UUID>
     @ObservationIgnored private var remoteOperations: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var profileUpdateOperation: Task<CurrentUserProfileSnapshot, Error>?
@@ -688,12 +688,24 @@ public final class MessengerStore {
 
     public func updatePrivacySettings(
         usernameDiscoverable: Bool? = nil,
-        messageRequests: MessageRequestPolicy? = nil
+        messageRequests: MessageRequestPolicy? = nil,
+        lastSeen: PrivacyVisibility? = nil,
+        profilePhoto: PrivacyVisibility? = nil,
+        forwards: PrivacyVisibility? = nil,
+        voiceMessages: PrivacyVisibility? = nil,
+        calls: PrivacyVisibility? = nil
     ) {
-        guard usernameDiscoverable != nil || messageRequests != nil else { return }
+        guard usernameDiscoverable != nil || messageRequests != nil
+            || lastSeen != nil || profilePhoto != nil || forwards != nil
+            || voiceMessages != nil || calls != nil else { return }
         startPrivacySettingsUpdate(
             usernameDiscoverable: usernameDiscoverable,
-            messageRequests: messageRequests
+            messageRequests: messageRequests,
+            lastSeen: lastSeen,
+            profilePhoto: profilePhoto,
+            forwards: forwards,
+            voiceMessages: voiceMessages,
+            calls: calls
         )
     }
 
@@ -701,7 +713,12 @@ public final class MessengerStore {
         guard let retry = privacySettingsRetry else { return }
         startPrivacySettingsUpdate(
             usernameDiscoverable: retry.usernameDiscoverable,
-            messageRequests: retry.messageRequests
+            messageRequests: retry.messageRequests,
+            lastSeen: retry.lastSeen,
+            profilePhoto: retry.profilePhoto,
+            forwards: retry.forwards,
+            voiceMessages: retry.voiceMessages,
+            calls: retry.calls
         )
     }
 
@@ -2084,7 +2101,12 @@ public final class MessengerStore {
 
     private func startPrivacySettingsUpdate(
         usernameDiscoverable: Bool?,
-        messageRequests: MessageRequestPolicy?
+        messageRequests: MessageRequestPolicy?,
+        lastSeen: PrivacyVisibility?,
+        profilePhoto: PrivacyVisibility?,
+        forwards: PrivacyVisibility?,
+        voiceMessages: PrivacyVisibility?,
+        calls: PrivacyVisibility?
     ) {
         guard let remotePrivacySettingsUpdater else {
             privacySettingsState = .failed("Изменение конфиденциальности недоступно на этом подключении.")
@@ -2095,7 +2117,12 @@ public final class MessengerStore {
         privacySettingsState = .loading
         privacySettingsRetry = PrivacySettingsRetry(
             usernameDiscoverable: usernameDiscoverable,
-            messageRequests: messageRequests
+            messageRequests: messageRequests,
+            lastSeen: lastSeen,
+            profilePhoto: profilePhoto,
+            forwards: forwards,
+            voiceMessages: voiceMessages,
+            calls: calls
         )
         let operationID = UUID()
         let task = Task { [weak self] in
@@ -2103,11 +2130,21 @@ public final class MessengerStore {
             do {
                 let settings = try await remotePrivacySettingsUpdater(
                     usernameDiscoverable,
-                    messageRequests
+                    messageRequests,
+                    lastSeen,
+                    profilePhoto,
+                    forwards,
+                    voiceMessages,
+                    calls
                 )
                 guard let self, !Task.isCancelled else { return }
                 guard usernameDiscoverable.map({ $0 == settings.usernameDiscoverable }) ?? true,
-                      messageRequests.map({ $0 == settings.messageRequests }) ?? true
+                      messageRequests.map({ $0 == settings.messageRequests }) ?? true,
+                      lastSeen.map({ $0 == settings.lastSeen }) ?? true,
+                      profilePhoto.map({ $0 == settings.profilePhoto }) ?? true,
+                      forwards.map({ $0 == settings.forwards }) ?? true,
+                      voiceMessages.map({ $0 == settings.voiceMessages }) ?? true,
+                      calls.map({ $0 == settings.calls }) ?? true
                 else {
                     throw MessageRequestClientError.inconsistentPrivacy
                 }
@@ -2704,6 +2741,11 @@ private struct MessageRequestCreationRetry: Sendable {
 private struct PrivacySettingsRetry: Sendable {
     let usernameDiscoverable: Bool?
     let messageRequests: MessageRequestPolicy?
+    let lastSeen: PrivacyVisibility?
+    let profilePhoto: PrivacyVisibility?
+    let forwards: PrivacyVisibility?
+    let voiceMessages: PrivacyVisibility?
+    let calls: PrivacyVisibility?
 }
 
 private struct MessageMutationUnavailableError: LocalizedError, Sendable {

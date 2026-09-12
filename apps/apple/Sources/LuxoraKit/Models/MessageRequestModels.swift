@@ -72,13 +72,47 @@ public enum MessageRequestPolicy: String, CaseIterable, Codable, Identifiable, S
     }
 }
 
+public enum PrivacyVisibility: String, CaseIterable, Codable, Identifiable, Sendable {
+    case everyone
+    case contacts
+    case nobody
+
+    public var id: String { rawValue }
+
+    public var russianTitle: String {
+        switch self {
+        case .everyone: "Все пользователи"
+        case .contacts: "Мои контакты"
+        case .nobody: "Никто"
+        }
+    }
+}
+
 public struct PrivacySettingsSnapshot: Equatable, Sendable {
     public let usernameDiscoverable: Bool
     public let messageRequests: MessageRequestPolicy
+    public let lastSeen: PrivacyVisibility
+    public let profilePhoto: PrivacyVisibility
+    public let forwards: PrivacyVisibility
+    public let voiceMessages: PrivacyVisibility
+    public let calls: PrivacyVisibility
 
-    public init(usernameDiscoverable: Bool, messageRequests: MessageRequestPolicy) {
+    public init(
+        usernameDiscoverable: Bool,
+        messageRequests: MessageRequestPolicy,
+        lastSeen: PrivacyVisibility = .everyone,
+        profilePhoto: PrivacyVisibility = .everyone,
+        forwards: PrivacyVisibility = .everyone,
+        voiceMessages: PrivacyVisibility = .everyone,
+        calls: PrivacyVisibility = .everyone
+    ) {
         self.usernameDiscoverable = usernameDiscoverable
         self.messageRequests = messageRequests
+        self.lastSeen = lastSeen
+        self.profilePhoto = profilePhoto
+        self.forwards = forwards
+        self.voiceMessages = voiceMessages
+        self.calls = calls
     }
 }
 

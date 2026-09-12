@@ -586,6 +586,7 @@ export class ChatService {
       }
       this.#requireTopic(chatId, input.topicId, false);
       const attachments = this.#requireOwnedAttachments(userId, attachmentIds);
+      this.#requireVoiceMessagePolicy(currentChat, userId, attachments);
       if (input.replyToMessageId !== null) {
         const replied = this.store.findMessageRecord(input.replyToMessageId);
         if (replied === null || replied.chatId !== chatId || replied.deletedAt !== null) {
@@ -934,6 +935,9 @@ export class ChatService {
       const rootSenderId = currentSource.forwardedFromSenderId ?? currentSource.senderId;
       const rootSenderName = currentSource.forwardedFromSenderName ?? currentSourceSender.displayName;
       const rootCreatedAt = currentSource.forwardedFromCreatedAt ?? currentSource.createdAt;
+      const forwardsPolicy = this.store.getPrivacySettings(rootSenderId).forwards;
+      const anonymousForward = rootSenderId !== userId
+        && !this.store.privacyAllows(rootSenderId, userId, forwardsPolicy);
       const currentAttachmentIds = this.store.listMessageAttachmentIds(currentSource.id);
       if (currentAttachmentIds.some((attachmentId) =>
         !this.store.canUserAccessAttachment(userId, attachmentId)
@@ -948,11 +952,11 @@ export class ChatService {
         body: currentSource.body,
         replyToMessageId: null,
         topicId: input.topicId,
-        forwardedFromMessageId: rootMessageId,
-        forwardedFromChatId: rootChatId,
-        forwardedFromSenderId: rootSenderId,
-        forwardedFromSenderName: rootSenderName,
-        forwardedFromCreatedAt: rootCreatedAt,
+        forwardedFromMessageId: anonymousForward ? null : rootMessageId,
+        forwardedFromChatId: anonymousForward ? null : rootChatId,
+        forwardedFromSenderId: anonymousForward ? null : rootSenderId,
+        forwardedFromSenderName: anonymousForward ? null : rootSenderName,
+        forwardedFromCreatedAt: anonymousForward ? null : rootCreatedAt,
         forwardSourceMessageId: sourceMessageId,
         requestFingerprint,
         clientNonce: input.clientNonce,
@@ -1342,6 +1346,23 @@ export class ChatService {
   #requireModerationPermission(chat: ChatRecord, member: ChatMemberRecord): void {
     if (chat.kind !== "direct" && !["owner", "admin"].includes(member.role)) {
       throw forbidden("Only chat administrators can manage this resource");
+    }
+  }
+
+  #requireVoiceMessagePolicy(
+    chat: ChatRecord,
+    senderId: string,
+    attachments: { kind: Attachment["kind"] }[]
+  ): void {
+    if (chat.kind !== "direct") return;
+    if (!attachments.some(({ kind }) => kind === "voice")) return;
+    const peerId = this.store.listChatMemberIds(chat.id).find((memberId) => memberId !== senderId);
+    if (peerId === undefined) return;
+    const policy = this.store.getPrivacySettings(peerId).voiceMessages;
+    if (!this.store.privacyAllows(peerId, senderId, policy)) {
+      throw forbidden("This account does not accept voice messages from you", {
+        reason: "voice_messages_unavailable"
+      });
     }
   }
 

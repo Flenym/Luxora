@@ -69,6 +69,7 @@ import type {
   ScheduledMessageRecord,
   ScheduledMessageState,
   PrivacySettingsRecord,
+  PrivacyVisibility,
   PushRegistrationRecord,
   RefreshTokenRecord,
   RealtimeOutboxFailureCode,
@@ -852,11 +853,32 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   commitPasskeySignupExpired(input: PersistPasskeySignupExpired): Promise<void>;
   commitVerifiedPasskeySignup(input: PersistVerifiedPasskeySignup): Promise<void>;
 
-  getPrivacySettings(userId: string): PrivacySettingsRecord;  updatePrivacySettings(
+    getPrivacySettings(userId: string): PrivacySettingsRecord;
+  updatePrivacySettings(
     userId: string,
-    update: Partial<Pick<PrivacySettingsRecord, "usernameDiscoverable" | "messageRequests">>,
+    update: Partial<Pick<
+      PrivacySettingsRecord,
+      | "usernameDiscoverable"
+      | "messageRequests"
+      | "lastSeen"
+      | "profilePhoto"
+      | "forwards"
+      | "voiceMessages"
+      | "calls"
+    >>,
     at: string
   ): PrivacySettingsRecord;
+
+  /**
+   * Evaluates one visibility policy of `targetUserId` for `viewerId`.
+   * Self always passes; otherwise everyone passes, nobody fails, and
+   * contacts requires an accepted relationship.
+   */
+  privacyAllows(
+    targetUserId: string,
+    viewerId: string,
+    policy: PrivacyVisibility
+  ): boolean;
 
   findCurrentPushRegistration(userId: string, sessionId: string): PushRegistrationRecord | null;
   upsertPushRegistration(registration: NewPushRegistration): PushRegistrationRecord;

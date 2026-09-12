@@ -4986,6 +4986,66 @@ private struct PhonePrivacySettingsView: View {
                     }
                     .disabled(store.privacySettingsState == .loading)
                     .accessibilityIdentifier("privacy-message-requests-policy")
+
+                    Picker(
+                        "Последняя активность",
+                        selection: Binding(
+                            get: { settings.lastSeen },
+                            set: { store.updatePrivacySettings(lastSeen: $0) }
+                        )
+                    ) {
+                        ForEach(PrivacyVisibility.allCases) { v in Text(v.russianTitle).tag(v) }
+                    }
+                    .disabled(store.privacySettingsState == .loading)
+                    .accessibilityIdentifier("privacy-last-seen")
+
+                    Picker(
+                        "Фото профиля",
+                        selection: Binding(
+                            get: { settings.profilePhoto },
+                            set: { store.updatePrivacySettings(profilePhoto: $0) }
+                        )
+                    ) {
+                        ForEach(PrivacyVisibility.allCases) { v in Text(v.russianTitle).tag(v) }
+                    }
+                    .disabled(store.privacySettingsState == .loading)
+                    .accessibilityIdentifier("privacy-profile-photo")
+
+                    Picker(
+                        "Пересылка моих сообщений",
+                        selection: Binding(
+                            get: { settings.forwards },
+                            set: { store.updatePrivacySettings(forwards: $0) }
+                        )
+                    ) {
+                        ForEach(PrivacyVisibility.allCases) { v in Text(v.russianTitle).tag(v) }
+                    }
+                    .disabled(store.privacySettingsState == .loading)
+                    .accessibilityIdentifier("privacy-forwards")
+
+                    Picker(
+                        "Голосовые сообщения",
+                        selection: Binding(
+                            get: { settings.voiceMessages },
+                            set: { store.updatePrivacySettings(voiceMessages: $0) }
+                        )
+                    ) {
+                        ForEach(PrivacyVisibility.allCases) { v in Text(v.russianTitle).tag(v) }
+                    }
+                    .disabled(store.privacySettingsState == .loading)
+                    .accessibilityIdentifier("privacy-voice-messages")
+
+                    Picker(
+                        "Звонки",
+                        selection: Binding(
+                            get: { settings.calls },
+                            set: { store.updatePrivacySettings(calls: $0) }
+                        )
+                    ) {
+                        ForEach(PrivacyVisibility.allCases) { v in Text(v.russianTitle).tag(v) }
+                    }
+                    .disabled(store.privacySettingsState == .loading)
+                    .accessibilityIdentifier("privacy-calls")
                 } else if store.privacySettingsState == .loading {
                     HStack(spacing: 10) {
                         ProgressView()

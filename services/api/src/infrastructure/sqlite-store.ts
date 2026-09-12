@@ -142,6 +142,7 @@ import type {
   ScheduledMessageRecord,
   ScheduledMessageState,
   PrivacySettingsRecord,
+  PrivacyVisibility,
   PushRegistrationRecord,
   RefreshTokenRecord,
   RealtimeOutboxFailureCode,
@@ -332,6 +333,11 @@ interface PrivacySettingsRow {
   user_id: string;
   username_discoverable: number;
   message_requests: "everyone" | "nobody";
+  last_seen_visibility: PrivacyVisibility;
+  profile_photo_visibility: PrivacyVisibility;
+  forwards_visibility: PrivacyVisibility;
+  voice_messages_visibility: PrivacyVisibility;
+  calls_visibility: PrivacyVisibility;
   updated_at: string;
 }
 
@@ -967,6 +973,11 @@ function mapPrivacySettings(row: PrivacySettingsRow): PrivacySettingsRecord {
     userId: row.user_id,
     usernameDiscoverable: row.username_discoverable === 1,
     messageRequests: row.message_requests,
+    lastSeen: row.last_seen_visibility,
+    profilePhoto: row.profile_photo_visibility,
+    forwards: row.forwards_visibility,
+    voiceMessages: row.voice_messages_visibility,
+    calls: row.calls_visibility,
     updatedAt: row.updated_at
   };
 }
@@ -7478,7 +7489,15 @@ export class SqliteStore implements Store {
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     return {
-      items: page.map((row) => directoryUser(mapUser(row))),
+      items: page.map((row) => {
+        const user = directoryUser(mapUser(row));
+        const photoPolicy = this.getPrivacySettings(row.id).profilePhoto;
+        if (!this.privacyAllows(row.id, viewerUserId, photoPolicy)) {
+          user.avatarUrl = null;
+          user.avatarPath = null;
+        }
+        return user;
+      }),
       nextCursor: hasMore && last !== undefined
         ? encodeCursor({ value: last.username_normalized, id: last.id })
         : null
@@ -7492,9 +7511,25 @@ export class SqliteStore implements Store {
     return mapPrivacySettings(row);
   }
 
+  privacyAllows(targetUserId: string, viewerId: string, policy: PrivacyVisibility): boolean {
+    if (targetUserId === viewerId) return true;
+    if (policy === "everyone") return true;
+    if (policy === "nobody") return false;
+    return this.hasAcceptedRelationship(targetUserId, viewerId);
+  }
+
   updatePrivacySettings(
     userId: string,
-    update: Partial<Pick<PrivacySettingsRecord, "usernameDiscoverable" | "messageRequests">>,
+    update: Partial<Pick<
+      PrivacySettingsRecord,
+      | "usernameDiscoverable"
+      | "messageRequests"
+      | "lastSeen"
+      | "profilePhoto"
+      | "forwards"
+      | "voiceMessages"
+      | "calls"
+    >>,
     at: string
   ): PrivacySettingsRecord {
     const current = this.getPrivacySettings(userId);
@@ -7502,12 +7537,22 @@ export class SqliteStore implements Store {
       UPDATE account_privacy_settings
       SET username_discoverable = @usernameDiscoverable,
           message_requests = @messageRequests,
+          last_seen_visibility = @lastSeen,
+          profile_photo_visibility = @profilePhoto,
+          forwards_visibility = @forwards,
+          voice_messages_visibility = @voiceMessages,
+          calls_visibility = @calls,
           updated_at = @updatedAt
       WHERE user_id = @userId
     `).run({
       userId,
       usernameDiscoverable: (update.usernameDiscoverable ?? current.usernameDiscoverable) ? 1 : 0,
       messageRequests: update.messageRequests ?? current.messageRequests,
+      lastSeen: update.lastSeen ?? current.lastSeen,
+      profilePhoto: update.profilePhoto ?? current.profilePhoto,
+      forwards: update.forwards ?? current.forwards,
+      voiceMessages: update.voiceMessages ?? current.voiceMessages,
+      calls: update.calls ?? current.calls,
       updatedAt: at
     });
     return this.getPrivacySettings(userId);

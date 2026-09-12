@@ -75,7 +75,19 @@ export class IdentityAccessService {
 
   lookupUser(viewerUserId: string, username: string): PublicProfile | null {
     const user = this.store.findDiscoverableUserByUsername(viewerUserId, username.toLowerCase());
-    return user === null ? null : toPublicProfile(user);
+    if (user === null) return null;
+    const profile = toPublicProfile(user);
+    const privacy = this.store.getPrivacySettings(user.id);
+    if (!this.store.privacyAllows(user.id, viewerUserId, privacy.profilePhoto)) {
+      profile.avatarUrl = null;
+      profile.avatarPath = null;
+    }
+    return {
+      ...profile,
+      lastSeenAt: this.store.privacyAllows(user.id, viewerUserId, privacy.lastSeen)
+        ? (user.lastSeenAt ?? null)
+        : null
+    };
   }
 
   searchKnownUsers(
@@ -91,7 +103,12 @@ export class IdentityAccessService {
     const settings = this.store.getPrivacySettings(userId);
     return {
       usernameDiscoverable: settings.usernameDiscoverable,
-      messageRequests: settings.messageRequests
+      messageRequests: settings.messageRequests,
+      lastSeen: settings.lastSeen,
+      profilePhoto: settings.profilePhoto,
+      forwards: settings.forwards,
+      voiceMessages: settings.voiceMessages,
+      calls: settings.calls
     };
   }
 
@@ -104,7 +121,12 @@ export class IdentityAccessService {
           : { usernameDiscoverable: update.usernameDiscoverable }),
         ...(update.messageRequests === undefined
           ? {}
-          : { messageRequests: update.messageRequests })
+          : { messageRequests: update.messageRequests }),
+        ...(update.lastSeen === undefined ? {} : { lastSeen: update.lastSeen }),
+        ...(update.profilePhoto === undefined ? {} : { profilePhoto: update.profilePhoto }),
+        ...(update.forwards === undefined ? {} : { forwards: update.forwards }),
+        ...(update.voiceMessages === undefined ? {} : { voiceMessages: update.voiceMessages }),
+        ...(update.calls === undefined ? {} : { calls: update.calls })
       }, at);
       this.store.appendIdentityAudit({
         id: randomUUID(),
@@ -119,7 +141,12 @@ export class IdentityAccessService {
     });
     return {
       usernameDiscoverable: settings.usernameDiscoverable,
-      messageRequests: settings.messageRequests
+      messageRequests: settings.messageRequests,
+      lastSeen: settings.lastSeen,
+      profilePhoto: settings.profilePhoto,
+      forwards: settings.forwards,
+      voiceMessages: settings.voiceMessages,
+      calls: settings.calls
     };
   }
 

@@ -37,7 +37,8 @@ const MIGRATION_IDS = [
   "026_phone_recovery_and_binding",
   "027_message_transcription_consent",
   "028_message_transcript_commands",
-  "029_scheduled_messages"
+  "029_scheduled_messages",
+  "030_privacy_visibility_policies"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";
@@ -501,6 +502,13 @@ describe("SQLite migration chain 001-025", () => {
     expect(migrations[28]!.sql).toMatch(/UNIQUE \(sender_id, client_nonce\)/u);
     expect(migrations[28]!.sql).not.toMatch(/ADD COLUMN transcription_consent/u);
     expect(migrations[28]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
+    expect(migrations[29]!.sql).toMatch(/ADD COLUMN last_seen_visibility TEXT NOT NULL DEFAULT 'everyone'/u);
+    expect(migrations[29]!.sql).toMatch(/ADD COLUMN profile_photo_visibility TEXT NOT NULL DEFAULT 'everyone'/u);
+    expect(migrations[29]!.sql).toMatch(/ADD COLUMN forwards_visibility TEXT NOT NULL DEFAULT 'everyone'/u);
+    expect(migrations[29]!.sql).toMatch(/ADD COLUMN voice_messages_visibility TEXT NOT NULL DEFAULT 'everyone'/u);
+    expect(migrations[29]!.sql).toMatch(/ADD COLUMN calls_visibility TEXT NOT NULL DEFAULT 'everyone'/u);
+    expect(migrations[29]!.sql).not.toMatch(/CREATE TABLE/iu);
+    expect(migrations[29]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
   });
 
   it("creates the complete clean schema once with declared tables, indexes, triggers and foreign keys", () => {
