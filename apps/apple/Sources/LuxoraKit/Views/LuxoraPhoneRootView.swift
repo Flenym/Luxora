@@ -4582,20 +4582,50 @@ private struct PhoneDevicesSettingsView: View {
 }
 
 private struct PhonePowerSettingsView: View {
+    @AppStorage("luxora.power.threshold") private var threshold: Double = 20
+    @AppStorage("luxora.power.autoplayVideo") private var autoplayVideo = true
+    @AppStorage("luxora.power.autoplayGif") private var autoplayGif = true
+    @AppStorage("luxora.power.stickerAnimation") private var stickerAnimation = true
+    @AppStorage("luxora.power.emojiAnimation") private var emojiAnimation = true
+    @AppStorage("luxora.power.interfaceEffects") private var interfaceEffects = true
+    @AppStorage("luxora.power.preloadMedia") private var preloadMedia = true
+    @AppStorage("luxora.power.backgroundActivity") private var backgroundActivity = false
     @Bindable var store: MessengerStore
 
     var body: some View {
         Form {
-            Section("Доступно на iPhone") {
-                Toggle("Уменьшить анимацию интерфейса", isOn: $store.reduceMotion)
-                Text("Luxora также учитывает системную настройку «Уменьшение движения».")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Section("Порог включения") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("При заряде ниже")
+                        Spacer()
+                        Text("\(Int(threshold))%").foregroundStyle(.secondary)
+                    }
+                    Slider(value: $threshold, in: 10...50, step: 5)
+                        .accessibilityIdentifier("power-threshold")
+                    Text("Когда батарея опустится ниже порога, Luxora автоматически выключит тяжёлые анимации и предзагрузку, как в Telegram.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
-            Section("Запланировано") {
-                PlannedRow(symbol: "arrow.down.circle", title: "Автозагрузка медиа", detail: "Появится после готовности надёжного хранилища медиа")
-                PlannedRow(symbol: "waveform.path.ecg", title: "Экономия во время звонков", detail: "Требует готовых системных звонков iPhone")
-                PlannedRow(symbol: "clock.arrow.circlepath", title: "Фоновая синхронизация", detail: "Требует push-уведомлений и надёжных фоновых задач")
+            Section("Автовоспроизведение") {
+                Toggle("Видео", isOn: $autoplayVideo)
+                Toggle("GIF", isOn: $autoplayGif)
+                Text("Выключенные ролики показываются обложкой и запускаются по тапу, экономя трафик и батарею.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Анимации") {
+                Toggle("Стикеры", isOn: $stickerAnimation)
+                Toggle("Эмодзи", isOn: $emojiAnimation)
+                Toggle("Эффекты интерфейса", isOn: $interfaceEffects)
+                Toggle("Уменьшить анимацию интерфейса", isOn: $store.reduceMotion)
+                Text("Luxora учитывает системную настройку «Уменьшение движения».")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Загрузка") {
+                Toggle("Предзагрузка медиа", isOn: $preloadMedia)
+                Toggle("Фоновая активность", isOn: $backgroundActivity)
+                Text("Фоновая синхронизация требует push-токена и будет включена вместе с надёжными фоновыми задачами.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .navigationTitle(phoneString("settings.power"))
@@ -5306,25 +5336,38 @@ private struct PhoneLanguageSettingsView: View {
 }
 
 private struct PhoneHelpSettingsView: View {
+    @Environment(\.openURL) private var openURL
+    @State private var showsFAQ = false
+
     var body: some View {
         List {
             Section("Поддержка Beta") {
-                PhoneSettingsRow(
-                    symbol: "exclamationmark.bubble.fill",
-                    color: .orange,
-                    title: "Сообщить о проблеме",
-                    detail: "Отправка из приложения ещё не подключена",
-                    value: phoneString("common.locked"),
-                    showsDisclosure: false
-                )
-                PhoneSettingsRow(
-                    symbol: "shield.lefthalf.filled",
-                    color: .red,
-                    title: "Жалоба по безопасности",
-                    detail: "Серверный процесс есть, нативный экран ожидается",
-                    value: phoneString("common.locked"),
-                    showsDisclosure: false
-                )
+                Button {
+                    showsFAQ = true
+                } label: {
+                    Label("Частые вопросы", systemImage: "questionmark.circle.fill")
+                }
+                .accessibilityIdentifier("help-faq")
+                Button {
+                    if let url = URL(string: "mailto:support@luxora.app?subject=Luxora%20Beta-0.1") {
+                        openURL(url)
+                    }
+                } label: {
+                    Label("Написать в поддержку", systemImage: "envelope.fill")
+                }
+                .accessibilityIdentifier("help-support-mail")
+                Text("Почта пока открывается системным клиентом. Отдельный канал с правилами ответа появится вместе с модерацией.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Диагностика") {
+                Button {
+                    UIPasteboard.general.string = "Luxora Beta-0.1 · \(UIDevice.current.systemVersion) · \(Locale.current.identifier)"
+                } label: {
+                    Label("Копировать сведения об устройстве", systemImage: "doc.on.doc.fill")
+                }
+                .accessibilityIdentifier("help-copy-diagnostics")
+                Text("Без секретов: копируются только версия, система и язык — без токенов и ключей.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Владелец") {
                 LabeledContent("Разработчик и владелец", value: "Flenym")
@@ -5339,6 +5382,19 @@ private struct PhoneHelpSettingsView: View {
         .navigationTitle(phoneString("settings.help"))
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("you-help-screen")
+        .sheet(isPresented: $showsFAQ) {
+            NavigationStack {
+                List {
+                    Section("Вход") { Text("Вход по номеру телефона с OTP, затем секретный пароль если включён. Восстановление — через заявку с окном подтверждения.") }
+                    Section("Сообщения") { Text("Отправка текста и медиа, ответы, пересылка, реакции, закрепление, черновики и отложенные сообщения.") }
+                    Section("Приватность") { Text("Кто может найти, написать, видеть фото и активность — настраивается в разделе «Конфиденциальность».") }
+                    Section("Хранение") { Text("Кэш считается локально и очищается кнопкой «Очистить кэш». Серверная квота — 1 ГБ.") }
+                }
+                .navigationTitle("FAQ")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { showsFAQ = false } } }
+            }
+        }
     }
 }
 
