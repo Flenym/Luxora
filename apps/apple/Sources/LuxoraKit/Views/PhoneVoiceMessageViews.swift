@@ -137,17 +137,13 @@ struct PhoneVoiceMessageView: View {
             self.player = player
             isPlaying = true
             progressTimer?.invalidate()
-            let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
                 Task { @MainActor in
-                    guard let current = self.player, current.duration > 0 else {
-                        timer.invalidate()
-                        return
-                    }
+                    guard let current = self.player, current.duration > 0 else { return }
                     progress = current.currentTime / current.duration
                     if !current.isPlaying { stop() }
                 }
             }
-            progressTimer = timer
         } catch {
             failed = true
         }
