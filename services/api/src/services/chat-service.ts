@@ -16,6 +16,7 @@ import type {
   MessageReceipt,
   MessageVersion,
   PatchChatPreferences,
+  PutMessageTranscript,
   RealtimeEvent,
   RemoveChatMemberRequest,
   SendMessageRequest,
@@ -62,7 +63,8 @@ function sendRequestFingerprint(
     body: input.body,
     replyToMessageId: input.replyToMessageId,
     topicId: input.topicId,
-    attachmentIds
+    attachmentIds,
+    transcriptionConsent: input.transcriptionConsent
   });
 }
 
@@ -559,7 +561,8 @@ export class ChatService {
         forwardSourceMessageId: null,
         requestFingerprint,
         clientNonce: input.clientNonce,
-        createdAt: effectiveAt
+        createdAt: effectiveAt,
+        transcriptionConsent: input.transcriptionConsent === true
       });
       for (const [ordinal, attachment] of attachments.entries()) {
         this.store.addMessageAttachment(record.id, attachment.id, ordinal, effectiveAt);
@@ -571,6 +574,29 @@ export class ChatService {
     });
     this.publisher.publish(result.events);
     return result.message;
+  }
+
+  attachTranscript(userId: string, messageId: string, input: PutMessageTranscript): Message {
+    const original = this.#requireVisibleMessage(messageId, userId, "Message not found");
+    if (original.deletedAt !== null) throw notFound("Message not found");
+    const now = new Date().toISOString();
+    const outcome = this.store.attachMessageTranscript({
+      messageId,
+      authorUserId: userId,
+      text: input.text,
+      clientNonce: input.clientNonce,
+      createdAt: now
+    });
+    if (outcome === null) {
+      throw forbidden("This message cannot carry a transcript", { reason: "transcript_unavailable" });
+    }
+    if (outcome.status === "nonce_conflict") {
+      throw conflict("clientNonce was already used for a different transcript");
+    }
+    const message = this.store.getMessage(outcome.message.id) as Message;
+    const events = this.store.appendChatEvent(original.chatId, { type: "message.updated", message }, now);
+    this.publisher.publish(events);
+    return message;
   }
 
   editMessage(userId: string, messageId: string, input: EditMessageRequest): Message {
@@ -711,7 +737,9 @@ export class ChatService {
         forwardSourceMessageId: sourceMessageId,
         requestFingerprint,
         clientNonce: input.clientNonce,
-        createdAt: effectiveAt
+        createdAt: effectiveAt,
+        // Transcription consent is sender-scoped: forwards start without it.
+        transcriptionConsent: false
       });
       for (const [ordinal, attachmentId] of currentAttachmentIds.entries()) {
         this.store.addMessageAttachment(record.id, attachmentId, ordinal, effectiveAt);
@@ -1108,7 +1136,8 @@ export class ChatService {
       peerUserIds.length !== 1 ||
       peerUserId === undefined ||
       this.store.isBlockedBetween(actorUserId, peerUserId) ||
-      !this.store.hasAcceptedRelationship(actorUserId, peerUserId)
+      (!this.store.hasAcceptedRelationship(actorUserId, peerUserId) &&
+        this.store.getPrivacySettings(peerUserId).messageRequests === "nobody")
     ) {
       throw this.#relationshipUnavailable();
     }

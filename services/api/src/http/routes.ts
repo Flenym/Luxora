@@ -27,6 +27,7 @@ import {
   PatchCurrentUserSchema,
   PatchPrivacySettingsSchema,
   PutChatDraftRequestSchema,
+  PutMessageTranscriptSchema,
   CompletePhoneRegistrationSchema,
   CompletePhoneRecoverySchema,
   CompletePhoneBindingSchema,
@@ -628,6 +629,15 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { messageId } = MessageIdParamSchema.parse(request.params);
     const input = EditMessageRequestSchema.parse(request.body);
     return { message: dependencies.chats.editMessage(request.auth.userId, messageId, input) };
+  });
+
+  app.put("/v1/messages/:messageId/transcript", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { messageId } = MessageIdParamSchema.parse(request.params);
+    const input = PutMessageTranscriptSchema.parse(request.body);
+    return { message: dependencies.chats.attachTranscript(request.auth.userId, messageId, input) };
   });
 
   app.delete("/v1/messages/:messageId", { preHandler: dependencies.authGuard }, async (request) => {

@@ -2433,6 +2433,14 @@ private struct PhoneDirectConversationView: View {
                                 onCancel: { voiceRecorder.cancel() }
                             )
                         }
+                        if store.composerMedia.contains(where: { $0.kind == "voice" }) {
+                            Toggle("Разрешить расшифровку", isOn: $store.composerTranscriptionConsent)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 4)
+                                .accessibilityIdentifier("composer-transcription-consent")
+                        }
                         if !store.composerMedia.isEmpty {
                             PhoneComposerMediaStrip(
                                 media: store.composerMedia,
@@ -2895,6 +2903,11 @@ private struct PhoneMessageBubble: View {
                             cache: attachmentImageCache,
                             onOpenImage: { attachment in
                                 openAttachment(attachment)
+                            },
+                            transcriptionAllowed: message.transcriptionAllowed,
+                            transcript: message.transcript,
+                            onSubmitTranscript: { text in
+                                Task { await store.transcribeMessage(message.id, text: text) }
                             }
                         )
                     }

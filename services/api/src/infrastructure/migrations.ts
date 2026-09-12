@@ -3916,5 +3916,56 @@ export const migrations: Migration[] = [
         SELECT RAISE(ABORT, 'phone binding audit cannot be deleted');
       END;
     `
+  },
+  {
+    id: "027_message_transcription_consent",
+    sql: `
+      ALTER TABLE messages ADD COLUMN transcription_consent INTEGER NOT NULL DEFAULT 0
+        CHECK (transcription_consent IN (0, 1));
+      ALTER TABLE messages ADD COLUMN transcript_ciphertext TEXT;
+
+      CREATE TRIGGER trg_messages_transcript_consent_insert
+      BEFORE INSERT ON messages
+      WHEN NEW.transcript_ciphertext IS NOT NULL AND NEW.transcription_consent <> 1
+      BEGIN
+        SELECT RAISE(ABORT, 'message transcript requires sender transcription consent');
+      END;
+      CREATE TRIGGER trg_messages_transcript_consent_update
+      BEFORE UPDATE OF transcript_ciphertext, transcription_consent ON messages
+      WHEN NEW.transcript_ciphertext IS NOT NULL AND NEW.transcription_consent <> 1
+      BEGIN
+        SELECT RAISE(ABORT, 'message transcript requires sender transcription consent');
+      END;
+      CREATE TRIGGER trg_messages_transcription_consent_no_revoke
+      BEFORE UPDATE OF transcription_consent ON messages
+      WHEN OLD.transcription_consent = 1 AND NEW.transcription_consent = 0
+        AND NEW.transcript_ciphertext IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'transcription consent cannot be revoked while a transcript exists');
+      END;
+    `
+  },
+  {
+    id: "028_message_transcript_commands",
+    sql: `
+      CREATE TABLE message_transcript_commands (
+        message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+        author_user_id TEXT NOT NULL REFERENCES users(id),
+        client_nonce TEXT NOT NULL CHECK (length(client_nonce) = 36),
+        created_at TEXT NOT NULL,
+        CHECK (julianday(created_at) IS NOT NULL)
+      ) STRICT;
+
+      CREATE TRIGGER trg_message_transcript_commands_no_update
+      BEFORE UPDATE ON message_transcript_commands
+      BEGIN
+        SELECT RAISE(ABORT, 'message transcript command is immutable');
+      END;
+      CREATE TRIGGER trg_message_transcript_commands_no_delete
+      BEFORE DELETE ON message_transcript_commands
+      BEGIN
+        SELECT RAISE(ABORT, 'message transcript command cannot be deleted');
+      END;
+    `
   }
 ];

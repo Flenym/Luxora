@@ -49,6 +49,7 @@ import {
 } from "@luxora/protocol";
 import { badRequest, conflict } from "../errors.js";
 import type {
+  AttachMessageTranscript,
   NewAttachment,
   NewChat,
   NewMessage,
@@ -495,6 +496,8 @@ interface MessageRow {
   updated_at: string;
   edited_at: string | null;
   deleted_at: string | null;
+  transcription_consent: number;
+  transcript_ciphertext: string | null;
 }
 
 interface AttachmentRow {
@@ -1002,7 +1005,7 @@ function mapChatMember(row: ChatMemberRow): ChatMemberRecord {
   };
 }
 
-function mapMessage(row: MessageRow): MessageRecord {
+function mapMessage(row: MessageRow): MessageRecord & { transcriptCiphertext: string | null } {
   return {
     id: row.id,
     chatId: row.chat_id,
@@ -1019,6 +1022,9 @@ function mapMessage(row: MessageRow): MessageRecord {
     forwardSourceMessageId: row.forward_source_message_id,
     requestFingerprint: row.request_fingerprint_ciphertext,
     clientNonce: row.client_nonce,
+    transcriptionConsent: row.transcription_consent === 1,
+    transcript: null,
+    transcriptCiphertext: row.transcript_ciphertext,
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -8871,6 +8877,77 @@ export class SqliteStore implements Store {
     return row === undefined ? null : this.#mapMessage(row);
   }
 
+  attachMessageTranscript(input: AttachMessageTranscript):
+    | { status: "attached" | "replayed"; message: MessageRecord }
+    | { status: "nonce_conflict" }
+    | null {
+    return this.#db.transaction(() => {
+      const existing = this.#db.prepare(`
+        SELECT client_nonce FROM message_transcript_commands WHERE message_id = ?
+      `).get(input.messageId) as { client_nonce: string } | undefined;
+      if (existing !== undefined) {
+        if (existing.client_nonce !== input.clientNonce) return { status: "nonce_conflict" as const };
+        const replayed = this.findMessageRecord(input.messageId);
+        if (replayed === null) return null;
+        if (replayed.transcript !== input.text) return { status: "nonce_conflict" as const };
+        return { status: "replayed" as const, message: replayed };
+      }
+      const message = this.#db.prepare(`
+        SELECT * FROM messages WHERE id = ?
+      `).get(input.messageId) as MessageRow | undefined;
+      if (
+        message === undefined
+        || message.deleted_at !== null
+        || message.transcription_consent !== 1
+      ) return null;
+      const kinds = this.#db.prepare(`
+        SELECT DISTINCT a.kind AS kind
+        FROM message_attachments ma
+        JOIN attachments a ON a.id = ma.attachment_id
+        WHERE ma.message_id = ?
+      `).all(input.messageId) as { kind: string }[];
+      if (!kinds.some(({ kind }) => kind === "voice" || kind === "audio")) return null;
+      try {
+        this.#db.prepare(`
+          INSERT INTO message_transcript_commands (message_id, author_user_id, client_nonce, created_at)
+          VALUES (@messageId, @authorUserId, @clientNonce, @createdAt)
+        `).run(input);
+      } catch (error) {
+        const unique = typeof error === "object" && error !== null && "code" in error
+          && typeof error.code === "string" && error.code.startsWith("SQLITE_CONSTRAINT_UNIQUE");
+        if (!unique) throw error;
+        const raced = this.#db.prepare(`
+          SELECT client_nonce FROM message_transcript_commands WHERE message_id = ?
+        `).get(input.messageId) as { client_nonce: string } | undefined;
+        if (raced === undefined || raced.client_nonce !== input.clientNonce) {
+          return { status: "nonce_conflict" as const };
+        }
+        const replayed = this.findMessageRecord(input.messageId);
+        if (replayed === null) return null;
+        if (replayed.transcript !== input.text) return { status: "nonce_conflict" as const };
+        return { status: "replayed" as const, message: replayed };
+      }
+      const updated = this.#db.prepare(`
+        UPDATE messages
+        SET transcript_ciphertext = @transcriptCiphertext, updated_at = @createdAt
+        WHERE id = @messageId
+          AND deleted_at IS NULL
+          AND transcription_consent = 1
+          AND transcript_ciphertext IS NULL
+      `).run({
+        messageId: input.messageId,
+        transcriptCiphertext: this.contentCipher.encrypt(input.text, `message:${input.messageId}:transcript`),
+        createdAt: input.createdAt
+      });
+      if (updated.changes !== 1) return null;
+      const record = this.findMessageRecord(input.messageId);
+      return record === null ? null : { status: "attached" as const, message: record };
+    }).immediate() as
+      | { status: "attached" | "replayed"; message: MessageRecord }
+      | { status: "nonce_conflict" }
+      | null;
+  }
+
   findMessageByNonce(senderId: string, clientNonce: string): MessageRecord | null {
     const row = this.#db.prepare("SELECT * FROM messages WHERE sender_id = ? AND client_nonce = ?")
       .get(senderId, clientNonce) as MessageRow | undefined;
@@ -8883,13 +8960,14 @@ export class SqliteStore implements Store {
         id, chat_id, sender_id, kind, body, reply_to_message_id, topic_id,
         forwarded_from_message_id, forwarded_from_chat_id, forwarded_from_sender_id,
         forwarded_from_sender_name_ciphertext, forwarded_from_created_at, forward_source_message_id,
-        request_fingerprint_ciphertext, client_nonce, created_at, updated_at
+        request_fingerprint_ciphertext, client_nonce, transcription_consent, created_at, updated_at
       ) VALUES (@id, @chatId, @senderId, 'text', @body, @replyToMessageId, @topicId,
         @forwardedFromMessageId, @forwardedFromChatId, @forwardedFromSenderId,
         @forwardedFromSenderName, @forwardedFromCreatedAt, @forwardSourceMessageId,
-        @requestFingerprint, @clientNonce, @createdAt, @createdAt)
+        @requestFingerprint, @clientNonce, @transcriptionConsent, @createdAt, @createdAt)
     `).run({
       ...message,
+      transcriptionConsent: message.transcriptionConsent ? 1 : 0,
       forwardSourceMessageId: message.forwardSourceMessageId ?? null,
       requestFingerprint: message.requestFingerprint === null || message.requestFingerprint === undefined
         ? null
@@ -8948,6 +9026,8 @@ export class SqliteStore implements Store {
       topicId: record.topicId,
       forwardedFrom: tombstone ? null : this.#forwardProvenance(record),
       attachments: tombstone ? [] : this.#listMessageAttachments(record.id),
+      transcriptionAllowed: !tombstone && record.transcriptionConsent,
+      transcript: tombstone ? null : record.transcript,
       isPinned: !tombstone && this.#db.prepare("SELECT 1 AS pinned FROM chat_pins WHERE chat_id = ? AND message_id = ?")
         .get(record.chatId, record.id) !== undefined,
       clientNonce: record.clientNonce,
@@ -10072,7 +10152,7 @@ export class SqliteStore implements Store {
   }
 
   #mapMessage(row: MessageRow): MessageRecord {
-    const record = mapMessage(row);
+    const { transcriptCiphertext, ...record } = mapMessage(row);
     return {
       ...record,
       body: record.body === null ? null : this.contentCipher.decrypt(record.body, `message:${record.id}`),
@@ -10087,6 +10167,12 @@ export class SqliteStore implements Store {
         : this.contentCipher.decrypt(
             record.requestFingerprint,
             `message:${record.id}:request-fingerprint`
+          ),
+      transcript: transcriptCiphertext === null
+        ? null
+        : this.contentCipher.decrypt(
+            transcriptCiphertext,
+            `message:${record.id}:transcript`
           )
     };
   }

@@ -119,7 +119,8 @@ describe("chat relationship and block boundary", () => {
       clientNonce: randomUUID(),
       replyToMessageId: null,
       topicId: null,
-      attachmentIds: []
+      attachmentIds: [],
+      transcriptionConsent: false
     });
   }
 

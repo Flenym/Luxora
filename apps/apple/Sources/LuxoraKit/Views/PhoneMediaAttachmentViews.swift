@@ -117,6 +117,9 @@ struct PhoneMessageAttachmentList: View {
     let voiceCache: AuthenticatedAvatarImageCache?
     let cache: AuthenticatedAvatarImageCache?
     let onOpenImage: (MessageAttachment) -> Void
+    var transcriptionAllowed: Bool = false
+    var transcript: String?
+    var onSubmitTranscript: ((String) -> Void)?
 
     var body: some View {
         VStack(spacing: 8) {
@@ -130,7 +133,10 @@ struct PhoneMessageAttachmentList: View {
                 } else if attachment.isVoice {
                     PhoneVoiceMessageView(
                         attachment: attachment,
-                        cache: voiceCache
+                        cache: voiceCache,
+                        transcriptionAllowed: transcriptionAllowed,
+                        transcript: transcript,
+                        onSubmitTranscript: onSubmitTranscript
                     )
                 } else {
                     PhoneFileAttachmentRow(attachment: attachment)

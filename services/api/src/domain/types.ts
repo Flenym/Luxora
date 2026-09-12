@@ -401,6 +401,8 @@ export interface MessageRecord {
   updatedAt: string;
   editedAt: string | null;
   deletedAt: string | null;
+  transcriptionConsent: boolean;
+  transcript: string | null;
 }
 
 export interface AttachmentRecord {

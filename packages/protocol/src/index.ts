@@ -1224,6 +1224,8 @@ export const MessageSchema = z.object({
   topicId: IdSchema.nullable(),
   forwardedFrom: ForwardProvenanceSchema.nullable(),
   attachments: z.array(AttachmentSchema).max(MAX_ATTACHMENTS_PER_MESSAGE),
+  transcriptionAllowed: z.boolean(),
+  transcript: z.string().nullable(),
   isPinned: z.boolean(),
   clientNonce: IdSchema,
   revision: z.number().int().nonnegative(),
@@ -1602,7 +1604,8 @@ export const SendMessageRequestSchema = z.object({
   clientNonce: IdSchema,
   replyToMessageId: IdSchema.nullable().default(null),
   topicId: IdSchema.nullable().default(null),
-  attachmentIds: z.array(IdSchema).max(MAX_ATTACHMENTS_PER_MESSAGE).default([])
+  attachmentIds: z.array(IdSchema).max(MAX_ATTACHMENTS_PER_MESSAGE).default([]),
+  transcriptionConsent: z.boolean().default(false)
 }).strict().superRefine((value, context) => {
   if (value.body === null && value.attachmentIds.length === 0) {
     context.addIssue({
@@ -1610,7 +1613,29 @@ export const SendMessageRequestSchema = z.object({
       message: "A message must contain text or at least one attachment"
     });
   }
+  if (value.transcriptionConsent && value.attachmentIds.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Transcription consent requires at least one attachment"
+    });
+  }
 });
+
+export const MAX_TRANSCRIPT_LENGTH = 2_000;
+
+export const TranscriptTextSchema = z.string().trim().min(1).superRefine((text, context) => {
+  if ([...text].length > MAX_TRANSCRIPT_LENGTH) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Transcript must contain at most ${MAX_TRANSCRIPT_LENGTH} Unicode code points`
+    });
+  }
+});
+
+export const PutMessageTranscriptSchema = z.object({
+  text: TranscriptTextSchema,
+  clientNonce: IdSchema
+}).strict();
 
 export const EditMessageRequestSchema = z.object({
   body: MessageBodySchema.nullable(),
@@ -2821,6 +2846,7 @@ export type Topic = z.infer<typeof TopicSchema>;
 export type CreateChatRequest = z.infer<typeof CreateChatRequestSchema>;
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
 export type EditMessageRequest = z.infer<typeof EditMessageRequestSchema>;
+export type PutMessageTranscript = z.infer<typeof PutMessageTranscriptSchema>;
 export type ForwardMessageRequest = z.infer<typeof ForwardMessageRequestSchema>;
 export type CreateUploadRequest = z.infer<typeof CreateUploadRequestSchema>;
 export type UploadSession = z.infer<typeof UploadSessionSchema>;

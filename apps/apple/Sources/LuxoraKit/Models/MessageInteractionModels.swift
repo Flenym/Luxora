@@ -17,6 +17,7 @@ public struct MessageRemoteMetadata: Codable, Equatable, Hashable, Sendable {
     public var isPinned: Bool
     public var isDeleted: Bool
     public var attachmentIDs: [UUID]
+    public var transcriptionConsent: Bool
 
     public init(
         revision: Int? = nil,
@@ -24,7 +25,8 @@ public struct MessageRemoteMetadata: Codable, Equatable, Hashable, Sendable {
         forwardedFrom: MessageForwardProvenance? = nil,
         isPinned: Bool = false,
         isDeleted: Bool = false,
-        attachmentIDs: [UUID] = []
+        attachmentIDs: [UUID] = [],
+        transcriptionConsent: Bool = false
     ) {
         self.revision = revision
         self.replyToMessageID = replyToMessageID
@@ -32,6 +34,24 @@ public struct MessageRemoteMetadata: Codable, Equatable, Hashable, Sendable {
         self.isPinned = isPinned
         self.isDeleted = isDeleted
         self.attachmentIDs = attachmentIDs
+        self.transcriptionConsent = transcriptionConsent
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case revision, replyToMessageID, forwardedFrom
+        case isPinned, isDeleted, attachmentIDs, transcriptionConsent
+    }
+
+    // Durable caches written before media support may miss the newer keys.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision)
+        replyToMessageID = try container.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
+        forwardedFrom = try container.decodeIfPresent(MessageForwardProvenance.self, forKey: .forwardedFrom)
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        isDeleted = try container.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
+        attachmentIDs = try container.decodeIfPresent([UUID].self, forKey: .attachmentIDs) ?? []
+        transcriptionConsent = try container.decodeIfPresent(Bool.self, forKey: .transcriptionConsent) ?? false
     }
 }
 

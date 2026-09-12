@@ -776,6 +776,8 @@ struct APIMessage: Decodable, Sendable {
     let editedAt: Date?
     let deletedAt: Date?
     let attachments: [APIAttachment]? = nil
+    let transcriptionAllowed: Bool = false
+    let transcript: String? = nil
 
     func message(currentUserID: UUID) -> ChatMessage {
         ChatMessage(
@@ -788,7 +790,9 @@ struct APIMessage: Decodable, Sendable {
             editedAt: editedAt,
             delivery: .sent,
             isOutgoing: sender.id == currentUserID,
-            attachments: (attachments ?? []).map { $0.attachment() }
+            attachments: (attachments ?? []).map { $0.attachment() },
+            transcriptionAllowed: transcriptionAllowed,
+            transcript: transcript
         )
     }
 

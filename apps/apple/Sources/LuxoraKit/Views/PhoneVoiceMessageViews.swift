@@ -6,12 +6,17 @@ import SwiftUI
 struct PhoneVoiceMessageView: View {
     let attachment: MessageAttachment
     let cache: AuthenticatedAvatarImageCache?
+    var transcriptionAllowed: Bool = false
+    var transcript: String?
+    var onSubmitTranscript: ((String) -> Void)?
 
     @State private var player: AVAudioPlayer?
     @State private var isPlaying = false
     @State private var progress: Double = 0
     @State private var failed = false
     @State private var progressTimer: Timer?
+    @State private var presentsTranscriptSheet = false
+    @State private var draftTranscript = ""
 
     private var bars: [Int] {
         if let waveform = attachment.waveform, !waveform.isEmpty {
@@ -22,28 +27,49 @@ struct PhoneVoiceMessageView: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button {
-                toggle()
-            } label: {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: 40, height: 40)
-                    .foregroundStyle(.white)
-                    .background(LuxoraTheme.accent, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(failed)
-            .accessibilityLabel(isPlaying ? "Пауза" : "Слушать голосовое")
-            .accessibilityIdentifier("voice-message-play")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Button {
+                    toggle()
+                } label: {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 40, height: 40)
+                        .foregroundStyle(.white)
+                        .background(LuxoraTheme.accent, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(failed)
+                .accessibilityLabel(isPlaying ? "Пауза" : "Слушать голосовое")
+                .accessibilityIdentifier("voice-message-play")
 
-            VStack(alignment: .leading, spacing: 5) {
-                PhoneWaveformBars(values: bars, progress: progress)
-                    .frame(height: 28)
-                Text(statusText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                VStack(alignment: .leading, spacing: 5) {
+                    PhoneWaveformBars(values: bars, progress: progress)
+                        .frame(height: 28)
+                    Text(statusText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+
+            if let transcript {
+                Text(transcript)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("voice-message-transcript")
+            } else if transcriptionAllowed, onSubmitTranscript != nil {
+                Button {
+                    draftTranscript = ""
+                    presentsTranscriptSheet = true
+                } label: {
+                    Label("Добавить расшифровку", systemImage: "text.quote")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(LuxoraTheme.accent)
+                .accessibilityIdentifier("voice-message-transcribe")
             }
         }
         .padding(10)
@@ -53,6 +79,35 @@ struct PhoneVoiceMessageView: View {
         .accessibilityLabel("Голосовое сообщение, \(statusText)")
         .accessibilityIdentifier("voice-message-bubble")
         .onDisappear(perform: stop)
+        .sheet(isPresented: $presentsTranscriptSheet) {
+            NavigationStack {
+                Form {
+                    Section {
+                        TextField("Текст расшифровки", text: $draftTranscript, axis: .vertical)
+                            .lineLimit(3...8)
+                            .accessibilityIdentifier("voice-transcript-field")
+                    } footer: {
+                        Text("Расшифровка вводится вручную и хранится на сервере: её увидят участники чата.")
+                    }
+                }
+                .navigationTitle("Расшифровка")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Отмена") { presentsTranscriptSheet = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Сохранить") {
+                            presentsTranscriptSheet = false
+                            onSubmitTranscript?(draftTranscript)
+                        }
+                        .disabled(draftTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("voice-transcript-save")
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
     }
 
     private var statusText: String {

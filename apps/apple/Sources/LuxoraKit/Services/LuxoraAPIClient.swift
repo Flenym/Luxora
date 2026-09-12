@@ -678,6 +678,7 @@ actor LuxoraAPIClient {
         body: String,
         replyToMessageID: UUID? = nil,
         attachmentIDs: [UUID] = [],
+        transcriptionConsent: Bool = false,
         token: String
     ) async throws -> APIMessage {
         struct Response: Decodable, Sendable { let message: APIMessage }
@@ -688,8 +689,29 @@ actor LuxoraAPIClient {
                 clientNonce: clientNonce,
                 body: body,
                 replyToMessageID: replyToMessageID,
-                attachmentIDs: attachmentIDs
+                attachmentIDs: attachmentIDs,
+                transcriptionConsent: transcriptionConsent
             ),
+            token: token
+        )
+        return response.message
+    }
+
+    func putMessageTranscript(
+        messageID: UUID,
+        text: String,
+        clientNonce: UUID,
+        token: String
+    ) async throws -> APIMessage {
+        struct Body: Encodable, Sendable {
+            let text: String
+            let clientNonce: String
+        }
+        struct Response: Decodable, Sendable { let message: APIMessage }
+        let response: Response = try await requestEncoded(
+            path: "/v1/messages/\(messageID.apiPathComponent)/transcript",
+            method: "PUT",
+            body: Body(text: text, clientNonce: clientNonce.apiPathComponent),
             token: token
         )
         return response.message
@@ -1283,6 +1305,7 @@ struct APISendMessageBody: Encodable, Sendable {
     let clientNonce: UUID
     let replyToMessageID: UUID?
     let attachmentIds: [UUID]?
+    let transcriptionConsent: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case kind
@@ -1290,6 +1313,7 @@ struct APISendMessageBody: Encodable, Sendable {
         case clientNonce
         case replyToMessageID = "replyToMessageId"
         case attachmentIds
+        case transcriptionConsent
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1304,6 +1328,7 @@ struct APISendMessageBody: Encodable, Sendable {
         if let attachmentIds, !attachmentIds.isEmpty {
             try container.encode(attachmentIds.map { $0.apiPathComponent }, forKey: .attachmentIds)
         }
+        try container.encodeIfPresent(transcriptionConsent, forKey: .transcriptionConsent)
     }
 }
 
@@ -1336,14 +1361,16 @@ enum APIChatBody {
         clientNonce: UUID,
         body: String,
         replyToMessageID: UUID?,
-        attachmentIDs: [UUID]
+        attachmentIDs: [UUID],
+        transcriptionConsent: Bool = false
     ) -> APISendMessageBody {
         APISendMessageBody(
             kind: body.isEmpty ? nil : "text",
             body: body.isEmpty ? nil : body,
             clientNonce: clientNonce,
             replyToMessageID: replyToMessageID,
-            attachmentIds: attachmentIDs.isEmpty ? nil : attachmentIDs
+            attachmentIds: attachmentIDs.isEmpty ? nil : attachmentIDs,
+            transcriptionConsent: transcriptionConsent ? true : nil
         )
     }
 

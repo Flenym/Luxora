@@ -595,6 +595,16 @@ Authorized cursor page `{items, nextCursor}`. Current order is most-recent-first
 
 `201` alone means server accepted. A client may show “Delivered” only after an explicit recipient acknowledgement below, never from a timer or mere socket presence.
 
+Media messages pass `attachmentIds` (owned, completed uploads) instead of/in addition to `body`, plus optional `transcriptionConsent: true` to let members attach a transcript to the voice note later. Consent without attachments is rejected; the fingerprint covers consent, so a reused nonce with different consent conflicts.
+
+### `PUT /v1/messages/:messageId/transcript`
+
+```json
+{ "text": "User-provided transcript", "clientNonce": "client-generated-uuid" }
+```
+
+Any chat member may attach one transcript to a message that (a) is not deleted, (b) carries a `voice`/`audio` attachment and (c) was sent with `transcriptionConsent: true`. First writer wins: the same nonce replays the stored message, a different nonce or different text conflicts (`409`). Without consent or voice content the server answers `403 transcript_unavailable`. Transcripts are stored server-side and visible to chat members — Beta-0.1 is cloud preview without E2EE, and the client must disclose this before submitting. A successful attach emits `message.updated` so members converge.
+
 ### `PATCH /v1/messages/:messageId`
 
 ```json

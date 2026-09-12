@@ -1075,7 +1075,7 @@ public final class ApplicationSession {
                     )
                 }
             },
-            mediaMessageSender: { conversationID, clientID, body, replyToMessageID, attachmentIDs in
+            mediaMessageSender: { conversationID, clientID, body, replyToMessageID, attachmentIDs, transcriptionConsent in
                 let message = try await coordinator.withAccessToken { token in
                     try await api.sendMessage(
                         chatID: conversationID,
@@ -1083,6 +1083,18 @@ public final class ApplicationSession {
                         body: body,
                         replyToMessageID: replyToMessageID,
                         attachmentIDs: attachmentIDs,
+                        transcriptionConsent: transcriptionConsent,
+                        token: token
+                    )
+                }
+                return message.message(currentUserID: userID)
+            },
+            transcriptPutter: { messageID, text in
+                let message = try await coordinator.withAccessToken { token in
+                    try await api.putMessageTranscript(
+                        messageID: messageID,
+                        text: text,
+                        clientNonce: UUID.clientNonceV4(),
                         token: token
                     )
                 }

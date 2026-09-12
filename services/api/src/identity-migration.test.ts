@@ -35,7 +35,9 @@ describe("IA-1 append-only migration", () => {
       "023_chat_folder_receipt_retention",
       "024_chat_membership_revision_ledger",
       "025_synchronized_chat_drafts",
-      "026_phone_recovery_and_binding"
+      "026_phone_recovery_and_binding",
+      "027_message_transcription_consent",
+      "028_message_transcript_commands"
     ]);
 
     const directory = mkdtempSync(join(tmpdir(), "luxora-ia1-migration-"));

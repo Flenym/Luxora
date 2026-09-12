@@ -98,6 +98,12 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
   { key: "GET /v1/admin/users", method: "GET", url: "/v1/admin/users?limit=5" },
   { key: "GET /v1/admin/chats", method: "GET", url: "/v1/admin/chats?limit=5" },
   {
+    key: "PUT /v1/messages/:messageId/transcript",
+    method: "PUT",
+    url: `/v1/messages/${RESOURCE_ID_CANARY}/transcript`,
+    payload: { text: "Transcription probe", clientNonce: SECOND_RESOURCE_ID }
+  },
+  {
     key: "GET /v1/push/registrations/current",
     method: "GET",
     url: "/v1/push/registrations/current"
@@ -554,7 +560,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(79);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(80);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

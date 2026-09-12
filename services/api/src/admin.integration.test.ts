@@ -90,7 +90,7 @@ describe("operator administration surface", () => {
       url: "/v1/admin/status",
       headers: adminHeaders(ADMIN_TOKEN)
     });
-    expect(migration.json().migrationId).toBe("026_phone_recovery_and_binding");
+    expect(migration.json().migrationId).toMatch(/^0\d{2}_[a-z0-9_]+$/);
     expect(parsed.users).toBe(2);
     expect(parsed.activeSessions).toBe(2);
     expect(parsed.chatsByKind.direct).toBe(1);

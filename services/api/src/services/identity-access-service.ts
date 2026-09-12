@@ -369,7 +369,8 @@ export class IdentityAccessService {
         forwardedFromSenderName: null,
         forwardedFromCreatedAt: null,
         clientNonce: current.id,
-        createdAt: now
+        createdAt: now,
+        transcriptionConsent: false
       });
       if (existingMessage === null) {
         this.store.replaceMessageSearchTokens(messageRecord.id, this.search.index(current.body));

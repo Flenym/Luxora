@@ -390,7 +390,8 @@ describe("chat convergence across independent SQLite writers", () => {
         clientNonce: randomUUID(),
         replyToMessageId: null,
         topicId: null,
-        attachmentIds: []
+        attachmentIds: [],
+        transcriptionConsent: false
       };
       const same = await race(
         fixture,
@@ -421,7 +422,8 @@ describe("chat convergence across independent SQLite writers", () => {
         clientNonce: nonce,
         replyToMessageId: null,
         topicId: null,
-        attachmentIds: []
+        attachmentIds: [],
+        transcriptionConsent: false
       };
       const changed: SendMessageRequest = { ...first, body: "changed fingerprint" };
       const mismatch = await race(
@@ -451,7 +453,8 @@ describe("chat convergence across independent SQLite writers", () => {
         clientNonce: randomUUID(),
         replyToMessageId: null,
         topicId: null,
-        attachmentIds: []
+        attachmentIds: [],
+        transcriptionConsent: false
       };
       const second: SendMessageRequest = {
         ...first,
@@ -494,7 +497,8 @@ describe("chat convergence across independent SQLite writers", () => {
         clientNonce: randomUUID(),
         replyToMessageId: null,
         topicId: null,
-        attachmentIds: []
+        attachmentIds: [],
+        transcriptionConsent: false
       };
       const sent = fixture.service.sendMessage(fixture.owner.id, fixture.chatId, input);
 
@@ -559,7 +563,8 @@ describe("chat convergence across independent SQLite writers", () => {
           clientNonce: nonce,
           replyToMessageId: null,
           topicId: null,
-          attachmentIds: []
+          attachmentIds: [],
+          transcriptionConsent: false
         }))).toMatchObject({
           ok: false,
           statusCode: 409,
@@ -591,7 +596,8 @@ describe("chat convergence across independent SQLite writers", () => {
         clientNonce: randomUUID(),
         replyToMessageId: null,
         topicId: null,
-        attachmentIds: []
+        attachmentIds: [],
+        transcriptionConsent: false
       });
       expect("requestFingerprint" in sent).toBe(false);
       expect(fixture.store.findMessageRecord(sent.id)?.requestFingerprint).toContain(bodyCanary);
@@ -1182,7 +1188,8 @@ describe("chat convergence across independent SQLite writers", () => {
         clientNonce: randomUUID(),
         replyToMessageId: null,
         topicId: null,
-        attachmentIds: []
+        attachmentIds: [],
+        transcriptionConsent: false
       };
       const outcome = await race(
         fixture,

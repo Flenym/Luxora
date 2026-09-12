@@ -34,7 +34,9 @@ const MIGRATION_IDS = [
   "023_chat_folder_receipt_retention",
   "024_chat_membership_revision_ledger",
   "025_synchronized_chat_drafts",
-  "026_phone_recovery_and_binding"
+  "026_phone_recovery_and_binding",
+  "027_message_transcription_consent",
+  "028_message_transcript_commands"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";
@@ -482,6 +484,16 @@ describe("SQLite migration chain 001-025", () => {
       /raw_(?:password|token|code)|access_token\s+TEXT|refresh_token\s+TEXT|verification_code\s+TEXT|phone_number\s+TEXT/iu
     );
     expect(migrations[25]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
+    expect(migrations[26]!.sql).toMatch(/ADD COLUMN transcription_consent INTEGER NOT NULL DEFAULT 0/u);
+    expect(migrations[26]!.sql).toMatch(/ADD COLUMN transcript_ciphertext TEXT/u);
+    expect(migrations[26]!.sql).toMatch(/trg_messages_transcript_consent_insert/u);
+    expect(migrations[26]!.sql).toMatch(/trg_messages_transcription_consent_no_revoke/u);
+    expect(migrations[26]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
+    expect(migrations[27]!.sql).toMatch(/CREATE TABLE message_transcript_commands/u);
+    expect(migrations[27]!.sql).toMatch(/trg_message_transcript_commands_no_update/u);
+    expect(migrations[27]!.sql).toMatch(/trg_message_transcript_commands_no_delete/u);
+    expect(migrations[27]!.sql).not.toMatch(/transcript_ciphertext\s+TEXT\s+NOT\s+NULL/iu);
+    expect(migrations[27]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
   });
 
   it("creates the complete clean schema once with declared tables, indexes, triggers and foreign keys", () => {

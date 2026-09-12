@@ -483,13 +483,16 @@ describe("IA-1 identity and relationship boundary", () => {
       headers: auth(alice)
     });
     expect(unblocked.statusCode).toBe(200);
-    const stillUnaccepted = await app.inject({
+    // Telegram semantics: a block erases the accepted relationship, and after
+    // the unblock the default everyone-privacy lets strangers deliver again
+    // without a new request/acceptance round-trip.
+    const afterUnblock = await app.inject({
       method: "POST",
       url: `/v1/chats/${chatId}/messages`,
       headers: auth(bob),
-      payload: { body: "Unblock is not acceptance", clientNonce: randomUUID() }
+      payload: { body: "Delivered after unblock", clientNonce: randomUUID() }
     });
-    expect(stillUnaccepted.statusCode).toBe(403);
+    expect(afterUnblock.statusCode).toBe(201);
 
     const newRequest = await createRequest(bob, alice, "Explicit consent after unblock");
     expect(newRequest.statusCode).toBe(201);

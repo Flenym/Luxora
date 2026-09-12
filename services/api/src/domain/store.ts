@@ -614,6 +614,15 @@ export interface NewMessage {
   requestFingerprint?: string | null;
   clientNonce: string;
   createdAt: string;
+  transcriptionConsent?: boolean;
+}
+
+export interface AttachMessageTranscript {
+  messageId: string;
+  authorUserId: string;
+  text: string;
+  clientNonce: string;
+  createdAt: string;
 }
 
 export interface NewAttachment {
@@ -719,6 +728,16 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     at: string;
   }): boolean;
 
+  /**
+   * Attaches a receiver-made transcript to a consenting voice message.
+   * The first writer wins: a repeated clientNonce replays the stored
+   * message, a different nonce conflicts, and anything ineligible (missing,
+   * tombstoned, non-voice, no consent) returns null.
+   */
+  attachMessageTranscript(input: AttachMessageTranscript):
+    | { status: "attached" | "replayed"; message: MessageRecord }
+    | { status: "nonce_conflict" }
+    | null;
   createPhoneRecoveryIntent(input: {
     intent: NewPhoneRecoveryIntent;
     receipt: PhoneRecoveryReceiptInput;

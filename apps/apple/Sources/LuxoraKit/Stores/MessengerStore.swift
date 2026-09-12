@@ -124,6 +124,7 @@ public final class MessengerStore {
     public private(set) var isUploadingMedia = false
     public private(set) var mediaUploadProgress: Double = 0
     public private(set) var mediaUploadError: String?
+    public var composerTranscriptionConsent = false
 
     public private(set) var currentUser: Participant
     public private(set) var currentUserBio: String
@@ -135,8 +136,9 @@ public final class MessengerStore {
     var remoteReadMarker: (@Sendable (UUID, UUID) async throws -> Void)?
     var remoteReactionSetter: (@Sendable (UUID, String, Bool) async throws -> [MessageReaction])?
     var remoteMessageSnapshotSender: (@Sendable (UUID, UUID, String, UUID?) async throws -> RemoteMessageSnapshot)?
-    var remoteMediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID]) async throws -> ChatMessage)?
+    var remoteMediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)?
     var remoteAttachmentUploader: (@Sendable (PendingMediaAttachment) async throws -> MessageAttachment)?
+    var remoteTranscriptPutter: (@Sendable (UUID, String) async throws -> ChatMessage)?
     var remoteMessageSnapshotLoader: (@Sendable (UUID) async throws -> [RemoteMessageSnapshot])?
     var remoteMessageEditor: (@Sendable (UUID, String, Int?) async throws -> RemoteMessageSnapshot)?
     var remoteMessageDeleter: (@Sendable (UUID) async throws -> RemoteMessageSnapshot)?
@@ -782,15 +784,17 @@ public final class MessengerStore {
               remoteMessageSnapshotSender != nil || remoteMessageSender != nil
         else { return }
         updateDelivery(message.id, in: conversationID, to: .sending)
-        let attachmentIDs = metadata(for: message.id).attachmentIDs
+        let metadata = metadata(for: message.id)
+        let attachmentIDs = metadata.attachmentIDs
         if !attachmentIDs.isEmpty, let mediaSender = remoteMediaMessageSender {
             startMediaDelivery(
                 conversationID: conversationID,
                 clientID: message.clientID,
                 messageID: message.id,
                 body: message.text,
-                replyToMessageID: metadata(for: message.id).replyToMessageID,
+                replyToMessageID: metadata.replyToMessageID,
                 attachmentIDs: attachmentIDs,
+                transcriptionConsent: metadata.transcriptionConsent,
                 mediaSender: mediaSender
             )
             return
@@ -800,7 +804,7 @@ public final class MessengerStore {
             clientID: message.clientID,
             messageID: message.id,
             body: message.text,
-            replyToMessageID: metadata(for: message.id).replyToMessageID
+            replyToMessageID: metadata.replyToMessageID
         )
     }
 
@@ -835,6 +839,27 @@ public final class MessengerStore {
     public func deleteMessage(_ messageID: UUID) {
         guard let (_, message) = message(withID: messageID), canDelete(message) else { return }
         startDelete(messageID: messageID)
+    }
+
+    /// Submits a user-provided transcript for a consenting voice message.
+    /// The server keeps the first writer; the text is server-readable
+    /// (cloud preview, not E2EE) and shown to every chat member.
+    public func transcribeMessage(_ messageID: UUID, text: String) async -> Bool {
+        guard let remote = remoteTranscriptPutter,
+              let (_, message) = message(withID: messageID),
+              message.transcriptionAllowed,
+              message.transcript == nil
+        else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            let updated = try await remote(messageID, trimmed)
+            replaceMessage(messageID, with: updated)
+            return true
+        } catch {
+            lastRemoteActionError = error.localizedDescription
+            return false
+        }
     }
 
     public func forwardMessage(_ messageID: UUID, to conversationID: UUID) {
@@ -1103,7 +1128,8 @@ public final class MessengerStore {
     func configureRemote(
         sender: @escaping @Sendable (UUID, UUID, String) async throws -> ChatMessage,
         mediaAttachmentUploader: (@Sendable (PendingMediaAttachment) async throws -> MessageAttachment)? = nil,
-        mediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID]) async throws -> ChatMessage)? = nil,
+        mediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)? = nil,
+        transcriptPutter: (@Sendable (UUID, String) async throws -> ChatMessage)? = nil,
         loader: @escaping @Sendable (UUID) async throws -> [ChatMessage],
         conversationsLoader: (@Sendable () async throws -> [Conversation])? = nil,
         peopleSearcher: (@Sendable (String) async throws -> [Participant])? = nil,
@@ -1130,6 +1156,7 @@ public final class MessengerStore {
         remoteMessageSender = sender
         remoteAttachmentUploader = mediaAttachmentUploader
         remoteMediaMessageSender = mediaMessageSender
+        remoteTranscriptPutter = transcriptPutter
         remoteMessageLoader = loader
         remoteConversationLoader = conversationsLoader
         remotePeopleSearcher = peopleSearcher
@@ -1818,6 +1845,13 @@ public final class MessengerStore {
         messagesByConversation[conversationID]![index].delivery = state
     }
 
+    private func replaceMessage(_ messageID: UUID, with message: ChatMessage) {
+        guard let (conversationID, _) = message(withID: messageID),
+              let index = messagesByConversation[conversationID]?.firstIndex(where: { $0.id == messageID })
+        else { return }
+        messagesByConversation[conversationID]![index] = message
+    }
+
     private func replaceOptimisticMessage(_ clientID: UUID, in conversationID: UUID, with message: ChatMessage) {
         guard conversations.contains(where: { $0.id == conversationID }) else { return }
         guard let index = messagesByConversation[conversationID]?.firstIndex(where: { $0.clientID == clientID }) else {
@@ -2110,11 +2144,13 @@ public final class MessengerStore {
         replyPreview: String?,
         attachmentIDs: [UUID],
         attachments: [MessageAttachment],
-        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID]) async throws -> ChatMessage)
+        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)
     ) {
         isUploadingMedia = false
         mediaUploadProgress = 0
         composerMedia = []
+        let consent = composerTranscriptionConsent && attachments.contains { $0.isVoice }
+        composerTranscriptionConsent = false
 
         let clientID = UUID()
         var message = ChatMessage(
@@ -2127,12 +2163,14 @@ public final class MessengerStore {
             delivery: .sending,
             isOutgoing: true,
             replyPreview: replyPreview,
-            attachments: attachments
+            attachments: attachments,
+            transcriptionAllowed: consent
         )
         messagesByConversation[conversationID, default: []].append(message)
         messageMetadataByID[message.id] = MessageRemoteMetadata(
             replyToMessageID: replyToMessageID,
-            attachmentIDs: attachmentIDs
+            attachmentIDs: attachmentIDs,
+            transcriptionConsent: consent
         )
         let preview = attachments.contains { $0.isImage } && body.isEmpty ? "Фото" : (body.isEmpty ? "Файл" : body)
         clearComposerAfterSending(chatID: conversationID)
@@ -2145,6 +2183,7 @@ public final class MessengerStore {
             body: body,
             replyToMessageID: replyToMessageID,
             attachmentIDs: attachmentIDs,
+            transcriptionConsent: consent,
             mediaSender: mediaSender
         )
     }
@@ -2156,14 +2195,17 @@ public final class MessengerStore {
         body: String,
         replyToMessageID: UUID?,
         attachmentIDs: [UUID],
-        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID]) async throws -> ChatMessage)
+        transcriptionConsent: Bool,
+        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)
     ) {
         let lifecycleGeneration = conversationLifecycleGenerations[conversationID] ?? 0
         let operationID = UUID()
         let task = Task { [weak self] in
             defer { self?.remoteOperations[operationID] = nil }
             do {
-                let confirmed = try await mediaSender(conversationID, clientID, body, replyToMessageID, attachmentIDs)
+                let confirmed = try await mediaSender(
+                    conversationID, clientID, body, replyToMessageID, attachmentIDs, transcriptionConsent
+                )
                 guard let self,
                       !Task.isCancelled,
                       ownsConversationLifecycle(conversationID, generation: lifecycleGeneration)
