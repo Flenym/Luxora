@@ -88,7 +88,7 @@ Real, tested foundations (not mockups):
 | 🔑 | **Auth & sessions** | Argon2id login, short-lived JWT, hash-only rotating refresh tokens, per-device sessions with revoke |
 | 📱 | **Phone onboarding** | Strict E.164 + 6-digit OTP, registration / login branching, username suggestions, recovery & legacy binding slices |
 | 💬 | **Messaging** | Directs, groups, channels · text · replies · forwards · edit history · pins · reactions · read receipts |
-| 🗂 | **Organization** | Chat folders, archive & mute, synchronized drafts, scheduled send, topics foundation, invite links |
+| 🗂 | **Organization** | Chat folders, archive & mute, synchronized drafts, scheduled send, topics foundation, invite links, join-request approval queues |
 | 🛡 | **Safety** | Privacy-filtered discovery, message requests, directed blocks, selected-evidence reports |
 | ⚡ | **Realtime** | Authenticated WebSocket V2 with cursor replay, heartbeat, backpressure, typing & presence |
 | 📦 | **Media staging** | Resumable encrypted upload, authorized storage, byte-range download, quota & orphan handling |
@@ -100,7 +100,6 @@ Active work — visible in code, not yet shippable as product:
 
 |  | Area | Direction |
 |---|---|---|
-| ✉️ | Join-request approval | Queues, approve / deny and realtime events on top of invite links |
 | 👑 | Ownership transfer | Two-step ceremony with revision protection |
 | 🎙 | Voice messages | End-to-end QA: record → upload → playback → consent-based transcript |
 | 🖼 | Media processing | Server-side thumbnails, waveform / duration extraction, quarantine & transcode pipeline |

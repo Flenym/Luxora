@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-13 ~12:30 UTC · `main` = `e0063be` · CI зелёный (Node, Apple Swift, Apple IPA, Security)
+**Обновлено:** 2026-09-13 ~17:10 UTC · `main` — CI зелёный везде
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -12,7 +12,7 @@
 
 ## Что работает (end-to-end, с тестами)
 
-Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding, profile/patch/avatar), директы/группы/каналы + membership lifecycle (add/role/remove, revision ledger 024), invite-ссылки 032, message requests + block/report, текст/reply/edit/delete/forward/pin/reaction/receipts, папки 023, архив/мьют, черновики 025, отложенные 029, транскрипты 027–028, privacy policies 030, уведомления-категории 031 + APNs registration (без реальной доставки), global/people search foundations, cursor pagination везде, admin console read-only.
+Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding, profile/patch/avatar), директы/группы/каналы + membership lifecycle (add/role/remove, revision ledger 024), invite-ссылки 032 + approval-очередь 033 (union join, approve/deny, realtime fan-out), message requests + block/report, текст/reply/edit/delete/forward/pin/reaction/receipts, папки 023, архив/мьют, черновики 025, отложенные 029, транскрипты 027–028, privacy policies 030, уведомления-категории 031 + APNs registration (без реальной доставки), global/people search foundations, cursor pagination везде, admin console read-only.
 
 ## Что частично работает
 
@@ -35,15 +35,14 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
-- `81ce142` invite-ссылки 032 (+`9413a9c` фикс Swift-теста, `e0063be` доки).
-- `b41448e` ремонт красного main после 030/031 (lastSeenAt-проекция, 7-польный privacy-апдейтер, sync-обход кэша).
+- 033 join-request approval (миграция, union join, approve/deny, realtime, Swift adapter) — CI зелёный везде.
+- Параллельная сессия в workspace: LICENSE (MIT), README.md/RU rework — втянуто, бейджи приведены к truth-гейту.
+- `81ce142` invite-ссылки 032 (+фиксы Swift-тестов, бейджей).
+- `b41448e` ремонт красного main после 030/031.
 - `f877742` категории уведомлений 031.
 
 ## Следующий приоритет (порядок)
 
-1. Truth-аудит фейкового UI → честные метки/удаление.
-2. Join-request approval (завершение invites).
-3. Ownership transfer ceremony.
-4. Voice сквозной QA → media processing → search → calls signaling (по готовности, каждый со Slice-тестами).
-5. Account export/delete, QR-linking, contact discovery — по остатку.
-6. Финальный QA + доки.
+1. Ownership transfer ceremony (двухшаговая, revision-защита).
+2. Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation.
+3. Voice сквозной QA → media processing → search → calls signaling (по готовности, каждый со Slice-тестами).

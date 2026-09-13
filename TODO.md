@@ -34,7 +34,7 @@
 ### HIGH
 
 - [x] Invite-ссылки 032 (create/list/revoke/join + thin iPhone adapter)
-- [~] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события (код готов, идёт QA)
+- [x] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события
 - [ ] Ownership transfer ceremony (двухшаговый, с revision-защитой)
 - [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
 - [ ] Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер

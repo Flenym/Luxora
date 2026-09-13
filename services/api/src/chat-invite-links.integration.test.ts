@@ -114,6 +114,7 @@ describe("chat invite links", () => {
     expect(created.statusCode).toBe(201);
     const body = CreateChatInviteLinkResponseSchema.parse(created.json());
     expect(body.replayed).toBe(false);
+    expect(body.invite.approvalRequired).toBe(false);
     expect(body.invite.chatId).toBe(chatId);
     expect(body.invite.createdBy).toBe(owner.id);
     expect(body.invite.maxUses).toBe(5);
