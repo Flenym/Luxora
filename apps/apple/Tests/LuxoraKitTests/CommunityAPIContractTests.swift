@@ -225,13 +225,16 @@ final class CommunityAPIContractTests: XCTestCase {
                 XCTAssertEqual(request.url?.path, "/v1/invite-links/join")
                 XCTAssertEqual(Set(body.keys), ["token", "clientNonce"])
                 XCTAssertEqual(body["token"] as? String, inviteToken)
-                return (201, communityJSON(mutationJSON(
-                    chatID: chatID,
-                    userID: memberID,
-                    role: "member",
-                    revision: 1,
-                    replayed: false
-                )))
+                return (201, communityJSON([
+                    "outcome": "joined",
+                    "membership": membershipJSON(
+                        chatID: chatID,
+                        userID: memberID,
+                        role: "member",
+                        revision: 1
+                    ),
+                    "replayed": false,
+                ]))
             default:
                 XCTAssertEqual(request.httpMethod, "DELETE")
                 XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/invite-links/\(linkID.apiPathComponent)")
