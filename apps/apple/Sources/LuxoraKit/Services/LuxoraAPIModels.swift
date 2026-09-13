@@ -938,7 +938,8 @@ struct APIMessage: Decodable, Sendable {
     let kind: String
     let body: String?
     let replyToMessageId: UUID?
-    let topicId: UUID?    let forwardedFrom: APIForwardProvenance?
+    let topicId: UUID?
+    let forwardedFrom: APIForwardProvenance?
     let isPinned: Bool
     let clientNonce: UUID
     let revision: Int
