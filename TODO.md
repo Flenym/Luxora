@@ -35,7 +35,7 @@
 
 - [x] Invite-ссылки 032 (create/list/revoke/join + thin iPhone adapter)
 - [x] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события
-- [~] Ownership transfer ceremony (034): двухшаговый initiate/accept с revision-защитой (в работе)
+- [x] Ownership transfer ceremony (034): двухшаговый initiate/accept с revision-защитой, ceremony-aware триггер, Swift adapter
 - [ ] Ownership transfer ceremony (двухшаговый, с revision-защитой)
 - [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
 - [ ] Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер
@@ -161,7 +161,7 @@
 
 - [ ] Direct/Saved/Circle/supergroup/channel/Space models and immutable trust class.
 - [x] Group/channel membership list/add/role/remove with one immutable owner, 200-member limit, actor-scoped exact receipts, optimistic revisions, V2 current/removed audiences, reconciliation template and independent-writer removal-vs-send proof.
-- [ ] Ownership transfer ceremony, invitation approval/privacy, join requests/links and production-database membership fault injection.
+- [x] Ownership transfer ceremony (034, двухшаговый initiate/accept, revision-safe atomic swap, ceremony-aware trigger), bearer invite links (032) и join-request approval с realtime fan-out (033); invitation privacy и production-database membership fault injection остаются открыты.
 - [x] Replies, privacy-minimized forwards, pins, edit history and topic foundations.
 - [x] Account-scoped archive/mute foundation on existing membership columns: strict GET/PATCH, additive chat projections, idempotent server archive time, explicit unarchive/unmute and column-selective writes pass protocol/API/authorization tests. V2 emits an exact account-bound `chat.preferences.updated` only after a real confirmed state change; live/replay rechecks account identity and current membership, while V1 skips the additive event. The foundation is carried forward by the current migration-025 local runtime. Full release-scale reconnect/offline evidence remains separate.
 - [x] Account-scoped synchronized custom chat folders: five strict authenticated routes, 10-folder/48-code-point-title/100-override limits, atomic snapshot reads, folder/account CAS revisions, normalized encrypted exact-response receipts with a public 24-hour/64-active quota, actionable `Retry-After`, migration `023`, indexed bounded cleanup, semantic no-op handling, exact-account V2 realtime and atomic override cleanup on membership removal. At the 11 August slice checkpoint, protocol 10 files/85 tests, API 68 files/606 tests, both typechecks, migration chain 15/15 and authorization matrices passed; the current migration-025 image carries this already-verified foundation forward.

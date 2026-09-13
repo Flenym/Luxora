@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-13 ~18:05 UTC · `main` — 034 в QA перед пушем
+**Обновлено:** 2026-09-13 ~18:15 UTC · `main` — 034 зелёный везде (Node/Swift/IPA/Security)
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
