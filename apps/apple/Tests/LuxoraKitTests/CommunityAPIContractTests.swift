@@ -187,9 +187,9 @@ final class CommunityAPIContractTests: XCTestCase {
         let linkID = UUID(uuidString: "55555555-5555-4555-8555-555555555555")!
         let inviteToken = String(repeating: "B", count: 43)
         let client = makeClient { [chatID, ownerID, memberID, nonce] request in
-            let body = try request.communityJSONBody()
             switch calls.increment() {
             case 1:
+                let body = try request.communityJSONBody()
                 XCTAssertEqual(request.httpMethod, "POST")
                 XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/invite-links")
                 XCTAssertEqual(Set(body.keys), ["maxUses", "clientNonce"])
@@ -209,6 +209,7 @@ final class CommunityAPIContractTests: XCTestCase {
             case 2:
                 XCTAssertEqual(request.httpMethod, "GET")
                 XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/invite-links")
+                XCTAssertNil(request.httpBody)
                 return (200, communityJSON(["items": [
                     inviteJSON(
                         id: linkID,
@@ -219,6 +220,7 @@ final class CommunityAPIContractTests: XCTestCase {
                     ),
                 ]]))
             case 3:
+                let body = try request.communityJSONBody()
                 XCTAssertEqual(request.httpMethod, "POST")
                 XCTAssertEqual(request.url?.path, "/v1/invite-links/join")
                 XCTAssertEqual(Set(body.keys), ["token", "clientNonce"])
@@ -233,6 +235,7 @@ final class CommunityAPIContractTests: XCTestCase {
             default:
                 XCTAssertEqual(request.httpMethod, "DELETE")
                 XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/invite-links/\(linkID.apiPathComponent)")
+                XCTAssertNil(request.httpBody)
                 return (200, communityJSON([
                     "invite": inviteJSON(
                         id: linkID,
