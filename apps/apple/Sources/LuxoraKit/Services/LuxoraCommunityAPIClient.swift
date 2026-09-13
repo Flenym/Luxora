@@ -195,7 +195,7 @@ actor LuxoraCommunityAPIClient {
             ),
             token: token
         )
-        return try response.outcome()
+        return try response.joinOutcome()
     }
 
     func joinRequests(chatID: UUID, token: String) async throws -> [CommunityJoinRequest] {
@@ -527,7 +527,7 @@ private struct APICommunityInviteJoinResponse: Decodable, Sendable {
     let request: APICommunityJoinRequest?
     let replayed: Bool
 
-    func outcome() throws -> CommunityInviteJoinOutcome {
+    func joinOutcome() throws -> CommunityInviteJoinOutcome {
         switch outcome {
         case "joined":
             guard let membership, request == nil else {

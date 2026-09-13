@@ -157,7 +157,7 @@ public struct CommunityInviteRevocation: Equatable, Sendable {
     }
 }
 
-public enum CommunityJoinRequestState: String, Equatable, Hashable, Sendable {
+public enum CommunityJoinRequestState: String, Equatable, Hashable, Sendable, Codable {
     case pending
     case approved
     case denied

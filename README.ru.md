@@ -14,7 +14,7 @@
 
 <br/>
 
-[![Beta](https://img.shields.io/badge/релиз-Beta--0.1-7C48D4?style=for-the-badge)](CHANGELOG.md)
+[![Beta](https://img.shields.io/badge/релиз-Beta-7C48D4?style=for-the-badge)](CHANGELOG.md)
 [![Trust](https://img.shields.io/badge/доверие-Cloud%20preview-373ABF?style=for-the-badge)](SECURITY.md)
 [![License](https://img.shields.io/badge/лицензия-MIT-A999ED?style=for-the-badge)](LICENSE)
 [![Status](https://img.shields.io/badge/статус-активная%20разработка-4CD7A4?style=for-the-badge)](ROADMAP.md)
