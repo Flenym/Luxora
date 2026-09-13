@@ -4019,5 +4019,17 @@ export const migrations: Migration[] = [
       ALTER TABLE account_privacy_settings ADD COLUMN calls_visibility TEXT NOT NULL DEFAULT 'everyone'
         CHECK (calls_visibility IN ('everyone', 'contacts', 'nobody'));
     `
-  }
-];
+  },
+  {
+    id: "031_notification_categories",
+    sql: `
+      ALTER TABLE notification_settings ADD COLUMN group_message_alerts INTEGER NOT NULL DEFAULT 1
+        CHECK (group_message_alerts IN (0, 1));
+      ALTER TABLE notification_settings ADD COLUMN channel_message_alerts INTEGER NOT NULL DEFAULT 1
+        CHECK (channel_message_alerts IN (0, 1));
+      ALTER TABLE notification_settings ADD COLUMN story_alerts INTEGER NOT NULL DEFAULT 1
+        CHECK (story_alerts IN (0, 1));
+      ALTER TABLE notification_settings ADD COLUMN reaction_alerts INTEGER NOT NULL DEFAULT 1
+        CHECK (reaction_alerts IN (0, 1));
+    ` 
+  }];

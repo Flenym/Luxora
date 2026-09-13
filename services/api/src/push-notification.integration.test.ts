@@ -220,6 +220,10 @@ describe("session-bound encrypted APNs registrations and notification preference
       messageAlerts: true,
       messageRequestAlerts: true,
       mentionAlerts: true,
+      groupAlerts: true,
+      channelAlerts: true,
+      storyAlerts: true,
+      reactionAlerts: true,
       sound: true,
       badge: true,
       previewMode: "hidden"
@@ -253,11 +257,15 @@ describe("session-bound encrypted APNs registrations and notification preference
       method: "PATCH",
       url: "/v1/notifications/settings",
       headers: headers(alice),
-      payload: { mentionAlerts: false }
+      payload: { mentionAlerts: false, groupAlerts: false, reactionAlerts: false }
     });
     expect(independentPatch.statusCode).toBe(200);
     expect(independentPatch.json().settings).toMatchObject({
       mentionAlerts: false,
+      groupAlerts: false,
+      reactionAlerts: false,
+      channelAlerts: true,
+      storyAlerts: true,
       sound: false,
       previewMode: "sender"
     });

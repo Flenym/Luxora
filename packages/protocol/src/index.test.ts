@@ -477,7 +477,12 @@ describe("IA-1 identity and safety contract", () => {
   it("uses strict privacy settings and rejects empty patches", () => {
     expect(PrivacySettingsSchema.safeParse({
       usernameDiscoverable: true,
-      messageRequests: "everyone"
+      messageRequests: "everyone",
+      lastSeen: "everyone",
+      profilePhoto: "everyone",
+      forwards: "everyone",
+      voiceMessages: "everyone",
+      calls: "everyone"
     }).success).toBe(true);
     expect(PatchPrivacySettingsSchema.safeParse({ messageRequests: "nobody" }).success).toBe(true);
     expect(PatchPrivacySettingsSchema.safeParse({}).success).toBe(false);

@@ -71,6 +71,10 @@ export class NotificationService {
       messageAlerts: record.messageAlerts,
       messageRequestAlerts: record.messageRequestAlerts,
       mentionAlerts: record.mentionAlerts,
+      groupAlerts: record.groupAlerts,
+      channelAlerts: record.channelAlerts,
+      storyAlerts: record.storyAlerts,
+      reactionAlerts: record.reactionAlerts,
       sound: record.sound,
       badge: record.badge,
       previewMode: record.previewMode,
@@ -83,6 +87,10 @@ export class NotificationService {
       messageAlerts: boolean;
       messageRequestAlerts: boolean;
       mentionAlerts: boolean;
+      groupAlerts: boolean;
+      channelAlerts: boolean;
+      storyAlerts: boolean;
+      reactionAlerts: boolean;
       sound: boolean;
       badge: boolean;
       previewMode: Exclude<PatchNotificationSettings["previewMode"], undefined>;
@@ -92,6 +100,10 @@ export class NotificationService {
       definedUpdate.messageRequestAlerts = update.messageRequestAlerts;
     }
     if (update.mentionAlerts !== undefined) definedUpdate.mentionAlerts = update.mentionAlerts;
+    if (update.groupAlerts !== undefined) definedUpdate.groupAlerts = update.groupAlerts;
+    if (update.channelAlerts !== undefined) definedUpdate.channelAlerts = update.channelAlerts;
+    if (update.storyAlerts !== undefined) definedUpdate.storyAlerts = update.storyAlerts;
+    if (update.reactionAlerts !== undefined) definedUpdate.reactionAlerts = update.reactionAlerts;
     if (update.sound !== undefined) definedUpdate.sound = update.sound;
     if (update.badge !== undefined) definedUpdate.badge = update.badge;
     if (update.previewMode !== undefined) definedUpdate.previewMode = update.previewMode;
@@ -104,6 +116,10 @@ export class NotificationService {
       messageAlerts: record.messageAlerts,
       messageRequestAlerts: record.messageRequestAlerts,
       mentionAlerts: record.mentionAlerts,
+      groupAlerts: record.groupAlerts,
+      channelAlerts: record.channelAlerts,
+      storyAlerts: record.storyAlerts,
+      reactionAlerts: record.reactionAlerts,
       sound: record.sound,
       badge: record.badge,
       previewMode: record.previewMode,

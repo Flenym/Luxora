@@ -360,6 +360,10 @@ interface NotificationSettingsRow {
   message_alerts: number;
   message_request_alerts: number;
   mention_alerts: number;
+  group_message_alerts: number;
+  channel_message_alerts: number;
+  story_alerts: number;
+  reaction_alerts: number;
   sound: number;
   badge: number;
   preview_mode: NotificationSettingsRecord["previewMode"];
@@ -1002,6 +1006,10 @@ function mapNotificationSettings(row: NotificationSettingsRow): NotificationSett
     messageAlerts: row.message_alerts === 1,
     messageRequestAlerts: row.message_request_alerts === 1,
     mentionAlerts: row.mention_alerts === 1,
+    groupAlerts: row.group_message_alerts === 1,
+    channelAlerts: row.channel_message_alerts === 1,
+    storyAlerts: row.story_alerts === 1,
+    reactionAlerts: row.reaction_alerts === 1,
     sound: row.sound === 1,
     badge: row.badge === 1,
     previewMode: row.preview_mode,
@@ -7670,6 +7678,10 @@ export class SqliteStore implements Store {
       | "messageAlerts"
       | "messageRequestAlerts"
       | "mentionAlerts"
+      | "groupAlerts"
+      | "channelAlerts"
+      | "storyAlerts"
+      | "reactionAlerts"
       | "sound"
       | "badge"
       | "previewMode"
@@ -7685,6 +7697,10 @@ export class SqliteStore implements Store {
       SET message_alerts = COALESCE(@messageAlerts, message_alerts),
           message_request_alerts = COALESCE(@messageRequestAlerts, message_request_alerts),
           mention_alerts = COALESCE(@mentionAlerts, mention_alerts),
+          group_message_alerts = COALESCE(@groupAlerts, group_message_alerts),
+          channel_message_alerts = COALESCE(@channelAlerts, channel_message_alerts),
+          story_alerts = COALESCE(@storyAlerts, story_alerts),
+          reaction_alerts = COALESCE(@reactionAlerts, reaction_alerts),
           sound = COALESCE(@sound, sound),
           badge = COALESCE(@badge, badge),
           preview_mode = COALESCE(@previewMode, preview_mode),
@@ -7697,6 +7713,10 @@ export class SqliteStore implements Store {
         ? null
         : update.messageRequestAlerts ? 1 : 0,
       mentionAlerts: update.mentionAlerts === undefined ? null : update.mentionAlerts ? 1 : 0,
+      groupAlerts: update.groupAlerts === undefined ? null : update.groupAlerts ? 1 : 0,
+      channelAlerts: update.channelAlerts === undefined ? null : update.channelAlerts ? 1 : 0,
+      storyAlerts: update.storyAlerts === undefined ? null : update.storyAlerts ? 1 : 0,
+      reactionAlerts: update.reactionAlerts === undefined ? null : update.reactionAlerts ? 1 : 0,
       sound: update.sound === undefined ? null : update.sound ? 1 : 0,
       badge: update.badge === undefined ? null : update.badge ? 1 : 0,
       previewMode: update.previewMode ?? null,

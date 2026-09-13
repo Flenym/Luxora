@@ -4876,11 +4876,41 @@ private struct PhoneNotificationPreferencesSections: View {
                     identifier: "notifications-message-alerts"
                 ) { NotificationSettingsPatch(messageAlerts: $0) }
                 settingToggle(
+                    "Запросы сообщений",
+                    symbol: "tray.and.arrow.down.fill",
+                    value: settings.messageRequestAlerts,
+                    identifier: "notifications-message-request-alerts"
+                ) { NotificationSettingsPatch(messageRequestAlerts: $0) }
+                settingToggle(
                     "Упоминания и ответы",
                     symbol: "at",
                     value: settings.mentionAlerts,
                     identifier: "notifications-mention-alerts"
                 ) { NotificationSettingsPatch(mentionAlerts: $0) }
+                settingToggle(
+                    "Группы",
+                    symbol: "person.3.fill",
+                    value: settings.groupAlerts,
+                    identifier: "notifications-group-alerts"
+                ) { NotificationSettingsPatch(groupAlerts: $0) }
+                settingToggle(
+                    "Каналы",
+                    symbol: "megaphone.fill",
+                    value: settings.channelAlerts,
+                    identifier: "notifications-channel-alerts"
+                ) { NotificationSettingsPatch(channelAlerts: $0) }
+                settingToggle(
+                    "Истории",
+                    symbol: "circle.dashed",
+                    value: settings.storyAlerts,
+                    identifier: "notifications-story-alerts"
+                ) { NotificationSettingsPatch(storyAlerts: $0) }
+                settingToggle(
+                    "Реакции",
+                    symbol: "face.smiling.fill",
+                    value: settings.reactionAlerts,
+                    identifier: "notifications-reaction-alerts"
+                ) { NotificationSettingsPatch(reactionAlerts: $0) }
             }
 
             Section("Оформление") {

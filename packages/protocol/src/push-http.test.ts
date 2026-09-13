@@ -74,5 +74,25 @@ describe("notification preference HTTP contract", () => {
       previewMode: "hidden",
       updatedAt: "2026-08-11T00:00:00.000Z"
     }).previewMode).toBe("hidden");
+
+    // Category toggles default to true for pre-031 payloads.
+    const backfilled = NotificationSettingsSchema.parse({
+      messageAlerts: true,
+      messageRequestAlerts: true,
+      mentionAlerts: true,
+      sound: true,
+      badge: true,
+      previewMode: "hidden",
+      updatedAt: "2026-08-11T00:00:00.000Z"
+    });
+    expect(backfilled).toMatchObject({
+      groupAlerts: true,
+      channelAlerts: true,
+      storyAlerts: true,
+      reactionAlerts: true
+    });
+    expect(PatchNotificationSettingsSchema.parse({ groupAlerts: false })).toEqual({
+      groupAlerts: false
+    });
   });
 });

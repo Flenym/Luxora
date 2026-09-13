@@ -237,6 +237,10 @@ export interface NotificationSettingsRecord {
   messageAlerts: boolean;
   messageRequestAlerts: boolean;
   mentionAlerts: boolean;
+  groupAlerts: boolean;
+  channelAlerts: boolean;
+  storyAlerts: boolean;
+  reactionAlerts: boolean;
   sound: boolean;
   badge: boolean;
   previewMode: NotificationPreviewMode;

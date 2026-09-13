@@ -517,6 +517,10 @@ public struct NotificationSettings: Equatable, Sendable {
     public let messageAlerts: Bool
     public let messageRequestAlerts: Bool
     public let mentionAlerts: Bool
+    public let groupAlerts: Bool
+    public let channelAlerts: Bool
+    public let storyAlerts: Bool
+    public let reactionAlerts: Bool
     public let sound: Bool
     public let badge: Bool
     public let previewMode: NotificationPreviewMode
@@ -526,6 +530,10 @@ public struct NotificationSettings: Equatable, Sendable {
         messageAlerts = response.messageAlerts
         messageRequestAlerts = response.messageRequestAlerts
         mentionAlerts = response.mentionAlerts
+        groupAlerts = response.groupAlerts
+        channelAlerts = response.channelAlerts
+        storyAlerts = response.storyAlerts
+        reactionAlerts = response.reactionAlerts
         sound = response.sound
         badge = response.badge
         previewMode = response.previewMode
@@ -537,6 +545,10 @@ public struct NotificationSettingsPatch: Encodable, Equatable, Sendable {
     public let messageAlerts: Bool?
     public let messageRequestAlerts: Bool?
     public let mentionAlerts: Bool?
+    public let groupAlerts: Bool?
+    public let channelAlerts: Bool?
+    public let storyAlerts: Bool?
+    public let reactionAlerts: Bool?
     public let sound: Bool?
     public let badge: Bool?
     public let previewMode: NotificationPreviewMode?
@@ -545,6 +557,10 @@ public struct NotificationSettingsPatch: Encodable, Equatable, Sendable {
         messageAlerts: Bool? = nil,
         messageRequestAlerts: Bool? = nil,
         mentionAlerts: Bool? = nil,
+        groupAlerts: Bool? = nil,
+        channelAlerts: Bool? = nil,
+        storyAlerts: Bool? = nil,
+        reactionAlerts: Bool? = nil,
         sound: Bool? = nil,
         badge: Bool? = nil,
         previewMode: NotificationPreviewMode? = nil
@@ -552,6 +568,10 @@ public struct NotificationSettingsPatch: Encodable, Equatable, Sendable {
         self.messageAlerts = messageAlerts
         self.messageRequestAlerts = messageRequestAlerts
         self.mentionAlerts = mentionAlerts
+        self.groupAlerts = groupAlerts
+        self.channelAlerts = channelAlerts
+        self.storyAlerts = storyAlerts
+        self.reactionAlerts = reactionAlerts
         self.sound = sound
         self.badge = badge
         self.previewMode = previewMode
@@ -561,6 +581,10 @@ public struct NotificationSettingsPatch: Encodable, Equatable, Sendable {
         messageAlerts != nil
             || messageRequestAlerts != nil
             || mentionAlerts != nil
+            || groupAlerts != nil
+            || channelAlerts != nil
+            || storyAlerts != nil
+            || reactionAlerts != nil
             || sound != nil
             || badge != nil
             || previewMode != nil
@@ -670,10 +694,70 @@ struct APINotificationSettings: Decodable, Sendable {
     let messageAlerts: Bool
     let messageRequestAlerts: Bool
     let mentionAlerts: Bool
+    let groupAlerts: Bool
+    let channelAlerts: Bool
+    let storyAlerts: Bool
+    let reactionAlerts: Bool
     let sound: Bool
     let badge: Bool
     let previewMode: NotificationPreviewMode
     let updatedAt: Date
+
+    init(
+        messageAlerts: Bool,
+        messageRequestAlerts: Bool,
+        mentionAlerts: Bool,
+        groupAlerts: Bool = true,
+        channelAlerts: Bool = true,
+        storyAlerts: Bool = true,
+        reactionAlerts: Bool = true,
+        sound: Bool,
+        badge: Bool,
+        previewMode: NotificationPreviewMode,
+        updatedAt: Date
+    ) {
+        self.messageAlerts = messageAlerts
+        self.messageRequestAlerts = messageRequestAlerts
+        self.mentionAlerts = mentionAlerts
+        self.groupAlerts = groupAlerts
+        self.channelAlerts = channelAlerts
+        self.storyAlerts = storyAlerts
+        self.reactionAlerts = reactionAlerts
+        self.sound = sound
+        self.badge = badge
+        self.previewMode = previewMode
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case messageAlerts
+        case messageRequestAlerts
+        case mentionAlerts
+        case groupAlerts
+        case channelAlerts
+        case storyAlerts
+        case reactionAlerts
+        case sound
+        case badge
+        case previewMode
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        messageAlerts = try container.decode(Bool.self, forKey: .messageAlerts)
+        messageRequestAlerts = try container.decode(Bool.self, forKey: .messageRequestAlerts)
+        mentionAlerts = try container.decode(Bool.self, forKey: .mentionAlerts)
+        // Pre-031 servers omit category toggles: default to true like the backend.
+        groupAlerts = try container.decodeIfPresent(Bool.self, forKey: .groupAlerts) ?? true
+        channelAlerts = try container.decodeIfPresent(Bool.self, forKey: .channelAlerts) ?? true
+        storyAlerts = try container.decodeIfPresent(Bool.self, forKey: .storyAlerts) ?? true
+        reactionAlerts = try container.decodeIfPresent(Bool.self, forKey: .reactionAlerts) ?? true
+        sound = try container.decode(Bool.self, forKey: .sound)
+        badge = try container.decode(Bool.self, forKey: .badge)
+        previewMode = try container.decode(NotificationPreviewMode.self, forKey: .previewMode)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
 }
 
 struct APIPhoneUsernameAvailability: Decodable, Sendable {
