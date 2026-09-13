@@ -44,6 +44,5 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Следующий приоритет (порядок)
 
-1. Ownership transfer ceremony (двухшаговая, revision-защита).
-2. Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation.
-3. Voice сквозной QA → media processing → search → calls signaling (по готовности, каждый со Slice-тестами).
+1. Topics/threads iPhone (в работе): ChatTopic + client CRUD + send/filter + store + UI + tests. Сервер уже готов.
+2. Voice сквозной QA → media processing → search → calls signaling (по готовности, каждый со Slice-тестами).

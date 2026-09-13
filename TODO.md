@@ -36,6 +36,7 @@
 - [x] Invite-ссылки 032 (create/list/revoke/join + thin iPhone adapter)
 - [x] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события
 - [x] Ownership transfer ceremony (034): двухшаговый initiate/accept с revision-защитой, ceremony-aware триггер, Swift adapter
+- [~] Topics/threads iPhone: сервер готов (CRUD + topicId в send/list + realtime events), клиент — только passthrough. Нужны: ChatTopic-модель, client CRUD, topicId в send/messages, store-фильтр истории, UI chips/composer, contract tests (в работе)
 - [ ] Ownership transfer ceremony (двухшаговый, с revision-защитой)
 - [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
 - [ ] Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер

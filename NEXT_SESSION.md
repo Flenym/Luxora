@@ -25,9 +25,7 @@
 
 ## Ближайшая очередь
 
-1. Truth-аудит фейкового UI (E2EE/calls/presence/download/sync).
-2. Join-request approval (миграция 033).
-3. Ownership transfer ceremony.
-4. Voice QA → media processing → search → calls signaling.
-5. Export/delete, QR-linking, contact discovery.
-6. Финальный QA.
+1. Topics iPhone (в работе): сервер готов — `GET/POST /v1/chats/:id/topics`, `PATCH /v1/topics/:id`, `topicId` в send/list messages + realtime `topic.created/updated`. Клиент: модель `ChatTopic`, методы в `LuxoraAPIClient` (CRUD + `topicId` в `messages`/`sendMessage`/`APISendMessageBody`), фильтр истории в store, UI chips + composer, contract tests. Начало: `LuxoraAPIClient.swift:646` (`messages`), `:675` (`sendMessage`), `:1388` (`APISendMessageBody`).
+2. Voice QA → media processing → search → calls signaling.
+3. Export/delete, QR-linking, contact discovery.
+4. Финальный QA.
