@@ -419,6 +419,86 @@ final class CommunityAPIContractTests: XCTestCase {
         XCTAssertEqual(calls.current, 4)
     }
 
+    func testOwnershipTransferUsesExactCeremonyContract() async throws {
+        let calls = CommunityLockedCounter()
+        let transferID = UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        let client = makeClient { [chatID, ownerID, memberID, nonce] request in
+            switch calls.increment() {
+            case 1:
+                let body = try request.communityJSONBody()
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/ownership-transfers")
+                XCTAssertEqual(Set(body.keys), ["targetUserId", "clientNonce"])
+                XCTAssertEqual(body["targetUserId"] as? String, memberID.apiPathComponent)
+                XCTAssertEqual(body["clientNonce"] as? String, nonce.apiPathComponent)
+                return (201, communityJSON([
+                    "transfer": transferJSON(
+                        id: transferID,
+                        chatID: chatID,
+                        fromUserID: ownerID,
+                        toUserID: memberID,
+                        state: "pending"
+                    ),
+                    "replayed": false,
+                ]))
+            case 2:
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/ownership-transfers")
+                XCTAssertNil(request.httpBody)
+                return (200, communityJSON([
+                    "transfer": transferJSON(
+                        id: transferID,
+                        chatID: chatID,
+                        fromUserID: ownerID,
+                        toUserID: memberID,
+                        state: "pending"
+                    ),
+                ]))
+            default:
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(
+                    request.url?.path,
+                    "/v1/chats/\(chatID.apiPathComponent)/ownership-transfers/\(transferID.apiPathComponent)/accept"
+                )
+                XCTAssertNil(request.httpBody)
+                return (200, communityJSON([
+                    "transfer": transferJSON(
+                        id: transferID,
+                        chatID: chatID,
+                        fromUserID: ownerID,
+                        toUserID: memberID,
+                        state: "accepted",
+                        decidedBy: memberID
+                    ),
+                    "replayed": false,
+                ]))
+            }
+        }
+
+        let initiated = try await client.initiateOwnershipTransfer(
+            chatID: chatID,
+            targetUserID: memberID,
+            clientNonce: nonce,
+            token: "access-token"
+        )
+        XCTAssertEqual(initiated.transfer.id, transferID)
+        XCTAssertEqual(initiated.transfer.state, .pending)
+        XCTAssertFalse(initiated.replayed)
+
+        let pending = try await client.pendingOwnershipTransfer(chatID: chatID, token: "access-token")
+        XCTAssertEqual(pending?.id, transferID)
+
+        let accepted = try await client.acceptOwnershipTransfer(
+            chatID: chatID,
+            transferID: transferID,
+            token: "access-token"
+        )
+        XCTAssertEqual(accepted.transfer.state, .accepted)
+        XCTAssertEqual(accepted.transfer.decidedBy, memberID)
+        XCTAssertFalse(accepted.replayed)
+        XCTAssertEqual(calls.current, 3)
+    }
+
     private func makeClient(
         handler: @escaping @Sendable (URLRequest) throws -> (Int, Data)
     ) -> LuxoraCommunityAPIClient {
@@ -636,5 +716,26 @@ private func joinRequestJSON(
         "decidedBy": decidedBy.map { $0.apiPathComponent as Any } ?? NSNull(),
         "createdAt": "2026-09-13T12:01:00Z",
         "decidedAt": decidedBy == nil ? NSNull() : "2026-09-13T12:02:00Z" as Any,
+    ]
+}
+
+private func transferJSON(
+    id: UUID,
+    chatID: UUID,
+    fromUserID: UUID,
+    toUserID: UUID,
+    state: String,
+    decidedBy: UUID? = nil
+) -> [String: Any] {
+    [
+        "id": id.apiPathComponent,
+        "chatId": chatID.apiPathComponent,
+        "fromUserId": fromUserID.apiPathComponent,
+        "toUserId": toUserID.apiPathComponent,
+        "state": state,
+        "expiresAt": "2026-09-14T12:00:00Z",
+        "createdAt": "2026-09-13T12:00:00Z",
+        "decidedAt": decidedBy == nil ? NSNull() : "2026-09-13T12:01:00Z" as Any,
+        "decidedBy": decidedBy.map { $0.apiPathComponent as Any } ?? NSNull(),
     ]
 }

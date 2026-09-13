@@ -604,6 +604,20 @@ Denied requesters may file a fresh request. Realtime fans `chat.join.request.cha
 (`member_account` audience) to current owner/admins on filing and to requester plus
 admins on decision.
 
+Ownership transfer is a two-step ceremony between the sole owner and one current
+member: `POST /v1/chats/:id/ownership-transfers` with strict
+`{targetUserId,clientNonce}` mints a 24-hour pending transfer (`201`
+`{transfer,replayed}`); `POST .../:transferId/accept` by the designated
+successor atomically swaps the roles (successor → owner, owner → admin) with
+monotonic revision bumps; `POST .../:transferId/cancel` by the initiator aborts.
+`GET /v1/chats/:id/ownership-transfers` shows the pending ceremony to managers
+and the successor (`{transfer|null}`). Exactly one pending ceremony per chat;
+reused nonces replay exactly; expired ceremonies 404 with `transfer_expired` and
+stop blocking fresh ones. Accept/decision replays return the current snapshot.
+Accept emits the transfer-changed event plus two `role_updated` membership events;
+the DB trigger only permits owner-role writes while the live ceremony names both
+sides, so every other owner mutation still aborts.
+
 ## 7. Messages
 
 ### `GET /v1/chats/:id/messages`

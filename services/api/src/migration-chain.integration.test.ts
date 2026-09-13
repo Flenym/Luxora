@@ -41,7 +41,8 @@ const MIGRATION_IDS = [
   "030_privacy_visibility_policies",
   "031_notification_categories",
   "032_chat_invite_links",
-  "033_chat_join_request_approval"
+  "033_chat_join_request_approval",
+  "034_chat_ownership_transfer"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";
@@ -342,7 +343,7 @@ function finalDeclaredTriggerNames(): string[] {
   return [...names].sort();
 }
 
-describe("SQLite migration chain 001-033", () => {
+describe("SQLite migration chain 001-034", () => {
   const temporaryDirectories: string[] = [];
   const workers: Worker[] = [];
 
@@ -533,6 +534,14 @@ describe("SQLite migration chain 001-033", () => {
     expect(migrations[32]!.sql).toMatch(/idx_chat_join_requests_pending/u);
     expect(migrations[32]!.sql).toMatch(/idx_chat_join_requests_chat/u);
     expect(migrations[32]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
+    expect(migrations[33]!.id).toBe("034_chat_ownership_transfer");
+    expect(migrations[33]!.sql).toMatch(/CREATE TABLE chat_ownership_transfers/u);
+    expect(migrations[33]!.sql).toMatch(/UNIQUE \(from_user_id, client_nonce\)/u);
+    expect(migrations[33]!.sql).toMatch(/idx_chat_ownership_transfers_pending/u);
+    expect(migrations[33]!.sql).toMatch(/DROP TRIGGER trg_chat_members_owner_immutable/u);
+    expect(migrations[33]!.sql).toMatch(/chat_ownership_transfers/u);
+    expect(migrations[33]!.sql).toMatch(/dedicated ceremony/u);
+    expect(migrations[33]!.sql).not.toMatch(/\bDELETE\s+FROM\b/iu);
   });
 
   it("creates the complete clean schema once with declared tables, indexes, triggers and foreign keys", () => {

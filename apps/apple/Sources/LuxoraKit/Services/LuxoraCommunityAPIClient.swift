@@ -233,6 +233,86 @@ actor LuxoraCommunityAPIClient {
         )
     }
 
+    func initiateOwnershipTransfer(
+        chatID: UUID,
+        targetUserID: UUID,
+        clientNonce: UUID,
+        token: String
+    ) async throws -> CommunityOwnershipTransferReceipt {
+        let response: APICommunityOwnershipTransferResponse = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/ownership-transfers",
+            method: "POST",
+            body: APICommunityInitiateTransferBody(
+                targetUserId: targetUserID.apiPathComponent,
+                clientNonce: clientNonce.apiPathComponent
+            ),
+            token: token
+        )
+        return try CommunityOwnershipTransferReceipt(
+            transfer: response.transfer.transfer(expectedChatID: chatID),
+            replayed: response.replayed
+        )
+    }
+
+    func pendingOwnershipTransfer(
+        chatID: UUID,
+        token: String
+    ) async throws -> CommunityOwnershipTransfer? {
+        struct Response: Decodable, Sendable {
+            let transfer: APICommunityOwnershipTransfer?
+        }
+        let response: Response = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/ownership-transfers",
+            token: token
+        )
+        return try response.transfer?.transfer(expectedChatID: chatID)
+    }
+
+    func acceptOwnershipTransfer(
+        chatID: UUID,
+        transferID: UUID,
+        token: String
+    ) async throws -> CommunityOwnershipTransferReceipt {
+        try await decideOwnershipTransfer(
+            chatID: chatID,
+            transferID: transferID,
+            decision: "accept",
+            token: token
+        )
+    }
+
+    func cancelOwnershipTransfer(
+        chatID: UUID,
+        transferID: UUID,
+        token: String
+    ) async throws -> CommunityOwnershipTransferReceipt {
+        try await decideOwnershipTransfer(
+            chatID: chatID,
+            transferID: transferID,
+            decision: "cancel",
+            token: token
+        )
+    }
+
+    private func decideOwnershipTransfer(
+        chatID: UUID,
+        transferID: UUID,
+        decision: String,
+        token: String
+    ) async throws -> CommunityOwnershipTransferReceipt {
+        let response: APICommunityOwnershipTransferResponse = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/ownership-transfers/\(transferID.apiPathComponent)/\(decision)",
+            method: "POST",
+            token: token
+        )
+        let transfer = try response.transfer.transfer(expectedChatID: chatID)
+        guard transfer.id == transferID else { throw LuxoraAPIError.invalidResponse }
+        return CommunityOwnershipTransferReceipt(
+            transfer: transfer,
+            replayed: response.replayed
+        )
+    }
+
     private func decideJoinRequest(
         chatID: UUID,
         requestID: UUID,
@@ -555,6 +635,55 @@ private struct APICommunityJoinRequestListResponse: Decodable, Sendable {
 private struct APICommunityJoinDecisionResponse: Decodable, Sendable {
     let request: APICommunityJoinRequest
     let membership: APICommunityMembership?
+    let replayed: Bool
+}
+
+private struct APICommunityInitiateTransferBody: Encodable, Sendable {
+    let targetUserId: String
+    let clientNonce: String
+}
+
+private struct APICommunityOwnershipTransfer: Decodable, Sendable {
+    let id: UUID
+    let chatId: UUID
+    let fromUserId: UUID
+    let toUserId: UUID
+    let state: CommunityOwnershipTransferState
+    let expiresAt: Date
+    let createdAt: Date
+    let decidedAt: Date?
+    let decidedBy: UUID?
+
+    func transfer(expectedChatID: UUID) throws -> CommunityOwnershipTransfer {
+        guard chatId == expectedChatID, fromUserId != toUserId else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        switch state {
+        case .pending:
+            guard decidedAt == nil, decidedBy == nil else {
+                throw LuxoraAPIError.invalidResponse
+            }
+        case .accepted, .cancelled, .expired:
+            guard decidedAt != nil, decidedBy != nil else {
+                throw LuxoraAPIError.invalidResponse
+            }
+        }
+        return CommunityOwnershipTransfer(
+            id: id,
+            chatID: chatId,
+            fromUserID: fromUserId,
+            toUserID: toUserId,
+            state: state,
+            expiresAt: expiresAt,
+            createdAt: createdAt,
+            decidedAt: decidedAt,
+            decidedBy: decidedBy
+        )
+    }
+}
+
+private struct APICommunityOwnershipTransferResponse: Decodable, Sendable {
+    let transfer: APICommunityOwnershipTransfer
     let replayed: Bool
 }
 

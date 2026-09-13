@@ -38,6 +38,7 @@ import type {
   ChatMembershipCommandReceiptRecord,
   ChatInviteLinkRecord,
   ChatJoinRequestRecord,
+  ChatOwnershipTransferRecord,
   ChatRecord,
   IdentityAuditAction,
   MessageRecord,
@@ -1021,6 +1022,22 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     decidedBy: string,
     at: string
   ): ChatJoinRequestRecord | null;
+  createChatOwnershipTransfer(transfer: ChatOwnershipTransferRecord): ChatOwnershipTransferRecord;
+  findChatOwnershipTransferById(id: string): ChatOwnershipTransferRecord | null;
+  findPendingChatOwnershipTransfer(chatId: string): ChatOwnershipTransferRecord | null;
+  findChatOwnershipTransferByInitiatorNonce(fromUserId: string, clientNonce: string): ChatOwnershipTransferRecord | null;
+  decideChatOwnershipTransfer(
+    id: string,
+    state: Exclude<ChatOwnershipTransferRecord["state"], "pending">,
+    decidedBy: string,
+    at: string
+  ): ChatOwnershipTransferRecord | null;
+  transferChatOwnership(
+    chatId: string,
+    fromUserId: string,
+    toUserId: string,
+    at: string
+  ): { newOwner: ChatMemberRecord; previousOwner: ChatMemberRecord } | null;
   listPeerUserIds(userId: string): string[];
   getChatForUser(chatId: string, userId: string): Chat | null;
   getChatPreferences(chatId: string, userId: string): ChatPreferences | null;

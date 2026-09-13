@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-13 ~17:10 UTC · `main` — CI зелёный везде
+**Обновлено:** 2026-09-13 ~18:05 UTC · `main` — 034 в QA перед пушем
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,7 +35,8 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
-- 033 join-request approval (миграция, union join, approve/deny, realtime, Swift adapter) — CI зелёный везде.
+- 034 ownership transfer (в QA): двухшаговая церемония, атомарный swap ролей, ceremony-aware DB-триггер, Swift adapter. Protocol 17/104, API 80/657 локально.
+- 033 join-request approval — CI зелёный везде.
 - Параллельная сессия в workspace: LICENSE (MIT), README.md/RU rework — втянуто, бейджи приведены к truth-гейту.
 - `81ce142` invite-ссылки 032 (+фиксы Swift-тестов, бейджей).
 - `b41448e` ремонт красного main после 030/031.

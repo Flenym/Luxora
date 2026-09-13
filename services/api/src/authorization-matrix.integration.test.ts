@@ -332,6 +332,27 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
     url: `/v1/chats/${RESOURCE_ID_CANARY}/join-requests/${SECOND_RESOURCE_ID}/deny`
   },
   {
+    key: "POST /v1/chats/:id/ownership-transfers",
+    method: "POST",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/ownership-transfers`,
+    payload: { targetUserId: SECOND_RESOURCE_ID, clientNonce: RESOURCE_ID_CANARY }
+  },
+  {
+    key: "GET /v1/chats/:id/ownership-transfers",
+    method: "GET",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/ownership-transfers`
+  },
+  {
+    key: "POST /v1/chats/:id/ownership-transfers/:transferId/accept",
+    method: "POST",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/ownership-transfers/${SECOND_RESOURCE_ID}/accept`
+  },
+  {
+    key: "POST /v1/chats/:id/ownership-transfers/:transferId/cancel",
+    method: "POST",
+    url: `/v1/chats/${RESOURCE_ID_CANARY}/ownership-transfers/${SECOND_RESOURCE_ID}/cancel`
+  },
+  {
     key: "GET /v1/chats/:id/messages",
     method: "GET",
     url: `/v1/chats/${RESOURCE_ID_CANARY}/messages`
@@ -613,7 +634,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(90);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(94);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

@@ -4076,5 +4076,49 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_chat_join_requests_chat
         ON chat_join_requests(chat_id, created_at, id);
     `
+  },
+  {
+    id: "034_chat_ownership_transfer",
+    sql: `
+      CREATE TABLE chat_ownership_transfers (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        from_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        to_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        state TEXT NOT NULL DEFAULT 'pending'
+          CHECK (state IN ('pending', 'accepted', 'cancelled', 'expired')),
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+        client_nonce TEXT NOT NULL,
+        UNIQUE (from_user_id, client_nonce),
+        CHECK (from_user_id <> to_user_id)
+      ) STRICT;
+      CREATE UNIQUE INDEX idx_chat_ownership_transfers_pending
+        ON chat_ownership_transfers(chat_id) WHERE state = 'pending';
+      CREATE INDEX idx_chat_ownership_transfers_chat
+        ON chat_ownership_transfers(chat_id, created_at, id);
+      -- The dedicated ceremony may swap the owner role only while its live
+      -- pending transfer names both sides. Every other owner-role write,
+      -- including direct-chat and delete paths guarded elsewhere, still aborts.
+      -- Service writers additionally restrict owner targets to this ceremony.
+      DROP TRIGGER trg_chat_members_owner_immutable;
+      CREATE TRIGGER trg_chat_members_owner_immutable
+      BEFORE UPDATE OF role ON chat_members
+      WHEN (OLD.role = 'owner' OR NEW.role = 'owner')
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_ownership_transfers
+          WHERE chat_id = OLD.chat_id
+            AND state = 'pending'
+            AND (
+              (from_user_id = OLD.user_id AND to_user_id <> OLD.user_id)
+              OR (to_user_id = OLD.user_id AND from_user_id <> OLD.user_id)
+            )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'chat owner transfer requires a dedicated ceremony');
+      END;
+    `
   }
 ];

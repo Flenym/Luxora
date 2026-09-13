@@ -380,6 +380,21 @@ export interface ChatJoinRequestRecord {
   clientNonce: string;
 }
 
+export type ChatOwnershipTransferState = "pending" | "accepted" | "cancelled" | "expired";
+
+export interface ChatOwnershipTransferRecord {
+  id: string;
+  chatId: string;
+  fromUserId: string;
+  toUserId: string;
+  state: ChatOwnershipTransferState;
+  expiresAt: string;
+  createdAt: string;
+  decidedAt: string | null;
+  decidedBy: string | null;
+  clientNonce: string;
+}
+
 export interface ChatFolderRulesRecord {
   includeKinds: ChatKind[];
   unreadOnly: boolean;

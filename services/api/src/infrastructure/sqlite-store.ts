@@ -107,6 +107,7 @@ import type {
   ChatMembershipCommandReceiptRecord,
   ChatInviteLinkRecord,
   ChatJoinRequestRecord,
+  ChatOwnershipTransferRecord,
   ChatRecord,
   IdentityAuditAction,
   MessageRecord,
@@ -474,6 +475,19 @@ interface ChatJoinRequestRow {
   decided_by: string | null;
   created_at: string;
   decided_at: string | null;
+  client_nonce: string;
+}
+
+interface ChatOwnershipTransferRow {
+  id: string;
+  chat_id: string;
+  from_user_id: string;
+  to_user_id: string;
+  state: ChatOwnershipTransferRecord["state"];
+  expires_at: string;
+  created_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
   client_nonce: string;
 }
 
@@ -1096,6 +1110,21 @@ function mapChatJoinRequest(row: ChatJoinRequestRow): ChatJoinRequestRecord {
     decidedBy: row.decided_by,
     createdAt: row.created_at,
     decidedAt: row.decided_at,
+    clientNonce: row.client_nonce
+  };
+}
+
+function mapChatOwnershipTransfer(row: ChatOwnershipTransferRow): ChatOwnershipTransferRecord {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    fromUserId: row.from_user_id,
+    toUserId: row.to_user_id,
+    state: row.state,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    decidedAt: row.decided_at,
+    decidedBy: row.decided_by,
     clientNonce: row.client_nonce
   };
 }
@@ -8629,6 +8658,95 @@ export class SqliteStore implements Store {
     return this.findChatJoinRequestById(id);
   }
 
+  createChatOwnershipTransfer(transfer: ChatOwnershipTransferRecord): ChatOwnershipTransferRecord {
+    this.#db.prepare(`
+      INSERT INTO chat_ownership_transfers (
+        id, chat_id, from_user_id, to_user_id, state,
+        expires_at, created_at, decided_at, decided_by, client_nonce
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      transfer.id,
+      transfer.chatId,
+      transfer.fromUserId,
+      transfer.toUserId,
+      transfer.state,
+      transfer.expiresAt,
+      transfer.createdAt,
+      transfer.decidedAt,
+      transfer.decidedBy,
+      transfer.clientNonce
+    );
+    const created = this.findChatOwnershipTransferById(transfer.id);
+    if (created === null) throw new Error("Chat ownership transfer was not persisted");
+    return created;
+  }
+
+  findChatOwnershipTransferById(id: string): ChatOwnershipTransferRecord | null {
+    const row = this.#db.prepare("SELECT * FROM chat_ownership_transfers WHERE id = ?")
+      .get(id) as ChatOwnershipTransferRow | undefined;
+    return row === undefined ? null : mapChatOwnershipTransfer(row);
+  }
+
+  findPendingChatOwnershipTransfer(chatId: string): ChatOwnershipTransferRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM chat_ownership_transfers WHERE chat_id = ? AND state = 'pending'
+    `).get(chatId) as ChatOwnershipTransferRow | undefined;
+    return row === undefined ? null : mapChatOwnershipTransfer(row);
+  }
+
+  findChatOwnershipTransferByInitiatorNonce(fromUserId: string, clientNonce: string): ChatOwnershipTransferRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM chat_ownership_transfers WHERE from_user_id = ? AND client_nonce = ?
+    `).get(fromUserId, clientNonce) as ChatOwnershipTransferRow | undefined;
+    return row === undefined ? null : mapChatOwnershipTransfer(row);
+  }
+
+  decideChatOwnershipTransfer(
+    id: string,
+    state: Exclude<ChatOwnershipTransferRecord["state"], "pending">,
+    decidedBy: string,
+    at: string
+  ): ChatOwnershipTransferRecord | null {
+    const result = this.#db.prepare(`
+      UPDATE chat_ownership_transfers
+      SET state = ?, decided_by = ?, decided_at = ?
+      WHERE id = ? AND state = 'pending'
+    `).run(state, decidedBy, at, id);
+    if (result.changes !== 1) return null;
+    return this.findChatOwnershipTransferById(id);
+  }
+
+  transferChatOwnership(
+    chatId: string,
+    fromUserId: string,
+    toUserId: string,
+    at: string
+  ): { newOwner: ChatMemberRecord; previousOwner: ChatMemberRecord } | null {
+    return this.#db.transaction(() => {
+      const from = this.getChatMember(chatId, fromUserId);
+      const to = this.getChatMember(chatId, toUserId);
+      if (from === null || from.role !== "owner") return null;
+      if (to === null || to.role === "owner") return null;
+      const effectiveAt = timestampAfterFloor(at, from.updatedAt > to.updatedAt ? from.updatedAt : to.updatedAt);
+      const promoted = this.#db.prepare(`
+        UPDATE chat_members
+        SET role = 'owner', membership_revision = membership_revision + 1, membership_updated_at = ?
+        WHERE chat_id = ? AND user_id = ? AND role <> 'owner'
+      `).run(effectiveAt, chatId, toUserId);
+      if (promoted.changes !== 1) return null;
+      const demoted = this.#db.prepare(`
+        UPDATE chat_members
+        SET role = 'admin', membership_revision = membership_revision + 1, membership_updated_at = ?
+        WHERE chat_id = ? AND user_id = ? AND role = 'owner'
+      `).run(effectiveAt, chatId, fromUserId);
+      if (demoted.changes !== 1) return null;
+      const newOwner = this.getChatMember(chatId, toUserId);
+      const previousOwner = this.getChatMember(chatId, fromUserId);
+      if (newOwner === null || previousOwner === null) return null;
+      return { newOwner, previousOwner };
+    }).immediate();
+  }
+
   listPeerUserIds(userId: string): string[] {
     const rows = this.#db.prepare(`
       SELECT DISTINCT peers.user_id
@@ -10731,6 +10849,7 @@ export class SqliteStore implements Store {
       case "safety.report.submitted": return event.report.id;
       case "chat.member.changed": return `${event.membership.chatId}:${event.membership.userId}`;
       case "chat.join.request.changed": return `${event.request.chatId}:${event.request.id}`;
+      case "chat.ownership.transfer.changed": return `${event.transfer.chatId}:${event.transfer.id}`;
       case "chat.preferences.updated": return `${event.chatId}:${event.accountId}`;
       case "chat.folders.updated": return event.accountId;
       case "chat.draft.changed": return `${event.chatId}:${event.accountId}`;

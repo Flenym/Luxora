@@ -211,6 +211,57 @@ public struct CommunityJoinDecision: Equatable, Sendable {
     }
 }
 
+public enum CommunityOwnershipTransferState: String, Equatable, Hashable, Sendable, Codable {
+    case pending
+    case accepted
+    case cancelled
+    case expired
+}
+
+public struct CommunityOwnershipTransfer: Equatable, Hashable, Sendable {
+    public let id: UUID
+    public let chatID: UUID
+    public let fromUserID: UUID
+    public let toUserID: UUID
+    public let state: CommunityOwnershipTransferState
+    public let expiresAt: Date
+    public let createdAt: Date
+    public let decidedAt: Date?
+    public let decidedBy: UUID?
+
+    public init(
+        id: UUID,
+        chatID: UUID,
+        fromUserID: UUID,
+        toUserID: UUID,
+        state: CommunityOwnershipTransferState,
+        expiresAt: Date,
+        createdAt: Date,
+        decidedAt: Date?,
+        decidedBy: UUID?
+    ) {
+        self.id = id
+        self.chatID = chatID
+        self.fromUserID = fromUserID
+        self.toUserID = toUserID
+        self.state = state
+        self.expiresAt = expiresAt
+        self.createdAt = createdAt
+        self.decidedAt = decidedAt
+        self.decidedBy = decidedBy
+    }
+}
+
+public struct CommunityOwnershipTransferReceipt: Equatable, Sendable {
+    public let transfer: CommunityOwnershipTransfer
+    public let replayed: Bool
+
+    public init(transfer: CommunityOwnershipTransfer, replayed: Bool) {
+        self.transfer = transfer
+        self.replayed = replayed
+    }
+}
+
 public enum CommunityMemberMutationKind: String, CaseIterable, Hashable, Sendable {
     case add
     case changeRole

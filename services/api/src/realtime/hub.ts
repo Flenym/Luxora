@@ -432,6 +432,7 @@ export class RealtimeHub implements EventPublisher {
       case "topic.updated": return event.topic.chatId;
       case "chat.member.changed": return event.membership.chatId;
       case "chat.join.request.changed": return event.request.chatId;
+      case "chat.ownership.transfer.changed": return event.transfer.chatId;
       case "chat.preferences.updated": return event.chatId;
       case "chat.folders.updated": return null;
       case "chat.draft.changed": return event.chatId;

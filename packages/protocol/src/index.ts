@@ -1710,6 +1710,54 @@ export const ChatJoinRequestRealtimeEventSchema = z.object({
   changedAt: TimestampSchema
 }).strict();
 
+export const ChatOwnershipTransferStateSchema = z.enum(["pending", "accepted", "cancelled", "expired"]);
+export const ChatOwnershipTransferSchema = z.object({
+  id: IdSchema,
+  chatId: IdSchema,
+  fromUserId: IdSchema,
+  toUserId: IdSchema,
+  state: ChatOwnershipTransferStateSchema,
+  expiresAt: TimestampSchema,
+  createdAt: TimestampSchema,
+  decidedAt: TimestampSchema.nullable(),
+  decidedBy: IdSchema.nullable()
+}).strict().superRefine((value, context) => {
+  if (value.fromUserId === value.toUserId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Ownership cannot transfer to the current owner",
+      path: ["toUserId"]
+    });
+  }
+  if (value.state === "pending" && (value.decidedAt !== null || value.decidedBy !== null)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Pending transfers carry no decision",
+      path: ["state"]
+    });
+  }
+  if (value.state !== "pending" && (value.decidedAt === null || value.decidedBy === null)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Decided transfers carry a decider and decision time",
+      path: ["state"]
+    });
+  }
+});
+export const InitiateOwnershipTransferRequestSchema = z.object({
+  targetUserId: IdSchema,
+  clientNonce: IdSchema
+}).strict();
+export const ChatOwnershipTransferResponseSchema = z.object({
+  transfer: ChatOwnershipTransferSchema,
+  replayed: z.boolean()
+}).strict();
+export const ChatOwnershipTransferChangedRealtimeEventSchema = z.object({
+  type: z.literal("chat.ownership.transfer.changed"),
+  audience: z.literal("member_account"),
+  transfer: ChatOwnershipTransferSchema,
+  changedAt: TimestampSchema
+}).strict();
 export const CreateChatRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("direct"),
@@ -2712,6 +2760,7 @@ export const DurableRealtimeEventSchema = z.union([
   IA1RealtimeEventSchema,
   ChatMembershipRealtimeEventSchema,
   ChatJoinRequestRealtimeEventSchema,
+  ChatOwnershipTransferChangedRealtimeEventSchema,
   ChatPreferencesRealtimeEventSchema,
   ChatFoldersRealtimeEventSchema,
   ChatDraftRealtimeEventSchema,
@@ -3013,6 +3062,10 @@ export type ChatJoinRequest = z.infer<typeof ChatJoinRequestSchema>;
 export type RequestChatJoinDecision = z.infer<typeof RequestChatJoinDecisionSchema>;
 export type ChatJoinRequestListResponse = z.infer<typeof ChatJoinRequestListResponseSchema>;
 export type DecideChatJoinRequestResponse = z.infer<typeof DecideChatJoinRequestResponseSchema>;
+export type ChatOwnershipTransferState = z.infer<typeof ChatOwnershipTransferStateSchema>;
+export type ChatOwnershipTransfer = z.infer<typeof ChatOwnershipTransferSchema>;
+export type InitiateOwnershipTransferRequest = z.infer<typeof InitiateOwnershipTransferRequestSchema>;
+export type ChatOwnershipTransferResponse = z.infer<typeof ChatOwnershipTransferResponseSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type Attachment = z.infer<typeof AttachmentSchema>;
 export type AttachmentListResponse = z.infer<typeof AttachmentListResponseSchema>;

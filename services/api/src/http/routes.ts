@@ -20,6 +20,7 @@ import {
   EditMessageRequestSchema,
   ForwardMessageRequestSchema,
   IdSchema,
+  InitiateOwnershipTransferRequestSchema,
   JoinChatByInviteRequestSchema,
   LoginRequestSchema,
   MarkReadRequestSchema,
@@ -665,6 +666,36 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   }, async (request) => {
     const params = z.object({ id: IdSchema, requestId: IdSchema }).strict().parse(request.params);
     return dependencies.chats.denyJoinRequest(request.auth.userId, params.id, params.requestId);
+  });
+
+  app.post("/v1/chats/:id/ownership-transfers", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = InitiateOwnershipTransferRequestSchema.parse(request.body);
+    return reply.code(201).send(dependencies.chats.initiateOwnershipTransfer(request.auth.userId, id, input));
+  });
+
+  app.get("/v1/chats/:id/ownership-transfers", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    return dependencies.chats.getOwnershipTransfer(request.auth.userId, id);
+  });
+
+  app.post("/v1/chats/:id/ownership-transfers/:transferId/accept", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const params = z.object({ id: IdSchema, transferId: IdSchema }).strict().parse(request.params);
+    return dependencies.chats.acceptOwnershipTransfer(request.auth.userId, params.id, params.transferId);
+  });
+
+  app.post("/v1/chats/:id/ownership-transfers/:transferId/cancel", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const params = z.object({ id: IdSchema, transferId: IdSchema }).strict().parse(request.params);
+    return dependencies.chats.cancelOwnershipTransfer(request.auth.userId, params.id, params.transferId);
   });
 
   app.get("/v1/chats/:id/messages", { preHandler: dependencies.authGuard }, async (request) => {

@@ -12,6 +12,8 @@ import type {
   ChatMember,
   ChatMembership,
   ChatMembershipMutationResponse,
+  ChatOwnershipTransfer,
+  ChatOwnershipTransferResponse,
   ChatPreferences,
   CreateChatInviteLinkRequest,
   CreateChatInviteLinkResponse,
@@ -20,6 +22,7 @@ import type {
   DecideChatJoinRequestResponse,
   EditMessageRequest,
   ForwardMessageRequest,
+  InitiateOwnershipTransferRequest,
   JoinChatByInviteRequest,
   JoinChatByInviteResponse,
   Message,
@@ -44,6 +47,7 @@ import type {
   ChatJoinRequestRecord,
   ChatMemberRecord,
   ChatMembershipCommandReceiptRecord,
+  ChatOwnershipTransferRecord,
   ChatRecord,
   MessageRecord,
   StoredEvent,
@@ -55,6 +59,7 @@ import type { EventPublisher } from "./event-publisher.js";
 
 const MAX_PINS_PER_CHAT = 50;
 const MAX_CHAT_MEMBERS = 200;
+const OWNERSHIP_TRANSFER_TTL_MS = 24 * 3_600_000;
 
 function directKey(leftUserId: string, rightUserId: string): string {
   return leftUserId === rightUserId
@@ -785,6 +790,163 @@ export class ChatService {
     requestId: string
   ): DecideChatJoinRequestResponse {
     return this.#decideJoinRequest(actorUserId, chatId, requestId, "denied");
+  }
+
+  initiateOwnershipTransfer(
+    actorUserId: string,
+    chatId: string,
+    input: InitiateOwnershipTransferRequest
+  ): ChatOwnershipTransferResponse {
+    const result = this.store.immediateTransaction(() => {
+      const actor = this.#requireMember(chatId, actorUserId);
+      const chat = this.store.findChatRecord(chatId);
+      if (chat === null) throw notFound("Chat not found");
+      if (chat.kind === "direct") throw conflict("Direct chats have no transferable ownership");
+      if (actor.role !== "owner") throw forbidden("Only the chat owner can transfer ownership");
+      if (input.targetUserId === actorUserId) throw conflict("You already own this chat");
+      const target = this.store.getChatMember(chatId, input.targetUserId);
+      if (target === null) throw notFound("Chat member not found");
+      if (target.role === "owner") throw conflict("Chat member is already the owner");
+
+      const byNonce = this.store.findChatOwnershipTransferByInitiatorNonce(actorUserId, input.clientNonce);
+      if (byNonce !== null) {
+        if (byNonce.chatId !== chatId || byNonce.toUserId !== input.targetUserId) {
+          throw conflict("clientNonce has already been used for a different transfer");
+        }
+        return { response: { transfer: this.#transferView(byNonce), replayed: true }, events: [] as StoredEvent[] };
+      }
+      const now = new Date().toISOString();
+      const pending = this.store.findPendingChatOwnershipTransfer(chatId);
+      if (pending !== null) {
+        if (pending.expiresAt > now) {
+          throw conflict("An ownership transfer is already pending", {
+            reason: "transfer_pending",
+            transferId: pending.id
+          });
+        }
+        this.store.decideChatOwnershipTransfer(pending.id, "expired", actorUserId, now);
+      }
+      try {
+        const transfer = this.store.createChatOwnershipTransfer({
+          id: randomUUID(),
+          chatId,
+          fromUserId: actorUserId,
+          toUserId: input.targetUserId,
+          state: "pending",
+          expiresAt: new Date(Date.parse(now) + OWNERSHIP_TRANSFER_TTL_MS).toISOString(),
+          createdAt: now,
+          decidedAt: null,
+          decidedBy: null,
+          clientNonce: input.clientNonce
+        });
+        return {
+          response: { transfer: this.#transferView(transfer), replayed: false },
+          events: this.#appendTransferChanged(transfer, [transfer.toUserId, ...this.#chatAdminIds(chatId)], now)
+        };
+      } catch (error) {
+        if (!isSqliteUniqueConstraint(error)) throw error;
+        const raced = this.store.findChatOwnershipTransferByInitiatorNonce(actorUserId, input.clientNonce)
+          ?? this.store.findPendingChatOwnershipTransfer(chatId);
+        if (raced === null) throw error;
+        return { response: { transfer: this.#transferView(raced), replayed: true }, events: [] as StoredEvent[] };
+      }
+    });
+    this.publisher.publish(result.events);
+    return result.response;
+  }
+
+  getOwnershipTransfer(
+    userId: string,
+    chatId: string
+  ): { transfer: ChatOwnershipTransfer | null } {
+    const member = this.#requireMember(chatId, userId);
+    const pending = this.store.findPendingChatOwnershipTransfer(chatId);
+    if (pending === null) return { transfer: null };
+    if (member.role !== "owner" && member.role !== "admin" && pending.toUserId !== userId) {
+      throw forbidden("Only chat administrators and the designated successor can view transfers");
+    }
+    return { transfer: this.#transferView(pending) };
+  }
+
+  acceptOwnershipTransfer(
+    userId: string,
+    chatId: string,
+    transferId: string
+  ): ChatOwnershipTransferResponse {
+    const result = this.store.immediateTransaction(() => {
+      this.#requireMember(chatId, userId);
+      const chat = this.store.findChatRecord(chatId);
+      if (chat === null) throw notFound("Chat not found");
+      const transfer = this.store.findChatOwnershipTransferById(transferId);
+      if (transfer === null || transfer.chatId !== chatId) throw notFound("Ownership transfer not found");
+      if (transfer.state !== "pending") {
+        return { response: { transfer: this.#transferView(transfer), replayed: true }, events: [] as StoredEvent[] };
+      }
+      if (transfer.toUserId !== userId) {
+        throw forbidden("Only the designated successor can accept this transfer");
+      }
+      const now = new Date().toISOString();
+      if (transfer.expiresAt <= now) {
+        const expired = this.store.decideChatOwnershipTransfer(transferId, "expired", userId, now);
+        if (expired === null) {
+          const raced = this.store.findChatOwnershipTransferById(transferId);
+          if (raced === null) throw notFound("Ownership transfer not found");
+          if (raced.state === "expired") {
+            throw notFound("Ownership transfer has expired", { reason: "transfer_expired" });
+          }
+          return { response: { transfer: this.#transferView(raced), replayed: true }, events: [] as StoredEvent[] };
+        }
+        throw notFound("Ownership transfer has expired", { reason: "transfer_expired" });
+      }
+      // Atomic role swap first: a lost race surfaces as a superseded
+      // ceremony instead of an approval without effect.
+      const swapped = this.store.transferChatOwnership(chatId, transfer.fromUserId, transfer.toUserId, now);
+      if (swapped === null) {
+        throw conflict("Chat ownership already moved", { reason: "transfer_superseded" });
+      }
+      const decided = this.store.decideChatOwnershipTransfer(transferId, "accepted", userId, now);
+      if (decided === null) {
+        const raced = this.store.findChatOwnershipTransferById(transferId);
+        if (raced === null) throw notFound("Ownership transfer not found");
+        return { response: { transfer: this.#transferView(raced), replayed: true }, events: [] as StoredEvent[] };
+      }
+      const events = this.#appendTransferChanged(decided, [decided.toUserId, ...this.#chatAdminIds(chatId)], now);
+      events.push(...this.#appendMembershipChanged(chatId, "role_updated", swapped.newOwner, userId, now));
+      events.push(...this.#appendMembershipChanged(chatId, "role_updated", swapped.previousOwner, userId, now));
+      return { response: { transfer: this.#transferView(decided), replayed: false }, events };
+    });
+    this.publisher.publish(result.events);
+    return result.response;
+  }
+
+  cancelOwnershipTransfer(
+    actorUserId: string,
+    chatId: string,
+    transferId: string
+  ): ChatOwnershipTransferResponse {
+    const result = this.store.immediateTransaction(() => {
+      const actor = this.#requireMember(chatId, actorUserId);
+      if (actor.role !== "owner") throw forbidden("Only the chat owner can cancel a transfer");
+      const transfer = this.store.findChatOwnershipTransferById(transferId);
+      if (transfer === null || transfer.chatId !== chatId) throw notFound("Ownership transfer not found");
+      if (transfer.fromUserId !== actorUserId) throw forbidden("Only the initiating owner can cancel a transfer");
+      if (transfer.state !== "pending") {
+        return { response: { transfer: this.#transferView(transfer), replayed: true }, events: [] as StoredEvent[] };
+      }
+      const now = new Date().toISOString();
+      const cancelled = this.store.decideChatOwnershipTransfer(transferId, "cancelled", actorUserId, now);
+      if (cancelled === null) {
+        const raced = this.store.findChatOwnershipTransferById(transferId);
+        if (raced === null) throw notFound("Ownership transfer not found");
+        return { response: { transfer: this.#transferView(raced), replayed: true }, events: [] as StoredEvent[] };
+      }
+      return {
+        response: { transfer: this.#transferView(cancelled), replayed: false },
+        events: this.#appendTransferChanged(cancelled, [cancelled.toUserId, ...this.#chatAdminIds(chatId)], now)
+      };
+    });
+    this.publisher.publish(result.events);
+    return result.response;
   }
 
   #requestChatJoin(
@@ -1664,6 +1826,34 @@ export class ChatService {
       createdAt: record.createdAt,
       decidedAt: record.decidedAt
     };
+  }
+
+  #transferView(record: ChatOwnershipTransferRecord): ChatOwnershipTransfer {
+    return {
+      id: record.id,
+      chatId: record.chatId,
+      fromUserId: record.fromUserId,
+      toUserId: record.toUserId,
+      state: record.state,
+      expiresAt: record.expiresAt,
+      createdAt: record.createdAt,
+      decidedAt: record.decidedAt,
+      decidedBy: record.decidedBy
+    };
+  }
+
+  #appendTransferChanged(
+    record: ChatOwnershipTransferRecord,
+    audienceUserIds: string[],
+    changedAt: string
+  ): StoredEvent[] {
+    const event = {
+      type: "chat.ownership.transfer.changed" as const,
+      audience: "member_account" as const,
+      transfer: this.#transferView(record),
+      changedAt
+    };
+    return [...new Set(audienceUserIds)].map((audienceUserId) => this.store.appendEvent(audienceUserId, event, changedAt));
   }
 
   #inviteTokenShownOnce(inviteId?: string) {
