@@ -4,6 +4,14 @@
 **Владелец и разработчик:** Flenym  
 **Обновлено:** 15 августа 2026
 
+> **Checkpoint 2026-09-13 (`b41448e`, main зелёный — все 4 CI workflow PASS):**
+> protocol 15 файлов / 99 тестов PASS, API 77 файлов / 640 тестов PASS
+> (локально Windows + CI Linux), миграция `031_notification_categories`
+> (per-category alerts: groups/channels/stories/reactions + message-requests
+> тумблер в iPhone-настройках). По пути починены хвосты 030-экспансии:
+> `lastSeenAt` в lookup-проекции, 7-польный privacy-апдейтер в MessengerStore/
+> фикстурах/тестах, синхронный обход кэша вне async-контекста.
+
 `[x]` means a repository foundation exists, not that a production gate passed. Execution order is server-complete → full iPhone → all other clients/public site.
 
 Полное iPhone-завершение и непрерывная очередь проверяются по
