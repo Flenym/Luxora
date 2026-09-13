@@ -128,6 +128,7 @@ actor LuxoraCommunityAPIClient {
 
     func createInviteLink(
         chatID: UUID,
+        approvalRequired: Bool = false,
         expiresInSeconds: Int?,
         maxUses: Int?,
         clientNonce: UUID,
@@ -143,6 +144,7 @@ actor LuxoraCommunityAPIClient {
             path: "/v1/chats/\(chatID.apiPathComponent)/invite-links",
             method: "POST",
             body: APICommunityCreateInviteBody(
+                approvalRequired: approvalRequired ? true : nil,
                 expiresInSeconds: expiresInSeconds,
                 maxUses: maxUses,
                 clientNonce: clientNonce.apiPathComponent
@@ -180,11 +182,11 @@ actor LuxoraCommunityAPIClient {
         token inviteToken: String,
         clientNonce: UUID,
         token: String
-    ) async throws -> CommunityMembershipMutationReceipt {
+    ) async throws -> CommunityInviteJoinOutcome {
         guard inviteToken.count == 43,
               inviteToken.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
         else { throw LuxoraAPIError.invalidResponse }
-        let response: APICommunityMembershipMutationResponse = try await request(
+        let response: APICommunityInviteJoinResponse = try await request(
             path: "/v1/invite-links/join",
             method: "POST",
             body: APICommunityJoinByInviteBody(
@@ -193,8 +195,72 @@ actor LuxoraCommunityAPIClient {
             ),
             token: token
         )
-        let membership = try response.membership.membership()
-        return CommunityMembershipMutationReceipt(
+        return try response.outcome()
+    }
+
+    func joinRequests(chatID: UUID, token: String) async throws -> [CommunityJoinRequest] {
+        let response: APICommunityJoinRequestListResponse = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/join-requests",
+            token: token
+        )
+        guard response.items.count <= 200 else { throw LuxoraAPIError.invalidResponse }
+        return try response.items.map { try $0.request(expectedChatID: chatID) }
+    }
+
+    func approveJoinRequest(
+        chatID: UUID,
+        requestID: UUID,
+        token: String
+    ) async throws -> CommunityJoinDecision {
+        try await decideJoinRequest(
+            chatID: chatID,
+            requestID: requestID,
+            decision: "approve",
+            token: token
+        )
+    }
+
+    func denyJoinRequest(
+        chatID: UUID,
+        requestID: UUID,
+        token: String
+    ) async throws -> CommunityJoinDecision {
+        try await decideJoinRequest(
+            chatID: chatID,
+            requestID: requestID,
+            decision: "deny",
+            token: token
+        )
+    }
+
+    private func decideJoinRequest(
+        chatID: UUID,
+        requestID: UUID,
+        decision: String,
+        token: String
+    ) async throws -> CommunityJoinDecision {
+        let response: APICommunityJoinDecisionResponse = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/join-requests/\(requestID.apiPathComponent)/\(decision)",
+            method: "POST",
+            token: token
+        )
+        let request = try response.request.request(expectedChatID: chatID)
+        guard request.id == requestID else { throw LuxoraAPIError.invalidResponse }
+        let membership: ChatMembership?
+        if let apiMembership = response.membership {
+            let decoded = try apiMembership.membership()
+            guard decoded.chatID == chatID, decoded.userID == request.userID else {
+                throw LuxoraAPIError.invalidResponse
+            }
+            membership = decoded
+        } else {
+            membership = nil
+        }
+        guard request.state != .approved || membership != nil else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        return CommunityJoinDecision(
+            request: request,
             membership: membership,
             replayed: response.replayed
         )
@@ -311,11 +377,13 @@ private struct APICommunityRemoveMemberBody: Encodable, Sendable {
 }
 
 private struct APICommunityCreateInviteBody: Encodable, Sendable {
+    let approvalRequired: Bool?
     let expiresInSeconds: Int?
     let maxUses: Int?
     let clientNonce: String
 
     private enum CodingKeys: String, CodingKey {
+        case approvalRequired
         case expiresInSeconds
         case maxUses
         case clientNonce
@@ -323,6 +391,7 @@ private struct APICommunityCreateInviteBody: Encodable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(approvalRequired, forKey: .approvalRequired)
         try container.encodeIfPresent(expiresInSeconds, forKey: .expiresInSeconds)
         try container.encodeIfPresent(maxUses, forKey: .maxUses)
         try container.encode(clientNonce, forKey: .clientNonce)
@@ -338,11 +407,38 @@ private struct APICommunityInvite: Decodable, Sendable {
     let id: UUID
     let chatId: UUID
     let createdBy: UUID
+    let approvalRequired: Bool
     let expiresAt: Date?
     let maxUses: Int?
     let useCount: Int
     let revokedAt: Date?
     let createdAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case chatId
+        case createdBy
+        case approvalRequired
+        case expiresAt
+        case maxUses
+        case useCount
+        case revokedAt
+        case createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        chatId = try container.decode(UUID.self, forKey: .chatId)
+        createdBy = try container.decode(UUID.self, forKey: .createdBy)
+        // Pre-033 servers omit the flag: such links admit directly.
+        approvalRequired = try container.decodeIfPresent(Bool.self, forKey: .approvalRequired) ?? false
+        expiresAt = try container.decodeIfPresent(Date.self, forKey: .expiresAt)
+        maxUses = try container.decodeIfPresent(Int.self, forKey: .maxUses)
+        useCount = try container.decode(Int.self, forKey: .useCount)
+        revokedAt = try container.decodeIfPresent(Date.self, forKey: .revokedAt)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+    }
 
     func invite(expectedChatID: UUID) throws -> CommunityInviteLink {
         guard chatId == expectedChatID,
@@ -355,6 +451,7 @@ private struct APICommunityInvite: Decodable, Sendable {
             id: id,
             chatID: chatId,
             createdBy: createdBy,
+            approvalRequired: approvalRequired,
             expiresAt: expiresAt,
             maxUses: maxUses,
             useCount: useCount,
@@ -385,6 +482,80 @@ private struct APICommunityInviteCreationResponse: Decodable, Sendable {
 
 private struct APICommunityInviteListResponse: Decodable, Sendable {
     let items: [APICommunityInvite]
+}
+
+private struct APICommunityJoinRequest: Decodable, Sendable {
+    let id: UUID
+    let chatId: UUID
+    let userId: UUID
+    let inviteLinkId: UUID
+    let state: CommunityJoinRequestState
+    let decidedBy: UUID?
+    let createdAt: Date
+    let decidedAt: Date?
+
+    func request(expectedChatID: UUID) throws -> CommunityJoinRequest {
+        guard chatId == expectedChatID else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        switch state {
+        case .pending:
+            guard decidedBy == nil, decidedAt == nil else {
+                throw LuxoraAPIError.invalidResponse
+            }
+        case .approved, .denied:
+            guard decidedBy != nil, decidedAt != nil else {
+                throw LuxoraAPIError.invalidResponse
+            }
+        }
+        return CommunityJoinRequest(
+            id: id,
+            chatID: chatId,
+            userID: userId,
+            inviteLinkID: inviteLinkId,
+            state: state,
+            decidedBy: decidedBy,
+            createdAt: createdAt,
+            decidedAt: decidedAt
+        )
+    }
+}
+
+private struct APICommunityInviteJoinResponse: Decodable, Sendable {
+    let outcome: String
+    let membership: APICommunityMembership?
+    let request: APICommunityJoinRequest?
+    let replayed: Bool
+
+    func outcome() throws -> CommunityInviteJoinOutcome {
+        switch outcome {
+        case "joined":
+            guard let membership, request == nil else {
+                throw LuxoraAPIError.invalidResponse
+            }
+            return .joined(membership: try membership.membership(), replayed: replayed)
+        case "pending":
+            guard let request, membership == nil else {
+                throw LuxoraAPIError.invalidResponse
+            }
+            return .pending(
+                request: try request.request(expectedChatID: request.chatId),
+                replayed: replayed
+            )
+        default:
+            throw LuxoraAPIError.invalidResponse
+        }
+    }
+}
+
+private struct APICommunityJoinRequestListResponse: Decodable, Sendable {
+    let items: [APICommunityJoinRequest]
+}
+
+private struct APICommunityJoinDecisionResponse: Decodable, Sendable {
+    let request: APICommunityJoinRequest
+    let membership: APICommunityMembership?
+    let replayed: Bool
 }
 
 private struct APICommunityInviteRevocationResponse: Decodable, Sendable {

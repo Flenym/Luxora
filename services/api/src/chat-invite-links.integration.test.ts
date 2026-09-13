@@ -6,8 +6,8 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ChatInviteLinkListResponseSchema,
-  ChatMembershipMutationResponseSchema,
   CreateChatInviteLinkResponseSchema,
+  JoinChatByInviteResponseSchema,
   RevokeChatInviteLinkResponseSchema
 } from "@luxora/protocol";
 import type { LuxoraApp } from "./app.js";
@@ -226,7 +226,9 @@ describe("chat invite links", () => {
       payload: { token, clientNonce: joinNonce }
     });
     expect(joined.statusCode).toBe(201);
-    const membership = ChatMembershipMutationResponseSchema.parse(joined.json());
+    const membership = JoinChatByInviteResponseSchema.parse(joined.json());
+    expect(membership.outcome).toBe("joined");
+    if (membership.outcome !== "joined") throw new Error("Expected a direct join");
     expect(membership.replayed).toBe(false);
     expect(membership.membership).toMatchObject({ chatId, userId: guest.id, role: "member" });
 
@@ -255,7 +257,10 @@ describe("chat invite links", () => {
       payload: { token, clientNonce: randomUUID() }
     });
     expect(rejoin.statusCode).toBe(201);
-    expect(ChatMembershipMutationResponseSchema.parse(rejoin.json())).toMatchObject({ replayed: true });
+    expect(JoinChatByInviteResponseSchema.parse(rejoin.json())).toMatchObject({
+      outcome: "joined",
+      replayed: true
+    });
 
     const replay = await app!.inject({
       method: "POST",
@@ -264,7 +269,10 @@ describe("chat invite links", () => {
       payload: { token, clientNonce: joinNonce }
     });
     expect(replay.statusCode).toBe(201);
-    expect(ChatMembershipMutationResponseSchema.parse(replay.json())).toMatchObject({ replayed: true });
+    expect(JoinChatByInviteResponseSchema.parse(replay.json())).toMatchObject({
+      outcome: "joined",
+      replayed: true
+    });
   });
 
   it("rejects nonce reuse across different links", async () => {

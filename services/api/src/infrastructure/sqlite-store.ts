@@ -106,6 +106,7 @@ import type {
   ChatMemberRecord,
   ChatMembershipCommandReceiptRecord,
   ChatInviteLinkRecord,
+  ChatJoinRequestRecord,
   ChatRecord,
   IdentityAuditAction,
   MessageRecord,
@@ -455,11 +456,24 @@ interface ChatInviteLinkRow {
   chat_id: string;
   token_digest: string;
   created_by: string;
+  approval_required: number;
   expires_at: string | null;
   max_uses: number | null;
   use_count: number;
   revoked_at: string | null;
   created_at: string;
+  client_nonce: string;
+}
+
+interface ChatJoinRequestRow {
+  id: string;
+  chat_id: string;
+  user_id: string;
+  invite_link_id: string;
+  state: ChatJoinRequestRecord["state"];
+  decided_by: string | null;
+  created_at: string;
+  decided_at: string | null;
   client_nonce: string;
 }
 
@@ -1062,11 +1076,26 @@ function mapChatInviteLink(row: ChatInviteLinkRow): ChatInviteLinkRecord {
     chatId: row.chat_id,
     tokenDigest: row.token_digest,
     createdBy: row.created_by,
+    approvalRequired: row.approval_required === 1,
     expiresAt: row.expires_at,
     maxUses: row.max_uses,
     useCount: row.use_count,
     revokedAt: row.revoked_at,
     createdAt: row.created_at,
+    clientNonce: row.client_nonce
+  };
+}
+
+function mapChatJoinRequest(row: ChatJoinRequestRow): ChatJoinRequestRecord {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    userId: row.user_id,
+    inviteLinkId: row.invite_link_id,
+    state: row.state,
+    decidedBy: row.decided_by,
+    createdAt: row.created_at,
+    decidedAt: row.decided_at,
     clientNonce: row.client_nonce
   };
 }
@@ -8468,14 +8497,15 @@ export class SqliteStore implements Store {
   createChatInviteLink(link: ChatInviteLinkRecord): ChatInviteLinkRecord {
     this.#db.prepare(`
       INSERT INTO chat_invite_links (
-        id, chat_id, token_digest, created_by, expires_at, max_uses,
+        id, chat_id, token_digest, created_by, approval_required, expires_at, max_uses,
         use_count, revoked_at, created_at, client_nonce
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       link.id,
       link.chatId,
       link.tokenDigest,
       link.createdBy,
+      link.approvalRequired ? 1 : 0,
       link.expiresAt,
       link.maxUses,
       link.useCount,
@@ -8532,6 +8562,71 @@ export class SqliteStore implements Store {
     `).run(id, now);
     if (result.changes !== 1) return null;
     return this.findChatInviteLinkById(id);
+  }
+
+  createChatJoinRequest(request: ChatJoinRequestRecord): ChatJoinRequestRecord {
+    this.#db.prepare(`
+      INSERT INTO chat_join_requests (
+        id, chat_id, user_id, invite_link_id, state,
+        decided_by, created_at, decided_at, client_nonce
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      request.id,
+      request.chatId,
+      request.userId,
+      request.inviteLinkId,
+      request.state,
+      request.decidedBy,
+      request.createdAt,
+      request.decidedAt,
+      request.clientNonce
+    );
+    const created = this.findChatJoinRequestById(request.id);
+    if (created === null) throw new Error("Chat join request was not persisted");
+    return created;
+  }
+
+  findChatJoinRequestById(id: string): ChatJoinRequestRecord | null {
+    const row = this.#db.prepare("SELECT * FROM chat_join_requests WHERE id = ?")
+      .get(id) as ChatJoinRequestRow | undefined;
+    return row === undefined ? null : mapChatJoinRequest(row);
+  }
+
+  findPendingChatJoinRequest(chatId: string, userId: string): ChatJoinRequestRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM chat_join_requests
+      WHERE chat_id = ? AND user_id = ? AND state = 'pending'
+    `).get(chatId, userId) as ChatJoinRequestRow | undefined;
+    return row === undefined ? null : mapChatJoinRequest(row);
+  }
+
+  findChatJoinRequestByRequesterNonce(userId: string, clientNonce: string): ChatJoinRequestRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM chat_join_requests WHERE user_id = ? AND client_nonce = ?
+    `).get(userId, clientNonce) as ChatJoinRequestRow | undefined;
+    return row === undefined ? null : mapChatJoinRequest(row);
+  }
+
+  listChatJoinRequests(chatId: string): ChatJoinRequestRecord[] {
+    const rows = this.#db.prepare(`
+      SELECT * FROM chat_join_requests WHERE chat_id = ? ORDER BY created_at, id
+    `).all(chatId) as ChatJoinRequestRow[];
+    return rows.map(mapChatJoinRequest);
+  }
+
+  decideChatJoinRequest(
+    id: string,
+    state: Exclude<ChatJoinRequestRecord["state"], "pending">,
+    decidedBy: string,
+    at: string
+  ): ChatJoinRequestRecord | null {
+    const result = this.#db.prepare(`
+      UPDATE chat_join_requests
+      SET state = ?, decided_by = ?, decided_at = ?
+      WHERE id = ? AND state = 'pending'
+    `).run(state, decidedBy, at, id);
+    if (result.changes !== 1) return null;
+    return this.findChatJoinRequestById(id);
   }
 
   listPeerUserIds(userId: string): string[] {
@@ -10635,6 +10730,7 @@ export class SqliteStore implements Store {
       case "relationship.block.changed": return event.accountId;
       case "safety.report.submitted": return event.report.id;
       case "chat.member.changed": return `${event.membership.chatId}:${event.membership.userId}`;
+      case "chat.join.request.changed": return `${event.request.chatId}:${event.request.id}`;
       case "chat.preferences.updated": return `${event.chatId}:${event.accountId}`;
       case "chat.folders.updated": return event.accountId;
       case "chat.draft.changed": return `${event.chatId}:${event.accountId}`;

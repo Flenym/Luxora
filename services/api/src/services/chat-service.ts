@@ -8,6 +8,7 @@ import type {
   Attachment,
   Chat,
   ChatInviteLink,
+  ChatJoinRequest,
   ChatMember,
   ChatMembership,
   ChatMembershipMutationResponse,
@@ -16,9 +17,11 @@ import type {
   CreateChatInviteLinkResponse,
   CreateChatRequest,
   CreateTopicRequest,
+  DecideChatJoinRequestResponse,
   EditMessageRequest,
   ForwardMessageRequest,
   JoinChatByInviteRequest,
+  JoinChatByInviteResponse,
   Message,
   MessagePin,
   MessageReceipt,
@@ -38,6 +41,7 @@ import type {
 import type { Store } from "../domain/store.js";
 import type {
   ChatInviteLinkRecord,
+  ChatJoinRequestRecord,
   ChatMemberRecord,
   ChatMembershipCommandReceiptRecord,
   ChatRecord,
@@ -610,6 +614,7 @@ export class ChatService {
           chatId,
           tokenDigest: inviteTokenDigest(token),
           createdBy: actorUserId,
+          approvalRequired: input.approvalRequired ?? false,
           expiresAt: input.expiresInSeconds === undefined
             ? null
             : new Date(Date.parse(now) + input.expiresInSeconds * 1000).toISOString(),
@@ -665,12 +670,17 @@ export class ChatService {
   joinChatByInvite(
     userId: string,
     input: JoinChatByInviteRequest
-  ): ChatMembershipMutationResponse {
+  ): JoinChatByInviteResponse {
     const digest = inviteTokenDigest(input.token);
     const fingerprint = inviteJoinRequestFingerprint(userId, digest);
     const result = this.store.immediateTransaction(() => {
       const replay = this.#membershipReplay(userId, input.clientNonce, fingerprint);
-      if (replay !== null) return { response: replay, events: [] as StoredEvent[] };
+      if (replay !== null) {
+        return {
+          response: { outcome: "joined" as const, membership: replay.membership, replayed: true },
+          events: [] as StoredEvent[]
+        };
+      }
 
       const link = this.store.findChatInviteLinkByDigest(digest);
       if (link === null) throw notFound("Invite link is invalid", { reason: "invite_link_invalid" });
@@ -680,7 +690,10 @@ export class ChatService {
       }
       const current = this.store.getChatMember(chat.id, userId);
       if (current !== null) {
-        return { response: { membership: this.#membershipView(current), replayed: true }, events: [] as StoredEvent[] };
+        return {
+          response: { outcome: "joined" as const, membership: this.#membershipView(current), replayed: true },
+          events: [] as StoredEvent[]
+        };
       }
       const now = new Date().toISOString();
       if (link.revokedAt !== null) {
@@ -691,6 +704,9 @@ export class ChatService {
       }
       if (link.maxUses !== null && link.useCount >= link.maxUses) {
         throw notFound("Invite link is no longer valid", { reason: "invite_link_exhausted" });
+      }
+      if (link.approvalRequired) {
+        return this.#requestChatJoin(userId, chat.id, link, input.clientNonce, now);
       }
       if (this.store.countChatMembers(chat.id) >= MAX_CHAT_MEMBERS) {
         throw conflict(`A chat can contain at most ${MAX_CHAT_MEMBERS} members`);
@@ -705,7 +721,10 @@ export class ChatService {
       if (membership === null) {
         const raced = this.store.getChatMember(chat.id, userId);
         if (raced === null) throw new Error("Invite join did not persist");
-        return { response: { membership: this.#membershipView(raced), replayed: true }, events: [] as StoredEvent[] };
+        return {
+          response: { outcome: "joined" as const, membership: this.#membershipView(raced), replayed: true },
+          events: [] as StoredEvent[]
+        };
       }
       this.#storeMembershipReceipt({
         actorUserId: userId,
@@ -733,10 +752,233 @@ export class ChatService {
         userId,
         now
       ));
-      return { response: { membership: this.#membershipView(membership), replayed: false }, events };
+      return {
+        response: { outcome: "joined" as const, membership: this.#membershipView(membership), replayed: false },
+        events
+      };
     });
     this.publisher.publish(result.events);
     return result.response;
+  }
+
+  listJoinRequests(
+    actorUserId: string,
+    chatId: string
+  ): { items: ChatJoinRequest[] } {
+    this.#requireChatManager(chatId, actorUserId);
+    return {
+      items: this.store.listChatJoinRequests(chatId).slice(0, 200).map((request) => this.#joinRequestView(request))
+    };
+  }
+
+  approveJoinRequest(
+    actorUserId: string,
+    chatId: string,
+    requestId: string
+  ): DecideChatJoinRequestResponse {
+    return this.#decideJoinRequest(actorUserId, chatId, requestId, "approved");
+  }
+
+  denyJoinRequest(
+    actorUserId: string,
+    chatId: string,
+    requestId: string
+  ): DecideChatJoinRequestResponse {
+    return this.#decideJoinRequest(actorUserId, chatId, requestId, "denied");
+  }
+
+  #requestChatJoin(
+    userId: string,
+    chatId: string,
+    link: ChatInviteLinkRecord,
+    clientNonce: string,
+    now: string
+  ): { response: JoinChatByInviteResponse; events: StoredEvent[] } {
+    const byNonce = this.store.findChatJoinRequestByRequesterNonce(userId, clientNonce);
+    if (byNonce !== null) {
+      if (byNonce.chatId !== chatId || byNonce.inviteLinkId !== link.id) {
+        throw conflict("clientNonce has already been used for a different join request");
+      }
+      return {
+        response: { outcome: "pending" as const, request: this.#joinRequestView(byNonce), replayed: true },
+        events: []
+      };
+    }
+    const pending = this.store.findPendingChatJoinRequest(chatId, userId);
+    if (pending !== null) {
+      return {
+        response: { outcome: "pending" as const, request: this.#joinRequestView(pending), replayed: true },
+        events: []
+      };
+    }
+    try {
+      const request = this.store.createChatJoinRequest({
+        id: randomUUID(),
+        chatId,
+        userId,
+        inviteLinkId: link.id,
+        state: "pending",
+        decidedBy: null,
+        createdAt: now,
+        decidedAt: null,
+        clientNonce
+      });
+      return {
+        response: { outcome: "pending" as const, request: this.#joinRequestView(request), replayed: false },
+        events: this.#appendJoinRequestChanged(request, this.#chatAdminIds(chatId), now)
+      };
+    } catch (error) {
+      if (!isSqliteUniqueConstraint(error)) throw error;
+      const raced = this.store.findPendingChatJoinRequest(chatId, userId)
+        ?? this.store.findChatJoinRequestByRequesterNonce(userId, clientNonce);
+      if (raced === null) throw error;
+      return {
+        response: { outcome: "pending" as const, request: this.#joinRequestView(raced), replayed: true },
+        events: []
+      };
+    }
+  }
+
+  #decideJoinRequest(
+    actorUserId: string,
+    chatId: string,
+    requestId: string,
+    decision: "approved" | "denied"
+  ): DecideChatJoinRequestResponse {
+    const result = this.store.immediateTransaction(() => {
+      this.#requireChatManager(chatId, actorUserId);
+      const existing = this.store.findChatJoinRequestById(requestId);
+      if (existing === null || existing.chatId !== chatId) throw notFound("Join request not found");
+      if (existing.state !== "pending") {
+        return { response: this.#replayJoinDecision(chatId, existing), events: [] as StoredEvent[] };
+      }
+      const now = new Date().toISOString();
+      if (decision === "denied") {
+        const denied = this.store.decideChatJoinRequest(requestId, "denied", actorUserId, now);
+        if (denied === null) {
+          const raced = this.store.findChatJoinRequestById(requestId);
+          if (raced === null) throw notFound("Join request not found");
+          return { response: this.#replayJoinDecision(chatId, raced), events: [] as StoredEvent[] };
+        }
+        return {
+          response: { request: this.#joinRequestView(denied), membership: null, replayed: false },
+          events: this.#appendJoinRequestChanged(denied, [denied.userId, ...this.#chatAdminIds(chatId)], now)
+        };
+      }
+      const current = this.store.getChatMember(chatId, existing.userId);
+      if (current !== null) {
+        const decided = this.store.decideChatJoinRequest(requestId, "approved", actorUserId, now);
+        if (decided === null) {
+          const raced = this.store.findChatJoinRequestById(requestId);
+          if (raced === null) throw notFound("Join request not found");
+          return { response: this.#replayJoinDecision(chatId, raced), events: [] as StoredEvent[] };
+        }
+        return {
+          response: {
+            request: this.#joinRequestView(decided),
+            membership: this.#membershipView(current),
+            replayed: false
+          },
+          events: this.#appendJoinRequestChanged(decided, [decided.userId, ...this.#chatAdminIds(chatId)], now)
+        };
+      }
+      if (this.store.countChatMembers(chatId) >= MAX_CHAT_MEMBERS) {
+        throw conflict(`A chat can contain at most ${MAX_CHAT_MEMBERS} members`);
+      }
+      // Consume before deciding so a dead link leaves the request pending
+      // instead of recording an approval without membership.
+      const approvalLink = this.store.findChatInviteLinkById(existing.inviteLinkId);
+      const approveNow = new Date().toISOString();
+      if (approvalLink === null || approvalLink.revokedAt !== null) {
+        throw notFound("Invite link is no longer valid", { reason: "invite_link_revoked" });
+      }
+      if (approvalLink.expiresAt !== null && approvalLink.expiresAt <= approveNow) {
+        throw notFound("Invite link is no longer valid", { reason: "invite_link_expired" });
+      }
+      const consumed = this.store.consumeChatInviteLink(existing.inviteLinkId, approveNow);
+      if (consumed === null) {
+        throw notFound("Invite link is no longer valid", { reason: "invite_link_exhausted" });
+      }
+      const decided = this.store.decideChatJoinRequest(requestId, "approved", actorUserId, now);
+      if (decided === null) {
+        const raced = this.store.findChatJoinRequestById(requestId);
+        if (raced === null) throw notFound("Join request not found");
+        return { response: this.#replayJoinDecision(chatId, raced), events: [] as StoredEvent[] };
+      }
+      const membership = this.store.createChatMember(chatId, existing.userId, "member", now);
+      if (membership === null) {
+        const racedMember = this.store.getChatMember(chatId, existing.userId);
+        if (racedMember === null) throw new Error("Approved join did not persist");
+        return {
+          response: {
+            request: this.#joinRequestView(decided),
+            membership: this.#membershipView(racedMember),
+            replayed: false
+          },
+          events: this.#appendJoinRequestChanged(decided, [decided.userId, ...this.#chatAdminIds(chatId)], now)
+        };
+      }
+      const events = this.#appendJoinRequestChanged(decided, [decided.userId, ...this.#chatAdminIds(chatId)], now);
+      const addedChat = this.store.getChatForUser(chatId, existing.userId);
+      if (addedChat === null) throw new Error("Created membership is not visible to its account");
+      events.push(this.store.appendEvent(
+        existing.userId,
+        { type: "chat.created", chat: addedChat },
+        now
+      ));
+      events.push(...this.#appendMembershipChanged(chatId, "added", membership, actorUserId, now));
+      return {
+        response: {
+          request: this.#joinRequestView(decided),
+          membership: this.#membershipView(membership),
+          replayed: false
+        },
+        events
+      };
+    });
+    this.publisher.publish(result.events);
+    return result.response;
+  }
+
+  #replayJoinDecision(chatId: string, request: ChatJoinRequestRecord): DecideChatJoinRequestResponse {
+    if (request.state === "denied" || request.state === "pending") {
+      return { request: this.#joinRequestView(request), membership: null, replayed: true };
+    }
+    const membership = this.store.getChatMember(chatId, request.userId);
+    if (membership === null) {
+      throw conflict("Approved member already left the chat", { reason: "invite_join_member_left" });
+    }
+    return { request: this.#joinRequestView(request), membership: this.#membershipView(membership), replayed: true };
+  }
+
+  #requireChatManager(chatId: string, actorUserId: string): ChatMemberRecord {
+    const actor = this.#requireMember(chatId, actorUserId);
+    const chat = this.store.findChatRecord(chatId);
+    if (chat === null) throw notFound("Chat not found");
+    if (actor.role !== "owner" && actor.role !== "admin") {
+      throw forbidden("Only chat administrators can manage invite links");
+    }
+    return actor;
+  }
+
+  #chatAdminIds(chatId: string): string[] {
+    return this.store.listChatMembers(chatId)
+      .filter((member) => member.role === "owner" || member.role === "admin")
+      .map((member) => member.userId);
+  }
+
+  #appendJoinRequestChanged(
+    request: ChatJoinRequestRecord,
+    audienceUserIds: string[],
+    changedAt: string
+  ): StoredEvent[] {
+    const event = {
+      type: "chat.join.request.changed" as const,
+      audience: "member_account" as const,
+      request: this.#joinRequestView(request),
+      changedAt
+    };
+    return [...new Set(audienceUserIds)].map((audienceUserId) => this.store.appendEvent(audienceUserId, event, changedAt));
   }
 
   sendMessage(userId: string, chatId: string, input: SendMessageRequest): Message {
@@ -1402,11 +1644,25 @@ export class ChatService {
       id: record.id,
       chatId: record.chatId,
       createdBy: record.createdBy,
+      approvalRequired: record.approvalRequired,
       expiresAt: record.expiresAt,
       maxUses: record.maxUses,
       useCount: record.useCount,
       revokedAt: record.revokedAt,
       createdAt: record.createdAt
+    };
+  }
+
+  #joinRequestView(record: ChatJoinRequestRecord): ChatJoinRequest {
+    return {
+      id: record.id,
+      chatId: record.chatId,
+      userId: record.userId,
+      inviteLinkId: record.inviteLinkId,
+      state: record.state,
+      decidedBy: record.decidedBy,
+      createdAt: record.createdAt,
+      decidedAt: record.decidedAt
     };
   }
 

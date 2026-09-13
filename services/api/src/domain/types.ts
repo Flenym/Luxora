@@ -357,11 +357,26 @@ export interface ChatInviteLinkRecord {
   chatId: string;
   tokenDigest: string;
   createdBy: string;
+  approvalRequired: boolean;
   expiresAt: string | null;
   maxUses: number | null;
   useCount: number;
   revokedAt: string | null;
   createdAt: string;
+  clientNonce: string;
+}
+
+export type ChatJoinRequestState = "pending" | "approved" | "denied";
+
+export interface ChatJoinRequestRecord {
+  id: string;
+  chatId: string;
+  userId: string;
+  inviteLinkId: string;
+  state: ChatJoinRequestState;
+  decidedBy: string | null;
+  createdAt: string;
+  decidedAt: string | null;
   clientNonce: string;
 }
 

@@ -28,13 +28,13 @@
 ### CRITICAL
 
 - [x] Зелёный main после 030/031/032 (Node, Apple Swift, Apple IPA, Security)
-- [ ] Truth-аудит: ни одного фейкового E2EE/call/presence/download/sync UI без метки demo/roadmap
+- [x] Truth-аудит 2026-09-13: фейковых E2EE/call/presence/download/sync UI нет — везде FeatureGate с честными копи («не использует E2EE», «не создаёт фиктивную историю», locked-кнопки)
 - [ ] Полный локальный suite + CI перед каждым пушем (без исключений)
 
 ### HIGH
 
 - [x] Invite-ссылки 032 (create/list/revoke/join + thin iPhone adapter)
-- [ ] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события
+- [~] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события (код готов, идёт QA)
 - [ ] Ownership transfer ceremony (двухшаговый, с revision-защитой)
 - [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
 - [ ] Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер

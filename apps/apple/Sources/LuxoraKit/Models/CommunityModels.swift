@@ -93,6 +93,7 @@ public struct CommunityInviteLink: Equatable, Hashable, Sendable {
     public let id: UUID
     public let chatID: UUID
     public let createdBy: UUID
+    public let approvalRequired: Bool
     public let expiresAt: Date?
     public let maxUses: Int?
     public let useCount: Int
@@ -103,6 +104,7 @@ public struct CommunityInviteLink: Equatable, Hashable, Sendable {
         id: UUID,
         chatID: UUID,
         createdBy: UUID,
+        approvalRequired: Bool = false,
         expiresAt: Date?,
         maxUses: Int?,
         useCount: Int,
@@ -112,6 +114,7 @@ public struct CommunityInviteLink: Equatable, Hashable, Sendable {
         self.id = id
         self.chatID = chatID
         self.createdBy = createdBy
+        self.approvalRequired = approvalRequired
         self.expiresAt = expiresAt
         self.maxUses = maxUses
         self.useCount = useCount
@@ -150,6 +153,60 @@ public struct CommunityInviteRevocation: Equatable, Sendable {
 
     public init(invite: CommunityInviteLink, replayed: Bool) {
         self.invite = invite
+        self.replayed = replayed
+    }
+}
+
+public enum CommunityJoinRequestState: String, Equatable, Hashable, Sendable {
+    case pending
+    case approved
+    case denied
+}
+
+public struct CommunityJoinRequest: Equatable, Hashable, Sendable {
+    public let id: UUID
+    public let chatID: UUID
+    public let userID: UUID
+    public let inviteLinkID: UUID
+    public let state: CommunityJoinRequestState
+    public let decidedBy: UUID?
+    public let createdAt: Date
+    public let decidedAt: Date?
+
+    public init(
+        id: UUID,
+        chatID: UUID,
+        userID: UUID,
+        inviteLinkID: UUID,
+        state: CommunityJoinRequestState,
+        decidedBy: UUID?,
+        createdAt: Date,
+        decidedAt: Date?
+    ) {
+        self.id = id
+        self.chatID = chatID
+        self.userID = userID
+        self.inviteLinkID = inviteLinkID
+        self.state = state
+        self.decidedBy = decidedBy
+        self.createdAt = createdAt
+        self.decidedAt = decidedAt
+    }
+}
+
+public enum CommunityInviteJoinOutcome: Equatable, Sendable {
+    case joined(membership: ChatMembership, replayed: Bool)
+    case pending(request: CommunityJoinRequest, replayed: Bool)
+}
+
+public struct CommunityJoinDecision: Equatable, Sendable {
+    public let request: CommunityJoinRequest
+    public let membership: ChatMembership?
+    public let replayed: Bool
+
+    public init(request: CommunityJoinRequest, membership: ChatMembership?, replayed: Bool) {
+        self.request = request
+        self.membership = membership
         self.replayed = replayed
     }
 }

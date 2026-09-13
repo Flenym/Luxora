@@ -269,8 +269,11 @@ final class CommunityAPIContractTests: XCTestCase {
             clientNonce: nonce,
             token: "access-token"
         )
-        XCTAssertEqual(joined.membership.userID, memberID)
-        XCTAssertFalse(joined.replayed)
+        guard case let .joined(membership, replayed) = joined else {
+            return XCTFail("Expected a direct join outcome")
+        }
+        XCTAssertEqual(membership.userID, memberID)
+        XCTAssertFalse(replayed)
 
         let revoked = try await client.revokeInviteLink(
             chatID: chatID,
@@ -282,8 +285,7 @@ final class CommunityAPIContractTests: XCTestCase {
         XCTAssertEqual(calls.current, 4)
     }
 
-    func testInviteLinkRejectsMalformedTokenBeforeNetwork() async throws {
-        let client = makeClient { _ in
+    func testInviteLinkRejectsMalformedTokenBeforeNetwork() async throws {        let client = makeClient { _ in
             XCTFail("Malformed invite token must be rejected before URLSession receives a request")
             return (400, communityJSON([:]))
         }
@@ -297,6 +299,121 @@ final class CommunityAPIContractTests: XCTestCase {
         } catch LuxoraAPIError.invalidResponse {
             // Expected before URLSession receives a request.
         }
+    }
+
+    func testApprovalJoinQueuesPendingAndDecidesWithExactContract() async throws {
+        let calls = CommunityLockedCounter()
+        let linkID = UUID(uuidString: "66666666-6666-4666-8666-666666666666")!
+        let requestID = UUID(uuidString: "77777777-7777-4777-8777-777777777777")!
+        let inviteToken = String(repeating: "C", count: 43)
+        let client = makeClient { [chatID, ownerID, memberID, nonce] request in
+            switch calls.increment() {
+            case 1:
+                let body = try request.communityJSONBody()
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/invite-links")
+                XCTAssertEqual(Set(body.keys), ["approvalRequired", "clientNonce"])
+                XCTAssertEqual((body["approvalRequired"] as? NSNumber)?.boolValue, true)
+                return (201, communityJSON([
+                    "invite": inviteJSON(
+                        id: linkID,
+                        chatID: chatID,
+                        createdBy: ownerID,
+                        approvalRequired: true
+                    ),
+                    "token": inviteToken,
+                    "replayed": false,
+                ]))
+            case 2:
+                let body = try request.communityJSONBody()
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/v1/invite-links/join")
+                XCTAssertEqual(body["token"] as? String, inviteToken)
+                return (201, communityJSON([
+                    "outcome": "pending",
+                    "request": joinRequestJSON(
+                        id: requestID,
+                        chatID: chatID,
+                        userID: memberID,
+                        linkID: linkID,
+                        state: "pending"
+                    ),
+                    "replayed": false,
+                ]))
+            case 3:
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/join-requests")
+                return (200, communityJSON(["items": [
+                    joinRequestJSON(
+                        id: requestID,
+                        chatID: chatID,
+                        userID: memberID,
+                        linkID: linkID,
+                        state: "pending"
+                    ),
+                ]]))
+            default:
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(
+                    request.url?.path,
+                    "/v1/chats/\(chatID.apiPathComponent)/join-requests/\(requestID.apiPathComponent)/approve"
+                )
+                XCTAssertNil(request.httpBody)
+                return (200, communityJSON([
+                    "request": joinRequestJSON(
+                        id: requestID,
+                        chatID: chatID,
+                        userID: memberID,
+                        linkID: linkID,
+                        state: "approved",
+                        decidedBy: ownerID
+                    ),
+                    "membership": membershipJSON(
+                        chatID: chatID,
+                        userID: memberID,
+                        role: "member",
+                        revision: 1
+                    ),
+                    "replayed": false,
+                ]))
+            }
+        }
+
+        let created = try await client.createInviteLink(
+            chatID: chatID,
+            approvalRequired: true,
+            expiresInSeconds: nil,
+            maxUses: nil,
+            clientNonce: nonce,
+            token: "access-token"
+        )
+        XCTAssertTrue(created.invite.approvalRequired)
+
+        let outcome = try await client.joinByInvite(
+            token: inviteToken,
+            clientNonce: nonce,
+            token: "access-token"
+        )
+        guard case let .pending(request, replayed) = outcome else {
+            return XCTFail("Expected a pending join outcome")
+        }
+        XCTAssertEqual(request.id, requestID)
+        XCTAssertEqual(request.state, .pending)
+        XCTAssertFalse(replayed)
+
+        let queue = try await client.joinRequests(chatID: chatID, token: "access-token")
+        XCTAssertEqual(queue.map(\.id), [requestID])
+
+        let decision = try await client.approveJoinRequest(
+            chatID: chatID,
+            requestID: requestID,
+            token: "access-token"
+        )
+        XCTAssertEqual(decision.request.state, .approved)
+        XCTAssertEqual(decision.request.decidedBy, ownerID)
+        XCTAssertEqual(decision.membership?.userID, memberID)
+        XCTAssertFalse(decision.replayed)
+        XCTAssertEqual(calls.current, 4)
     }
 
     private func makeClient(
@@ -481,6 +598,7 @@ private func inviteJSON(
     id: UUID,
     chatID: UUID,
     createdBy: UUID,
+    approvalRequired: Bool = false,
     maxUses: Int? = nil,
     useCount: Int = 0,
     revokedAt: String? = nil
@@ -489,10 +607,31 @@ private func inviteJSON(
         "id": id.apiPathComponent,
         "chatId": chatID.apiPathComponent,
         "createdBy": createdBy.apiPathComponent,
+        "approvalRequired": approvalRequired,
         "expiresAt": NSNull(),
         "maxUses": maxUses.map { $0 as Any } ?? NSNull(),
         "useCount": useCount,
         "revokedAt": revokedAt.map { $0 as Any } ?? NSNull(),
         "createdAt": "2026-09-13T12:00:00Z",
+    ]
+}
+
+private func joinRequestJSON(
+    id: UUID,
+    chatID: UUID,
+    userID: UUID,
+    linkID: UUID,
+    state: String,
+    decidedBy: UUID? = nil
+) -> [String: Any] {
+    [
+        "id": id.apiPathComponent,
+        "chatId": chatID.apiPathComponent,
+        "userId": userID.apiPathComponent,
+        "inviteLinkId": linkID.apiPathComponent,
+        "state": state,
+        "decidedBy": decidedBy.map { $0.apiPathComponent as Any } ?? NSNull(),
+        "createdAt": "2026-09-13T12:01:00Z",
+        "decidedAt": decidedBy == nil ? NSNull() : "2026-09-13T12:02:00Z" as Any,
     ]
 }

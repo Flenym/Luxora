@@ -646,6 +646,27 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     return reply.code(201).send(dependencies.chats.joinChatByInvite(request.auth.userId, input));
   });
 
+  app.get("/v1/chats/:id/join-requests", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    return dependencies.chats.listJoinRequests(request.auth.userId, id);
+  });
+
+  app.post("/v1/chats/:id/join-requests/:requestId/approve", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const params = z.object({ id: IdSchema, requestId: IdSchema }).strict().parse(request.params);
+    return dependencies.chats.approveJoinRequest(request.auth.userId, params.id, params.requestId);
+  });
+
+  app.post("/v1/chats/:id/join-requests/:requestId/deny", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const params = z.object({ id: IdSchema, requestId: IdSchema }).strict().parse(request.params);
+    return dependencies.chats.denyJoinRequest(request.auth.userId, params.id, params.requestId);
+  });
+
   app.get("/v1/chats/:id/messages", { preHandler: dependencies.authGuard }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
     const query = ChatMessagesQuerySchema.parse(request.query);

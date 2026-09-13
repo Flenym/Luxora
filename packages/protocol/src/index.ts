@@ -1608,6 +1608,7 @@ export const ChatInviteLinkSchema = z.object({
   id: IdSchema,
   chatId: IdSchema,
   createdBy: IdSchema,
+  approvalRequired: z.boolean().default(false),
   expiresAt: TimestampSchema.nullable(),
   maxUses: z.number().int().positive().max(10_000).nullable(),
   useCount: z.number().int().nonnegative(),
@@ -1615,6 +1616,7 @@ export const ChatInviteLinkSchema = z.object({
   createdAt: TimestampSchema
 }).strict();
 export const CreateChatInviteLinkRequestSchema = z.object({
+  approvalRequired: z.boolean().optional(),
   expiresInSeconds: z.number().int().positive().max(90 * 24 * 3_600).optional(),
   maxUses: z.number().int().positive().max(10_000).optional(),
   clientNonce: IdSchema
@@ -1636,6 +1638,76 @@ export const RevokeChatInviteLinkResponseSchema = z.object({
 export const JoinChatByInviteRequestSchema = z.object({
   token: ChatInviteTokenSchema,
   clientNonce: IdSchema
+}).strict();
+export const ChatJoinRequestStateSchema = z.enum(["pending", "approved", "denied"]);
+export const ChatJoinRequestSchema = z.object({
+  id: IdSchema,
+  chatId: IdSchema,
+  userId: IdSchema,
+  inviteLinkId: IdSchema,
+  state: ChatJoinRequestStateSchema,
+  decidedBy: IdSchema.nullable(),
+  createdAt: TimestampSchema,
+  decidedAt: TimestampSchema.nullable()
+}).strict().superRefine((value, context) => {
+  if (value.state === "pending" && (value.decidedBy !== null || value.decidedAt !== null)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Pending join requests carry no decision",
+      path: ["state"]
+    });
+  }
+  if (value.state !== "pending" && (value.decidedBy === null || value.decidedAt === null)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Decided join requests carry a decider and decision time",
+      path: ["state"]
+    });
+  }
+});
+export const JoinChatByInviteResponseSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("joined"),
+    membership: ChatMembershipSchema,
+    replayed: z.boolean()
+  }).strict(),
+  z.object({
+    outcome: z.literal("pending"),
+    request: ChatJoinRequestSchema,
+    replayed: z.boolean()
+  }).strict()
+]);
+export const RequestChatJoinDecisionSchema = z.object({
+  clientNonce: IdSchema
+}).strict();
+export const ChatJoinRequestListResponseSchema = z.object({
+  items: z.array(ChatJoinRequestSchema).max(200)
+}).strict();
+export const DecideChatJoinRequestResponseSchema = z.object({
+  request: ChatJoinRequestSchema,
+  membership: ChatMembershipSchema.nullable(),
+  replayed: z.boolean()
+}).strict().superRefine((value, context) => {
+  if (value.request.state === "approved" && value.membership === null) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Approvals carry the created membership",
+      path: ["membership"]
+    });
+  }
+  if (value.request.state !== "approved" && value.membership !== null) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Only approvals carry a membership",
+      path: ["membership"]
+    });
+  }
+});
+export const ChatJoinRequestRealtimeEventSchema = z.object({
+  type: z.literal("chat.join.request.changed"),
+  audience: z.literal("member_account"),
+  request: ChatJoinRequestSchema,
+  changedAt: TimestampSchema
 }).strict();
 
 export const CreateChatRequestSchema = z.discriminatedUnion("kind", [
@@ -2639,6 +2711,7 @@ export const DurableRealtimeEventSchema = z.union([
   RealtimeEventSchema,
   IA1RealtimeEventSchema,
   ChatMembershipRealtimeEventSchema,
+  ChatJoinRequestRealtimeEventSchema,
   ChatPreferencesRealtimeEventSchema,
   ChatFoldersRealtimeEventSchema,
   ChatDraftRealtimeEventSchema,
@@ -2934,6 +3007,12 @@ export type CreateChatInviteLinkResponse = z.infer<typeof CreateChatInviteLinkRe
 export type ChatInviteLinkListResponse = z.infer<typeof ChatInviteLinkListResponseSchema>;
 export type RevokeChatInviteLinkResponse = z.infer<typeof RevokeChatInviteLinkResponseSchema>;
 export type JoinChatByInviteRequest = z.infer<typeof JoinChatByInviteRequestSchema>;
+export type JoinChatByInviteResponse = z.infer<typeof JoinChatByInviteResponseSchema>;
+export type ChatJoinRequestState = z.infer<typeof ChatJoinRequestStateSchema>;
+export type ChatJoinRequest = z.infer<typeof ChatJoinRequestSchema>;
+export type RequestChatJoinDecision = z.infer<typeof RequestChatJoinDecisionSchema>;
+export type ChatJoinRequestListResponse = z.infer<typeof ChatJoinRequestListResponseSchema>;
+export type DecideChatJoinRequestResponse = z.infer<typeof DecideChatJoinRequestResponseSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type Attachment = z.infer<typeof AttachmentSchema>;
 export type AttachmentListResponse = z.infer<typeof AttachmentListResponseSchema>;

@@ -4052,5 +4052,29 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_chat_invite_links_chat
         ON chat_invite_links(chat_id, created_at, id);
     `
+  },
+  {
+    id: "033_chat_join_request_approval",
+    sql: `
+      ALTER TABLE chat_invite_links ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 0
+        CHECK (approval_required IN (0, 1));
+      CREATE TABLE chat_join_requests (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        invite_link_id TEXT NOT NULL REFERENCES chat_invite_links(id) ON DELETE CASCADE,
+        state TEXT NOT NULL DEFAULT 'pending'
+          CHECK (state IN ('pending', 'approved', 'denied')),
+        decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        client_nonce TEXT NOT NULL,
+        UNIQUE (user_id, client_nonce)
+      ) STRICT;
+      CREATE UNIQUE INDEX idx_chat_join_requests_pending
+        ON chat_join_requests(chat_id, user_id) WHERE state = 'pending';
+      CREATE INDEX idx_chat_join_requests_chat
+        ON chat_join_requests(chat_id, created_at, id);
+    `
   }
 ];

@@ -565,7 +565,10 @@ Group/channel:
 | `POST /v1/chats/:id/invite-links` | Owner/admin mints a bearer link; `201` returns `{invite,token,replayed:false}` |
 | `GET /v1/chats/:id/invite-links` | Owner/admin lists metadata-only `{items:[invite]}` (no token material) |
 | `DELETE /v1/chats/:id/invite-links/:linkId` | Owner/admin revokes idempotently; returns `{invite,replayed}` |
-| `POST /v1/invite-links/join` | Any authenticated account joins by bearer token; `201` returns `{membership,replayed}` |
+| `POST /v1/invite-links/join` | Any authenticated account joins by bearer token; `201` returns joined/pending union |
+| `GET /v1/chats/:id/join-requests` | Owner/admin lists `{items:[request]}` for one chat |
+| `POST /v1/chats/:id/join-requests/:requestId/approve` | Owner/admin admits; returns `{request,membership,replayed}` |
+| `POST /v1/chats/:id/join-requests/:requestId/deny` | Owner/admin rejects; returns `{request,membership:null,replayed}` |
 
 Add body is strict `{userId,role:"admin"|"member",clientNonce}`. Role change is
 strict `{role,expectedRevision,clientNonce}`; removal is strict
@@ -578,16 +581,28 @@ maximum 200 current members, and ownership transfer remains a separate unimpleme
 ceremony. Removal commits before authorization is rechecked, so a racing message
 from the removed account is rejected.
 
-Invite creation is strict `{expiresInSeconds?,maxUses?,clientNonce}` (expiry at
+Invite creation is strict `{approvalRequired?,expiresInSeconds?,maxUses?,clientNonce}` (expiry at
 most 90 days, at most 10000 uses). The raw 43-char token is returned exactly
 once and stored as a SHA-256 digest only: a lost create response cannot be
 replayed and answers `409` with `invite_token_shown_once` — rotate the link
-instead. Join is strict `{token,clientNonce}`; existing members get an
-idempotent `{membership,replayed:true}` without consuming a use. Unknown tokens
+instead. Join is strict `{token,clientNonce}` and answers a discriminated
+union: `{outcome:"joined",membership,replayed}` for direct links or
+`{outcome:"pending",request,replayed}` for approval links. Existing members get an
+idempotent joined replay without consuming a use. Unknown tokens
 are generic `404`; revoked/expired/exhausted links are `404` with a
 `revoked`/`expired`/`exhausted` reason. Joining emits the same `chat.created`
 plus `chat.member.changed(added)` events as a direct add and counts against the
-200-member bound. Join-request approval queues remain unimplemented.
+200-member bound.
+
+Approval links queue `{id,chatId,userId,inviteLinkId,state,decidedBy,createdAt,decidedAt}`
+requests instead of admitting: `GET /v1/chats/:id/join-requests` lists them for
+owner/admin, `POST .../approve` admits (consumes one use, emits membership events
+plus `chat.join.request.changed` to the requester and admins) and `POST .../deny`
+rejects. Decisions are idempotent by state and replay the current snapshot; a
+dead link fails the approval with the link reason while the request stays pending.
+Denied requesters may file a fresh request. Realtime fans `chat.join.request.changed`
+(`member_account` audience) to current owner/admins on filing and to requester plus
+admins on decision.
 
 ## 7. Messages
 

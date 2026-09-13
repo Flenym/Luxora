@@ -40,7 +40,8 @@ const MIGRATION_IDS = [
   "029_scheduled_messages",
   "030_privacy_visibility_policies",
   "031_notification_categories",
-  "032_chat_invite_links"
+  "032_chat_invite_links",
+  "033_chat_join_request_approval"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";
@@ -341,7 +342,7 @@ function finalDeclaredTriggerNames(): string[] {
   return [...names].sort();
 }
 
-describe("SQLite migration chain 001-032", () => {
+describe("SQLite migration chain 001-033", () => {
   const temporaryDirectories: string[] = [];
   const workers: Worker[] = [];
 
@@ -525,6 +526,13 @@ describe("SQLite migration chain 001-032", () => {
     expect(migrations[31]!.sql).toMatch(/idx_chat_invite_links_chat/u);
     expect(migrations[31]!.sql).not.toMatch(/token TEXT/u);
     expect(migrations[31]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
+    expect(migrations[32]!.id).toBe("033_chat_join_request_approval");
+    expect(migrations[32]!.sql).toMatch(/ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 0/u);
+    expect(migrations[32]!.sql).toMatch(/CREATE TABLE chat_join_requests/u);
+    expect(migrations[32]!.sql).toMatch(/UNIQUE \(user_id, client_nonce\)/u);
+    expect(migrations[32]!.sql).toMatch(/idx_chat_join_requests_pending/u);
+    expect(migrations[32]!.sql).toMatch(/idx_chat_join_requests_chat/u);
+    expect(migrations[32]!.sql).not.toMatch(/\bDROP\b|\bDELETE\s+FROM\b|\bUPDATE\s+\w+\s+SET\b/iu);
   });
 
   it("creates the complete clean schema once with declared tables, indexes, triggers and foreign keys", () => {
