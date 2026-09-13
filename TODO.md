@@ -20,6 +20,46 @@
 > API 78 файлов / 646 тестов PASS (локально + CI). Join-request approval
 > очереди — следующий явный шаг.
 
+## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
+
+`- [ ]` не сделано · `- [~]` в процессе · `- [x]` сделано. Статус — в
+`PROJECT_STATE.md`, точка продолжения — в `NEXT_SESSION.md`.
+
+### CRITICAL
+
+- [x] Зелёный main после 030/031/032 (Node, Apple Swift, Apple IPA, Security)
+- [ ] Truth-аудит: ни одного фейкового E2EE/call/presence/download/sync UI без метки demo/roadmap
+- [ ] Полный локальный suite + CI перед каждым пушем (без исключений)
+
+### HIGH
+
+- [x] Invite-ссылки 032 (create/list/revoke/join + thin iPhone adapter)
+- [ ] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события
+- [ ] Ownership transfer ceremony (двухшаговый, с revision-защитой)
+- [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
+- [ ] Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер
+
+### MEDIUM
+
+- [ ] Media processing: thumbnails, duration/waveform на сервере, quarantine/transcode pipeline
+- [ ] Global search pagination + contacts/address-book policy
+- [ ] Calls signaling + state machine + честный UI (SFU/TURN — по готовности инфры)
+- [ ] Account export/delete/retention + data inventory
+- [ ] QR device linking + security event/device compromise flow
+- [ ] Privacy-preserving contact discovery/upload
+
+### LOW
+
+- [ ] Cursor pagination remainders там, где её реально нет (проверить каждый список)
+- [ ] Offline/durable encrypted local DB: quota/eviction, offline launch
+- [ ] 62-screen pixel closure, accessibility matrix, performance/energy profiling
+
+### FUTURE (заблокировано внешними ресурсами, не делать вид что готово)
+
+- [ ] Production SMS-провайдер, real APNs-доставка, E2EE + key transparency
+- [ ] Production DB/broker/DR, distributed limits/revoke fan-out, multi-region
+- [ ] Real-device gates, TestFlight/App Store signing, release provenance
+
 `[x]` means a repository foundation exists, not that a production gate passed. Execution order is server-complete → full iPhone → all other clients/public site.
 
 Полное iPhone-завершение и непрерывная очередь проверяются по
