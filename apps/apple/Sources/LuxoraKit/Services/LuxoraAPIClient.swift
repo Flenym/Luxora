@@ -743,25 +743,10 @@ actor LuxoraAPIClient {
             throw LuxoraAPIError.invalidResponse
         }
         struct Response: Decodable, Sendable { let topic: APITopic }
-        struct Body: Encodable, Sendable {
-            let title: String?
-            let closed: Bool?
-
-            func encode(to encoder: Encoder) throws {
-                var container = encoder.container(keyedBy: CodingKeys)
-                try container.encodeIfPresent(title, forKey: .title)
-                try container.encodeIfPresent(closed, forKey: .closed)
-            }
-
-            private enum CodingKeys: String, CodingKey {
-                case title
-                case closed
-            }
-        }
         let response: Response = try await requestEncoded(
             path: "/v1/topics/\(topicID.apiPathComponent)",
             method: "PATCH",
-            body: Body(title: normalizedTitle, closed: closed),
+            body: APIUpdateTopicBody(title: normalizedTitle, closed: closed),
             token: token
         )
         return try response.topic.topic(expectedChatID: chatID)
@@ -1508,6 +1493,22 @@ struct APIMediaDimensions: Encodable, Sendable {
     let height: Int?
     let durationMs: Int?
     let waveform: [Int]?
+}
+
+private struct APIUpdateTopicBody: Encodable, Sendable {
+    let title: String?
+    let closed: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case closed
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(closed, forKey: .closed)
+    }
 }
 
 enum APIChatBody {
