@@ -126,6 +126,80 @@ actor LuxoraCommunityAPIClient {
         return try response.receipt(expectedChatID: chatID, expectedUserID: userID)
     }
 
+    func createInviteLink(
+        chatID: UUID,
+        expiresInSeconds: Int?,
+        maxUses: Int?,
+        clientNonce: UUID,
+        token: String
+    ) async throws -> CommunityInviteCreation {
+        if let expiresInSeconds, !(1...90 * 24 * 3_600).contains(expiresInSeconds) {
+            throw LuxoraAPIError.invalidResponse
+        }
+        if let maxUses, !(1...10_000).contains(maxUses) {
+            throw LuxoraAPIError.invalidResponse
+        }
+        let response: APICommunityInviteCreationResponse = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/invite-links",
+            method: "POST",
+            body: APICommunityCreateInviteBody(
+                expiresInSeconds: expiresInSeconds,
+                maxUses: maxUses,
+                clientNonce: clientNonce.apiPathComponent
+            ),
+            token: token
+        )
+        return try response.creation(expectedChatID: chatID)
+    }
+
+    func inviteLinks(chatID: UUID, token: String) async throws -> [CommunityInviteLink] {
+        let response: APICommunityInviteListResponse = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/invite-links",
+            token: token
+        )
+        guard response.items.count <= 100 else { throw LuxoraAPIError.invalidResponse }
+        return try response.items.map { try $0.invite(expectedChatID: chatID) }
+    }
+
+    func revokeInviteLink(
+        chatID: UUID,
+        linkID: UUID,
+        token: String
+    ) async throws -> CommunityInviteRevocation {
+        let response: APICommunityInviteRevocationResponse = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/invite-links/\(linkID.apiPathComponent)",
+            method: "DELETE",
+            token: token
+        )
+        let invite = try response.invite.invite(expectedChatID: chatID)
+        guard invite.id == linkID else { throw LuxoraAPIError.invalidResponse }
+        return CommunityInviteRevocation(invite: invite, replayed: response.replayed)
+    }
+
+    func joinByInvite(
+        token inviteToken: String,
+        clientNonce: UUID,
+        token: String
+    ) async throws -> CommunityMembershipMutationReceipt {
+        guard inviteToken.count == 43,
+              inviteToken.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
+        else { throw LuxoraAPIError.invalidResponse }
+        let response: APICommunityMembershipMutationResponse = try await request(
+            path: "/v1/invite-links/join",
+            method: "POST",
+            body: APICommunityJoinByInviteBody(
+                token: inviteToken,
+                clientNonce: clientNonce.apiPathComponent
+            ),
+            token: token
+        )
+        let membership = try response.membership.membership()
+        return CommunityMembershipMutationReceipt(
+            membership: membership,
+            replayed: response.replayed
+        )
+    }
+
     private func request<Response: Decodable & Sendable>(
         path: String,
         method: String = "GET",
@@ -234,6 +308,88 @@ private struct APICommunityUpdateMemberBody: Encodable, Sendable {
 private struct APICommunityRemoveMemberBody: Encodable, Sendable {
     let expectedRevision: Int
     let clientNonce: String
+}
+
+private struct APICommunityCreateInviteBody: Encodable, Sendable {
+    let expiresInSeconds: Int?
+    let maxUses: Int?
+    let clientNonce: String
+
+    private enum CodingKeys: String, CodingKey {
+        case expiresInSeconds
+        case maxUses
+        case clientNonce
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(expiresInSeconds, forKey: .expiresInSeconds)
+        try container.encodeIfPresent(maxUses, forKey: .maxUses)
+        try container.encode(clientNonce, forKey: .clientNonce)
+    }
+}
+
+private struct APICommunityJoinByInviteBody: Encodable, Sendable {
+    let token: String
+    let clientNonce: String
+}
+
+private struct APICommunityInvite: Decodable, Sendable {
+    let id: UUID
+    let chatId: UUID
+    let createdBy: UUID
+    let expiresAt: Date?
+    let maxUses: Int?
+    let useCount: Int
+    let revokedAt: Date?
+    let createdAt: Date
+
+    func invite(expectedChatID: UUID) throws -> CommunityInviteLink {
+        guard chatId == expectedChatID,
+              useCount >= 0,
+              maxUses.map({ (1...10_000).contains($0) }) ?? true
+        else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        return CommunityInviteLink(
+            id: id,
+            chatID: chatId,
+            createdBy: createdBy,
+            expiresAt: expiresAt,
+            maxUses: maxUses,
+            useCount: useCount,
+            revokedAt: revokedAt,
+            createdAt: createdAt
+        )
+    }
+}
+
+private struct APICommunityInviteCreationResponse: Decodable, Sendable {
+    let invite: APICommunityInvite
+    let token: String
+    let replayed: Bool
+
+    func creation(expectedChatID: UUID) throws -> CommunityInviteCreation {
+        guard token.count == 43,
+              token.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
+        else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        return CommunityInviteCreation(
+            invite: try invite.invite(expectedChatID: expectedChatID),
+            token: token,
+            replayed: replayed
+        )
+    }
+}
+
+private struct APICommunityInviteListResponse: Decodable, Sendable {
+    let items: [APICommunityInvite]
+}
+
+private struct APICommunityInviteRevocationResponse: Decodable, Sendable {
+    let invite: APICommunityInvite
+    let replayed: Bool
 }
 
 private struct APICommunityChatResponse: Decodable, Sendable {

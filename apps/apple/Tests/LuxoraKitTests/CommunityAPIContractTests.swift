@@ -161,8 +161,7 @@ final class CommunityAPIContractTests: XCTestCase {
         XCTAssertEqual(calls.current, 3)
     }
 
-    func testMemberListRejectsMismatchedMembershipAndProfileIdentity() async throws {
-        let client = makeClient { [chatID, ownerID, memberID] _ in
+    func testMemberListRejectsMismatchedMembershipAndProfileIdentity() async throws {        let client = makeClient { [chatID, ownerID, memberID] _ in
             (200, communityJSON(["items": [
                 memberJSON(
                     chatID: chatID,
@@ -180,6 +179,120 @@ final class CommunityAPIContractTests: XCTestCase {
             XCTFail("A profile belonging to another account must be rejected")
         } catch LuxoraAPIError.invalidResponse {
             // Expected: never expose an attacker-controlled mismatched identity.
+        }
+    }
+
+    func testInviteLinksUseExactContractAndRejectForeignChatProjection() async throws {
+        let calls = CommunityLockedCounter()
+        let linkID = UUID(uuidString: "55555555-5555-4555-8555-555555555555")!
+        let inviteToken = String(repeating: "B", count: 43)
+        let client = makeClient { [chatID, ownerID, memberID, nonce] request in
+            let body = try request.communityJSONBody()
+            switch calls.increment() {
+            case 1:
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/invite-links")
+                XCTAssertEqual(Set(body.keys), ["maxUses", "clientNonce"])
+                XCTAssertEqual((body["maxUses"] as? NSNumber)?.intValue, 5)
+                XCTAssertEqual(body["clientNonce"] as? String, nonce.apiPathComponent)
+                return (201, communityJSON([
+                    "invite": inviteJSON(
+                        id: linkID,
+                        chatID: chatID,
+                        createdBy: ownerID,
+                        maxUses: 5,
+                        useCount: 0
+                    ),
+                    "token": inviteToken,
+                    "replayed": false,
+                ]))
+            case 2:
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/invite-links")
+                return (200, communityJSON(["items": [
+                    inviteJSON(
+                        id: linkID,
+                        chatID: chatID,
+                        createdBy: ownerID,
+                        maxUses: 5,
+                        useCount: 1
+                    ),
+                ]]))
+            case 3:
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/v1/invite-links/join")
+                XCTAssertEqual(Set(body.keys), ["token", "clientNonce"])
+                XCTAssertEqual(body["token"] as? String, inviteToken)
+                return (201, communityJSON(mutationJSON(
+                    chatID: chatID,
+                    userID: memberID,
+                    role: "member",
+                    revision: 1,
+                    replayed: false
+                )))
+            default:
+                XCTAssertEqual(request.httpMethod, "DELETE")
+                XCTAssertEqual(request.url?.path, "/v1/chats/\(chatID.apiPathComponent)/invite-links/\(linkID.apiPathComponent)")
+                return (200, communityJSON([
+                    "invite": inviteJSON(
+                        id: linkID,
+                        chatID: chatID,
+                        createdBy: ownerID,
+                        revokedAt: "2026-09-13T12:05:00Z"
+                    ),
+                    "replayed": false,
+                ]))
+            }
+        }
+
+        let created = try await client.createInviteLink(
+            chatID: chatID,
+            expiresInSeconds: nil,
+            maxUses: 5,
+            clientNonce: nonce,
+            token: "access-token"
+        )
+        XCTAssertEqual(created.invite.id, linkID)
+        XCTAssertEqual(created.token, inviteToken)
+        XCTAssertFalse(created.replayed)
+        XCTAssertFalse(created.invite.isExhausted)
+
+        let listed = try await client.inviteLinks(chatID: chatID, token: "access-token")
+        XCTAssertEqual(listed.map(\.id), [linkID])
+        XCTAssertEqual(listed.first?.useCount, 1)
+
+        let joined = try await client.joinByInvite(
+            token: inviteToken,
+            clientNonce: nonce,
+            token: "access-token"
+        )
+        XCTAssertEqual(joined.membership.userID, memberID)
+        XCTAssertFalse(joined.replayed)
+
+        let revoked = try await client.revokeInviteLink(
+            chatID: chatID,
+            linkID: linkID,
+            token: "access-token"
+        )
+        XCTAssertTrue(revoked.invite.isRevoked)
+        XCTAssertFalse(revoked.replayed)
+        XCTAssertEqual(calls.current, 4)
+    }
+
+    func testInviteLinkRejectsMalformedTokenBeforeNetwork() async throws {
+        let client = makeClient { _ in
+            XCTFail("Malformed invite token must be rejected before URLSession receives a request")
+            return (400, communityJSON([:]))
+        }
+        do {
+            _ = try await client.joinByInvite(
+                token: "too-short",
+                clientNonce: nonce,
+                token: "access-token"
+            )
+            XCTFail("Malformed invite token must be rejected")
+        } catch LuxoraAPIError.invalidResponse {
+            // Expected before URLSession receives a request.
         }
     }
 
@@ -358,5 +471,25 @@ private func mutationJSON(
             updatedAt: updatedAt
         ),
         "replayed": replayed,
+    ]
+}
+
+private func inviteJSON(
+    id: UUID,
+    chatID: UUID,
+    createdBy: UUID,
+    maxUses: Int? = nil,
+    useCount: Int = 0,
+    revokedAt: String? = nil
+) -> [String: Any] {
+    [
+        "id": id.apiPathComponent,
+        "chatId": chatID.apiPathComponent,
+        "createdBy": createdBy.apiPathComponent,
+        "expiresAt": NSNull(),
+        "maxUses": maxUses.map { $0 as Any } ?? NSNull(),
+        "useCount": useCount,
+        "revokedAt": revokedAt.map { $0 as Any } ?? NSNull(),
+        "createdAt": "2026-09-13T12:00:00Z",
     ]
 }

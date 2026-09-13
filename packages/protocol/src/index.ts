@@ -1603,6 +1603,41 @@ export const ChatMembershipMutationResponseSchema = z.object({
   replayed: z.boolean()
 }).strict();
 
+export const ChatInviteTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const ChatInviteLinkSchema = z.object({
+  id: IdSchema,
+  chatId: IdSchema,
+  createdBy: IdSchema,
+  expiresAt: TimestampSchema.nullable(),
+  maxUses: z.number().int().positive().max(10_000).nullable(),
+  useCount: z.number().int().nonnegative(),
+  revokedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema
+}).strict();
+export const CreateChatInviteLinkRequestSchema = z.object({
+  expiresInSeconds: z.number().int().positive().max(90 * 24 * 3_600).optional(),
+  maxUses: z.number().int().positive().max(10_000).optional(),
+  clientNonce: IdSchema
+}).strict();
+export const CreateChatInviteLinkResponseSchema = z.object({
+  invite: ChatInviteLinkSchema,
+  // Raw bearer token. Shown exactly once: the server stores only its digest,
+  // so a lost response cannot be replayed — create a new link instead.
+  token: ChatInviteTokenSchema,
+  replayed: z.boolean()
+}).strict();
+export const ChatInviteLinkListResponseSchema = z.object({
+  items: z.array(ChatInviteLinkSchema).max(100)
+}).strict();
+export const RevokeChatInviteLinkResponseSchema = z.object({
+  invite: ChatInviteLinkSchema,
+  replayed: z.boolean()
+}).strict();
+export const JoinChatByInviteRequestSchema = z.object({
+  token: ChatInviteTokenSchema,
+  clientNonce: IdSchema
+}).strict();
+
 export const CreateChatRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("direct"),
@@ -2893,6 +2928,12 @@ export type AddChatMemberRequest = z.infer<typeof AddChatMemberRequestSchema>;
 export type UpdateChatMemberRoleRequest = z.infer<typeof UpdateChatMemberRoleRequestSchema>;
 export type RemoveChatMemberRequest = z.infer<typeof RemoveChatMemberRequestSchema>;
 export type ChatMembershipMutationResponse = z.infer<typeof ChatMembershipMutationResponseSchema>;
+export type ChatInviteLink = z.infer<typeof ChatInviteLinkSchema>;
+export type CreateChatInviteLinkRequest = z.infer<typeof CreateChatInviteLinkRequestSchema>;
+export type CreateChatInviteLinkResponse = z.infer<typeof CreateChatInviteLinkResponseSchema>;
+export type ChatInviteLinkListResponse = z.infer<typeof ChatInviteLinkListResponseSchema>;
+export type RevokeChatInviteLinkResponse = z.infer<typeof RevokeChatInviteLinkResponseSchema>;
+export type JoinChatByInviteRequest = z.infer<typeof JoinChatByInviteRequestSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type Attachment = z.infer<typeof AttachmentSchema>;
 export type AttachmentListResponse = z.infer<typeof AttachmentListResponseSchema>;

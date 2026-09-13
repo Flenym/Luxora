@@ -352,6 +352,19 @@ export interface ChatMembershipCommandReceiptRecord {
   createdAt: string;
 }
 
+export interface ChatInviteLinkRecord {
+  id: string;
+  chatId: string;
+  tokenDigest: string;
+  createdBy: string;
+  expiresAt: string | null;
+  maxUses: number | null;
+  useCount: number;
+  revokedAt: string | null;
+  createdAt: string;
+  clientNonce: string;
+}
+
 export interface ChatFolderRulesRecord {
   includeKinds: ChatKind[];
   unreadOnly: boolean;

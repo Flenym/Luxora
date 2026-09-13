@@ -7,6 +7,7 @@ import {
   ConfigurePhonePasswordSchema,
   createCapabilitiesResponseV1,
   CreateChatFolderRequestSchema,
+  CreateChatInviteLinkRequestSchema,
   CreateChatRequestSchema,
   CreateMessageRequestSchema,
   CreateSafetyReportSchema,
@@ -19,6 +20,7 @@ import {
   EditMessageRequestSchema,
   ForwardMessageRequestSchema,
   IdSchema,
+  JoinChatByInviteRequestSchema,
   LoginRequestSchema,
   MarkReadRequestSchema,
   PatchChatPreferencesSchema,
@@ -612,6 +614,36 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { id, userId } = ChatMemberParamSchema.parse(request.params);
     const input = RemoveChatMemberRequestSchema.parse(request.body);
     return dependencies.chats.removeMember(request.auth.userId, id, userId, input);
+  });
+
+  app.post("/v1/chats/:id/invite-links", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = CreateChatInviteLinkRequestSchema.parse(request.body);
+    return reply.code(201).send(dependencies.chats.createInviteLink(request.auth.userId, id, input));
+  });
+
+  app.get("/v1/chats/:id/invite-links", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    return dependencies.chats.listInviteLinks(request.auth.userId, id);
+  });
+
+  app.delete("/v1/chats/:id/invite-links/:linkId", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const params = z.object({ id: IdSchema, linkId: IdSchema }).strict().parse(request.params);
+    return dependencies.chats.revokeInviteLink(request.auth.userId, params.id, params.linkId);
+  });
+
+  app.post("/v1/invite-links/join", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const input = JoinChatByInviteRequestSchema.parse(request.body);
+    return reply.code(201).send(dependencies.chats.joinChatByInvite(request.auth.userId, input));
   });
 
   app.get("/v1/chats/:id/messages", { preHandler: dependencies.authGuard }, async (request) => {

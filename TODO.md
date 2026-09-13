@@ -11,6 +11,12 @@
 > тумблер в iPhone-настройках). По пути починены хвосты 030-экспансии:
 > `lastSeenAt` в lookup-проекции, 7-польный privacy-апдейтер в MessengerStore/
 > фикстурах/тестах, синхронный обход кэша вне async-контекста.
+>
+> **Дополнение 2026-09-13 (invite-ссылки, в работе):** миграция
+> `032_chat_invite_links` — bearer-ссылки для групп/каналов (expiry ≤ 90 дней,
+> max-uses ≤ 10000, digest-only хранение, честный 409 `invite_token_shown_once`
+> вместо перевыдачи токена), 4 routes, iPhone thin adapter + contract tests.
+> Join-request approval очереди — следующий явный шаг.
 
 `[x]` means a repository foundation exists, not that a production gate passed. Execution order is server-complete → full iPhone → all other clients/public site.
 

@@ -4031,5 +4031,26 @@ export const migrations: Migration[] = [
         CHECK (story_alerts IN (0, 1));
       ALTER TABLE notification_settings ADD COLUMN reaction_alerts INTEGER NOT NULL DEFAULT 1
         CHECK (reaction_alerts IN (0, 1));
-    ` 
-  }];
+    `
+  },
+  {
+    id: "032_chat_invite_links",
+    sql: `
+      CREATE TABLE chat_invite_links (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        token_digest TEXT NOT NULL UNIQUE,
+        created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TEXT,
+        max_uses INTEGER CHECK (max_uses IS NULL OR (max_uses > 0 AND max_uses <= 10000)),
+        use_count INTEGER NOT NULL DEFAULT 0 CHECK (use_count >= 0),
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        client_nonce TEXT NOT NULL,
+        UNIQUE (created_by, client_nonce)
+      ) STRICT;
+      CREATE INDEX idx_chat_invite_links_chat
+        ON chat_invite_links(chat_id, created_at, id);
+    `
+  }
+];

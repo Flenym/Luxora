@@ -562,6 +562,10 @@ Group/channel:
 | `POST /v1/chats/:id/members` | Owner/admin adds an accepted, unblocked relationship; only owner may add an admin |
 | `PATCH /v1/chats/:id/members/:userId` | Owner changes a non-owner role using `expectedRevision` |
 | `DELETE /v1/chats/:id/members/:userId` | Owner removes non-owner; admin removes member; non-owner may leave |
+| `POST /v1/chats/:id/invite-links` | Owner/admin mints a bearer link; `201` returns `{invite,token,replayed:false}` |
+| `GET /v1/chats/:id/invite-links` | Owner/admin lists metadata-only `{items:[invite]}` (no token material) |
+| `DELETE /v1/chats/:id/invite-links/:linkId` | Owner/admin revokes idempotently; returns `{invite,replayed}` |
+| `POST /v1/invite-links/join` | Any authenticated account joins by bearer token; `201` returns `{membership,replayed}` |
 
 Add body is strict `{userId,role:"admin"|"member",clientNonce}`. Role change is
 strict `{role,expectedRevision,clientNonce}`; removal is strict
@@ -573,6 +577,17 @@ Direct membership is immutable. A group/channel has one non-removable owner,
 maximum 200 current members, and ownership transfer remains a separate unimplemented
 ceremony. Removal commits before authorization is rechecked, so a racing message
 from the removed account is rejected.
+
+Invite creation is strict `{expiresInSeconds?,maxUses?,clientNonce}` (expiry at
+most 90 days, at most 10000 uses). The raw 43-char token is returned exactly
+once and stored as a SHA-256 digest only: a lost create response cannot be
+replayed and answers `409` with `invite_token_shown_once` — rotate the link
+instead. Join is strict `{token,clientNonce}`; existing members get an
+idempotent `{membership,replayed:true}` without consuming a use. Unknown tokens
+are generic `404`; revoked/expired/exhausted links are `404` with a
+`revoked`/`expired`/`exhausted` reason. Joining emits the same `chat.created`
+plus `chat.member.changed(added)` events as a direct add and counts against the
+200-member bound. Join-request approval queues remain unimplemented.
 
 ## 7. Messages
 

@@ -89,6 +89,71 @@ struct CommunityMembershipMutationReceipt: Equatable, Sendable {
     let replayed: Bool
 }
 
+public struct CommunityInviteLink: Equatable, Hashable, Sendable {
+    public let id: UUID
+    public let chatID: UUID
+    public let createdBy: UUID
+    public let expiresAt: Date?
+    public let maxUses: Int?
+    public let useCount: Int
+    public let revokedAt: Date?
+    public let createdAt: Date
+
+    public init(
+        id: UUID,
+        chatID: UUID,
+        createdBy: UUID,
+        expiresAt: Date?,
+        maxUses: Int?,
+        useCount: Int,
+        revokedAt: Date?,
+        createdAt: Date
+    ) {
+        self.id = id
+        self.chatID = chatID
+        self.createdBy = createdBy
+        self.expiresAt = expiresAt
+        self.maxUses = maxUses
+        self.useCount = useCount
+        self.revokedAt = revokedAt
+        self.createdAt = createdAt
+    }
+
+    public var isRevoked: Bool { revokedAt != nil }
+
+    public func isExpired(now: Date = Date()) -> Bool {
+        guard let expiresAt else { return false }
+        return expiresAt <= now
+    }
+
+    public var isExhausted: Bool {
+        guard let maxUses else { return false }
+        return useCount >= maxUses
+    }
+}
+
+public struct CommunityInviteCreation: Equatable, Sendable {
+    public let invite: CommunityInviteLink
+    public let token: String
+    public let replayed: Bool
+
+    public init(invite: CommunityInviteLink, token: String, replayed: Bool) {
+        self.invite = invite
+        self.token = token
+        self.replayed = replayed
+    }
+}
+
+public struct CommunityInviteRevocation: Equatable, Sendable {
+    public let invite: CommunityInviteLink
+    public let replayed: Bool
+
+    public init(invite: CommunityInviteLink, replayed: Bool) {
+        self.invite = invite
+        self.replayed = replayed
+    }
+}
+
 public enum CommunityMemberMutationKind: String, CaseIterable, Hashable, Sendable {
     case add
     case changeRole

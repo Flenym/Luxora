@@ -40,7 +40,8 @@ describe("IA-1 append-only migration", () => {
       "028_message_transcript_commands",
       "029_scheduled_messages",
       "030_privacy_visibility_policies",
-      "031_notification_categories"
+      "031_notification_categories",
+      "032_chat_invite_links"
     ]);
 
     const directory = mkdtempSync(join(tmpdir(), "luxora-ia1-migration-"));

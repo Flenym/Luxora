@@ -36,6 +36,7 @@ import type {
   ChatFolderRulesRecord,
   ChatFolderOverrideRecord,
   ChatMembershipCommandReceiptRecord,
+  ChatInviteLinkRecord,
   ChatRecord,
   IdentityAuditAction,
   MessageRecord,
@@ -1001,6 +1002,13 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     clientNonce: string
   ): ChatMembershipCommandReceiptRecord | null;
   createChatMembershipCommandReceipt(receipt: ChatMembershipCommandReceiptRecord): void;
+  createChatInviteLink(link: ChatInviteLinkRecord): ChatInviteLinkRecord;
+  findChatInviteLinkById(id: string): ChatInviteLinkRecord | null;
+  findChatInviteLinkByDigest(tokenDigest: string): ChatInviteLinkRecord | null;
+  findChatInviteLinkByCreatorNonce(createdBy: string, clientNonce: string): ChatInviteLinkRecord | null;
+  listChatInviteLinks(chatId: string): ChatInviteLinkRecord[];
+  revokeChatInviteLink(id: string, at: string): ChatInviteLinkRecord | null;
+  consumeChatInviteLink(id: string, now: string): ChatInviteLinkRecord | null;
   listPeerUserIds(userId: string): string[];
   getChatForUser(chatId: string, userId: string): Chat | null;
   getChatPreferences(chatId: string, userId: string): ChatPreferences | null;

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   SCHEDULED_SEND_MAX_HORIZON_DAYS,
   SCHEDULED_SEND_MIN_LEAD_SECONDS
@@ -7,14 +7,18 @@ import type {
   AddChatMemberRequest,
   Attachment,
   Chat,
+  ChatInviteLink,
   ChatMember,
   ChatMembership,
   ChatMembershipMutationResponse,
   ChatPreferences,
+  CreateChatInviteLinkRequest,
+  CreateChatInviteLinkResponse,
   CreateChatRequest,
   CreateTopicRequest,
   EditMessageRequest,
   ForwardMessageRequest,
+  JoinChatByInviteRequest,
   Message,
   MessagePin,
   MessageReceipt,
@@ -23,6 +27,7 @@ import type {
   PutMessageTranscript,
   RealtimeEvent,
   RemoveChatMemberRequest,
+  RevokeChatInviteLinkResponse,
   ScheduleMessageRequest,
   ScheduledMessage,
   SendMessageRequest,
@@ -32,6 +37,7 @@ import type {
 } from "@luxora/protocol";
 import type { Store } from "../domain/store.js";
 import type {
+  ChatInviteLinkRecord,
   ChatMemberRecord,
   ChatMembershipCommandReceiptRecord,
   ChatRecord,
@@ -142,6 +148,26 @@ function membershipRequestFingerprint(  operation: ChatMembershipCommandReceiptR
     ...("role" in input ? { role: input.role } : {}),
     ...("expectedRevision" in input ? { expectedRevision: input.expectedRevision } : {})
   });
+}
+
+function inviteJoinRequestFingerprint(targetUserId: string, tokenDigest: string): string {
+  return JSON.stringify({
+    version: 1,
+    operation: "add",
+    via: "invite_link",
+    targetUserId,
+    tokenDigest
+  });
+}
+
+function isSqliteUniqueConstraint(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  return code.startsWith("SQLITE_CONSTRAINT") || error.message.includes("UNIQUE constraint failed");
+}
+
+function inviteTokenDigest(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 export class ChatService {
@@ -553,6 +579,160 @@ export class ChatService {
           changedAt: folderChangedAt
         }, folderChangedAt));
       }
+      return { response: { membership: this.#membershipView(membership), replayed: false }, events };
+    });
+    this.publisher.publish(result.events);
+    return result.response;
+  }
+
+  createInviteLink(
+    actorUserId: string,
+    chatId: string,
+    input: CreateChatInviteLinkRequest
+  ): CreateChatInviteLinkResponse {
+    return this.store.immediateTransaction(() => {
+      const actor = this.#requireMember(chatId, actorUserId);
+      const chat = this.store.findChatRecord(chatId);
+      if (chat === null) throw notFound("Chat not found");
+      if (chat.kind === "direct") throw conflict("Direct chats cannot have invite links");
+      if (actor.role !== "owner" && actor.role !== "admin") {
+        throw forbidden("Only chat administrators can manage invite links");
+      }
+      const duplicate = this.store.findChatInviteLinkByCreatorNonce(actorUserId, input.clientNonce);
+      if (duplicate !== null) {
+        throw this.#inviteTokenShownOnce(duplicate.id);
+      }
+      const now = new Date().toISOString();
+      const token = randomBytes(32).toString("base64url");
+      try {
+        const link = this.store.createChatInviteLink({
+          id: randomUUID(),
+          chatId,
+          tokenDigest: inviteTokenDigest(token),
+          createdBy: actorUserId,
+          expiresAt: input.expiresInSeconds === undefined
+            ? null
+            : new Date(Date.parse(now) + input.expiresInSeconds * 1000).toISOString(),
+          maxUses: input.maxUses ?? null,
+          useCount: 0,
+          revokedAt: null,
+          createdAt: now,
+          clientNonce: input.clientNonce
+        });
+        return { invite: this.#inviteView(link), token, replayed: false };
+      } catch (error) {
+        if (!isSqliteUniqueConstraint(error)) throw error;
+        const raced = this.store.findChatInviteLinkByCreatorNonce(actorUserId, input.clientNonce);
+        throw this.#inviteTokenShownOnce(raced?.id);
+      }
+    });
+  }
+
+  listInviteLinks(
+    actorUserId: string,
+    chatId: string
+  ): { items: ChatInviteLink[] } {
+    const actor = this.#requireMember(chatId, actorUserId);
+    const chat = this.store.findChatRecord(chatId);
+    if (chat === null) throw notFound("Chat not found");
+    if (actor.role !== "owner" && actor.role !== "admin") {
+      throw forbidden("Only chat administrators can manage invite links");
+    }
+    return {
+      items: this.store.listChatInviteLinks(chatId).slice(0, 100).map((link) => this.#inviteView(link))
+    };
+  }
+
+  revokeInviteLink(
+    actorUserId: string,
+    chatId: string,
+    linkId: string
+  ): RevokeChatInviteLinkResponse {
+    const actor = this.#requireMember(chatId, actorUserId);
+    const chat = this.store.findChatRecord(chatId);
+    if (chat === null) throw notFound("Chat not found");
+    if (actor.role !== "owner" && actor.role !== "admin") {
+      throw forbidden("Only chat administrators can manage invite links");
+    }
+    const link = this.store.findChatInviteLinkById(linkId);
+    if (link === null || link.chatId !== chatId) throw notFound("Invite link not found");
+    if (link.revokedAt !== null) return { invite: this.#inviteView(link), replayed: true };
+    const revoked = this.store.revokeChatInviteLink(linkId, new Date().toISOString());
+    if (revoked === null) throw notFound("Invite link not found");
+    return { invite: this.#inviteView(revoked), replayed: false };
+  }
+
+  joinChatByInvite(
+    userId: string,
+    input: JoinChatByInviteRequest
+  ): ChatMembershipMutationResponse {
+    const digest = inviteTokenDigest(input.token);
+    const fingerprint = inviteJoinRequestFingerprint(userId, digest);
+    const result = this.store.immediateTransaction(() => {
+      const replay = this.#membershipReplay(userId, input.clientNonce, fingerprint);
+      if (replay !== null) return { response: replay, events: [] as StoredEvent[] };
+
+      const link = this.store.findChatInviteLinkByDigest(digest);
+      if (link === null) throw notFound("Invite link is invalid", { reason: "invite_link_invalid" });
+      const chat = this.store.findChatRecord(link.chatId);
+      if (chat === null || chat.kind === "direct") {
+        throw notFound("Invite link is invalid", { reason: "invite_link_invalid" });
+      }
+      const current = this.store.getChatMember(chat.id, userId);
+      if (current !== null) {
+        return { response: { membership: this.#membershipView(current), replayed: true }, events: [] as StoredEvent[] };
+      }
+      const now = new Date().toISOString();
+      if (link.revokedAt !== null) {
+        throw notFound("Invite link is no longer valid", { reason: "invite_link_revoked" });
+      }
+      if (link.expiresAt !== null && link.expiresAt <= now) {
+        throw notFound("Invite link is no longer valid", { reason: "invite_link_expired" });
+      }
+      if (link.maxUses !== null && link.useCount >= link.maxUses) {
+        throw notFound("Invite link is no longer valid", { reason: "invite_link_exhausted" });
+      }
+      if (this.store.countChatMembers(chat.id) >= MAX_CHAT_MEMBERS) {
+        throw conflict(`A chat can contain at most ${MAX_CHAT_MEMBERS} members`);
+      }
+      // Atomic bounded consume: a concurrent join that takes the last use
+      // makes this attempt fail as exhausted instead of over-admitting.
+      const consumed = this.store.consumeChatInviteLink(link.id, now);
+      if (consumed === null) {
+        throw notFound("Invite link is no longer valid", { reason: "invite_link_exhausted" });
+      }
+      const membership = this.store.createChatMember(chat.id, userId, "member", now);
+      if (membership === null) {
+        const raced = this.store.getChatMember(chat.id, userId);
+        if (raced === null) throw new Error("Invite join did not persist");
+        return { response: { membership: this.#membershipView(raced), replayed: true }, events: [] as StoredEvent[] };
+      }
+      this.#storeMembershipReceipt({
+        actorUserId: userId,
+        clientNonce: input.clientNonce,
+        operation: "add",
+        chatId: chat.id,
+        targetUserId: userId,
+        fingerprint,
+        membership,
+        createdAt: now
+      });
+
+      const events: StoredEvent[] = [];
+      const addedChat = this.store.getChatForUser(chat.id, userId);
+      if (addedChat === null) throw new Error("Created membership is not visible to its account");
+      events.push(this.store.appendEvent(
+        userId,
+        { type: "chat.created", chat: addedChat },
+        now
+      ));
+      events.push(...this.#appendMembershipChanged(
+        chat.id,
+        "added",
+        membership,
+        userId,
+        now
+      ));
       return { response: { membership: this.#membershipView(membership), replayed: false }, events };
     });
     this.publisher.publish(result.events);
@@ -1215,6 +1395,26 @@ export class ChatService {
       joinedAt: record.joinedAt,
       updatedAt: record.updatedAt
     };
+  }
+
+  #inviteView(record: ChatInviteLinkRecord): ChatInviteLink {
+    return {
+      id: record.id,
+      chatId: record.chatId,
+      createdBy: record.createdBy,
+      expiresAt: record.expiresAt,
+      maxUses: record.maxUses,
+      useCount: record.useCount,
+      revokedAt: record.revokedAt,
+      createdAt: record.createdAt
+    };
+  }
+
+  #inviteTokenShownOnce(inviteId?: string) {
+    return conflict("An invite link already exists for this request", {
+      reason: "invite_token_shown_once",
+      ...(inviteId === undefined ? {} : { inviteId })
+    });
   }
 
   #memberView(record: ChatMemberRecord): ChatMember {

@@ -105,6 +105,7 @@ import type {
   ChatFolderRecord,
   ChatMemberRecord,
   ChatMembershipCommandReceiptRecord,
+  ChatInviteLinkRecord,
   ChatRecord,
   IdentityAuditAction,
   MessageRecord,
@@ -447,6 +448,19 @@ interface ChatMembershipCommandReceiptRow {
   result_joined_at: string;
   result_updated_at: string;
   created_at: string;
+}
+
+interface ChatInviteLinkRow {
+  id: string;
+  chat_id: string;
+  token_digest: string;
+  created_by: string;
+  expires_at: string | null;
+  max_uses: number | null;
+  use_count: number;
+  revoked_at: string | null;
+  created_at: string;
+  client_nonce: string;
 }
 
 interface ChatFolderRow {
@@ -1039,6 +1053,21 @@ function mapChatMember(row: ChatMemberRow): ChatMemberRecord {
     revision: row.membership_revision,
     joinedAt: row.joined_at,
     updatedAt: row.membership_updated_at
+  };
+}
+
+function mapChatInviteLink(row: ChatInviteLinkRow): ChatInviteLinkRecord {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    tokenDigest: row.token_digest,
+    createdBy: row.created_by,
+    expiresAt: row.expires_at,
+    maxUses: row.max_uses,
+    useCount: row.use_count,
+    revokedAt: row.revoked_at,
+    createdAt: row.created_at,
+    clientNonce: row.client_nonce
   };
 }
 
@@ -8434,6 +8463,75 @@ export class SqliteStore implements Store {
       receipt.membership.updatedAt,
       receipt.createdAt
     );
+  }
+
+  createChatInviteLink(link: ChatInviteLinkRecord): ChatInviteLinkRecord {
+    this.#db.prepare(`
+      INSERT INTO chat_invite_links (
+        id, chat_id, token_digest, created_by, expires_at, max_uses,
+        use_count, revoked_at, created_at, client_nonce
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      link.id,
+      link.chatId,
+      link.tokenDigest,
+      link.createdBy,
+      link.expiresAt,
+      link.maxUses,
+      link.useCount,
+      link.revokedAt,
+      link.createdAt,
+      link.clientNonce
+    );
+    const created = this.findChatInviteLinkById(link.id);
+    if (created === null) throw new Error("Chat invite link was not persisted");
+    return created;
+  }
+
+  findChatInviteLinkById(id: string): ChatInviteLinkRecord | null {
+    const row = this.#db.prepare("SELECT * FROM chat_invite_links WHERE id = ?")
+      .get(id) as ChatInviteLinkRow | undefined;
+    return row === undefined ? null : mapChatInviteLink(row);
+  }
+
+  findChatInviteLinkByDigest(tokenDigest: string): ChatInviteLinkRecord | null {
+    const row = this.#db.prepare("SELECT * FROM chat_invite_links WHERE token_digest = ?")
+      .get(tokenDigest) as ChatInviteLinkRow | undefined;
+    return row === undefined ? null : mapChatInviteLink(row);
+  }
+
+  findChatInviteLinkByCreatorNonce(createdBy: string, clientNonce: string): ChatInviteLinkRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM chat_invite_links WHERE created_by = ? AND client_nonce = ?
+    `).get(createdBy, clientNonce) as ChatInviteLinkRow | undefined;
+    return row === undefined ? null : mapChatInviteLink(row);
+  }
+
+  listChatInviteLinks(chatId: string): ChatInviteLinkRecord[] {
+    const rows = this.#db.prepare(`
+      SELECT * FROM chat_invite_links WHERE chat_id = ? ORDER BY created_at, id
+    `).all(chatId) as ChatInviteLinkRow[];
+    return rows.map(mapChatInviteLink);
+  }
+
+  revokeChatInviteLink(id: string, at: string): ChatInviteLinkRecord | null {
+    this.#db.prepare(`
+      UPDATE chat_invite_links SET revoked_at = ?
+      WHERE id = ? AND revoked_at IS NULL
+    `).run(at, id);
+    return this.findChatInviteLinkById(id);
+  }
+
+  consumeChatInviteLink(id: string, now: string): ChatInviteLinkRecord | null {
+    const result = this.#db.prepare(`
+      UPDATE chat_invite_links SET use_count = use_count + 1
+      WHERE id = ?
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > ?)
+        AND (max_uses IS NULL OR use_count < max_uses)
+    `).run(id, now);
+    if (result.changes !== 1) return null;
+    return this.findChatInviteLinkById(id);
   }
 
   listPeerUserIds(userId: string): string[] {
