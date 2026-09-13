@@ -2,7 +2,6 @@ import Foundation
 @testable import LuxoraKit
 import XCTest
 
-@MainActor
 final class ChatTopicsContractTests: XCTestCase {
     private let chatID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
     private let userID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
@@ -145,8 +144,8 @@ final class ChatTopicsContractTests: XCTestCase {
             updatedAt: Date(timeIntervalSince1970: 1),
             closedAt: nil
         )
-        let store = ChatTopicsStore()
-        store.configureRemote(
+        let store = await ChatTopicsStore()
+        await store.configureRemote(
             loader: { _ in [topic] },
             creator: { _, title in
                 ChatTopic(
@@ -165,17 +164,25 @@ final class ChatTopicsContractTests: XCTestCase {
         )
 
         await store.refresh(chatID: chatID)
-        XCTAssertEqual(store.topics(for: chatID).map(\.title), ["Анонсы"])
-        XCTAssertEqual(store.loadState(for: chatID), .loaded)
+        let loaded = await store.topics(for: chatID)
+        XCTAssertEqual(loaded.map(\.title), ["Анонсы"])
+        let loadState = await store.loadState(for: chatID)
+        XCTAssertEqual(loadState, .loaded)
 
-        XCTAssertTrue(await store.create(chatID: chatID, title: "Релизы"))
-        XCTAssertEqual(store.topics(for: chatID).count, 2)
+        let didCreate = await store.create(chatID: chatID, title: "Релизы")
+        XCTAssertTrue(didCreate)
+        let afterCreate = await store.topics(for: chatID)
+        XCTAssertEqual(afterCreate.count, 2)
 
-        XCTAssertFalse(await store.create(chatID: chatID, title: "   "))
-        XCTAssertEqual(store.topics(for: chatID).count, 2)
+        let invalidCreated = await store.create(chatID: chatID, title: "   ")
+        XCTAssertFalse(invalidCreated)
+        let afterInvalid = await store.topics(for: chatID)
+        XCTAssertEqual(afterInvalid.count, 2)
 
-        XCTAssertFalse(await store.setClosed(chatID: chatID, topicID: topicID, closed: true))
-        guard case let .failed(message) = store.mutationState else {
+        let closed = await store.setClosed(chatID: chatID, topicID: topicID, closed: true)
+        XCTAssertFalse(closed)
+        let mutationState = await store.mutationState
+        guard case let .failed(message) = mutationState else {
             return XCTFail("Expected a visible failure")
         }
         XCTAssertTrue(message.contains("владельцы"))
