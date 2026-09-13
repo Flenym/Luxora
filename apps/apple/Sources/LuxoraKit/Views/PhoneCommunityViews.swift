@@ -544,6 +544,7 @@ private struct PhoneCommunityCreationFailure: View {
 struct PhoneCommunityProfileView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var communityStore: CommunityStore
+    var topicsStore: ChatTopicsStore?
     let initialConversation: Conversation
     let openConversation: (UUID) -> Void
     let leftCommunity: (UUID) -> Void
@@ -553,6 +554,7 @@ struct PhoneCommunityProfileView: View {
     @State private var unavailableProfileTab: PhoneCommunityProfileTab?
     @State private var memberQuery = ""
     @State private var isMemberSearchPresented = false
+    @State private var showsTopicCreator = false
 
     private var conversation: Conversation {
         communityStore.community(initialConversation.id) ?? initialConversation
@@ -614,6 +616,8 @@ struct PhoneCommunityProfileView: View {
 
             memberSection
 
+            topicsSection
+
             if let currentMember,
                currentMember.membership.role != .owner {
                 Section {
@@ -647,16 +651,26 @@ struct PhoneCommunityProfileView: View {
         .task(id: conversation.id) {
             await communityStore.refreshCommunity(conversation.id)
             await communityStore.loadMembers(conversation.id)
+            await topicsStore?.refresh(chatID: conversation.id)
         }
         .refreshable {
             await communityStore.refreshCommunity(conversation.id)
             await communityStore.loadMembers(conversation.id, force: true)
+            await topicsStore?.refresh(chatID: conversation.id, force: true)
         }
         .sheet(isPresented: $showsAddMember) {
             PhoneCommunityAddMemberSheet(
                 communityStore: communityStore,
                 conversation: conversation
             )
+        }
+        .sheet(isPresented: $showsTopicCreator) {
+            if let topicsStore {
+                PhoneCommunityTopicCreateSheet(
+                    topicsStore: topicsStore,
+                    chatID: conversation.id
+                )
+            }
         }
         .confirmationDialog(
             "Покинуть \(conversation.kind == .channel ? "канал" : "группу")?",
@@ -871,6 +885,92 @@ struct PhoneCommunityProfileView: View {
         }
     }
 
+    @ViewBuilder
+    private var topicsSection: some View {
+        if let topicsStore {
+            switch topicsStore.loadState(for: conversation.id) {
+            case .idle, .loading where topicsStore.topics(for: conversation.id).isEmpty:
+                Section("Темы") {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Загружаем темы…")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(minHeight: 64)
+                    .accessibilityIdentifier("community-topics-loading")
+                }
+            case let .failed(detail) where topicsStore.topics(for: conversation.id).isEmpty:
+                Section("Темы") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Не удалось загрузить темы", systemImage: "wifi.exclamationmark")
+                            .foregroundStyle(.red)
+                        Text(detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Button("Повторить") {
+                            Task { await topicsStore.refresh(chatID: conversation.id, force: true) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .accessibilityIdentifier("community-topics-failed")
+                }
+            default:
+                let topics = topicsStore.topics(for: conversation.id)
+                Section("Темы · \(topics.count)") {
+                    if let error = topicsStore.mutationError {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.callout)
+                            .accessibilityIdentifier("community-topics-mutation-error")
+                    }
+                    if canManageTopics {
+                        Button {
+                            showsTopicCreator = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "plus.bubble.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(LuxoraTheme.electricBlue)
+                                    .frame(width: 44, height: 44)
+                                Text("Создать тему")
+                                    .foregroundStyle(LuxoraTheme.electricBlue)
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("community-topics-inline-add")
+                    }
+                    if topics.isEmpty {
+                        Text("Тем пока нет. Создайте первую, чтобы разложить обсуждение по веткам.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("community-topics-empty")
+                    } else {
+                        ForEach(topics) { topic in
+                            PhoneCommunityTopicRow(
+                                topicsStore: topicsStore,
+                                chatID: conversation.id,
+                                topic: topic,
+                                canManage: canManageTopics
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var canManageTopics: Bool {
+        guard topicsStore != nil else { return false }
+        switch communityStore.currentUserRole(in: conversation.id) {
+        case .owner, .admin:
+            return true
+        case .member, nil:
+            return false
+        }
+    }
+
     private var profileSubtitle: String {
         let role = localizedRole(
             communityStore.currentUserRole(in: conversation.id)
@@ -923,6 +1023,109 @@ struct PhoneCommunityProfileView: View {
                 return lhs.key.userID.uuidString < rhs.key.userID.uuidString
             }
             .first
+    }
+}
+
+private struct PhoneCommunityTopicRow: View {
+    @Bindable var topicsStore: ChatTopicsStore
+    let chatID: UUID
+    let topic: ChatTopic
+    let canManage: Bool
+
+    @State private var isRenaming = false
+    @State private var renamedTitle = ""
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: topic.isClosed ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.bubble.right.fill")
+                .foregroundStyle(topic.isClosed ? .secondary : LuxoraTheme.electricBlue)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(topic.title)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(topic.isClosed ? .secondary : .primary)
+                Text(topic.isClosed ? "Закрыта" : "Открыта")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 6)
+            if topicsStore.mutationState == .loading {
+                ProgressView()
+            } else if canManage {
+                Menu {
+                    Button("Переименовать") {
+                        renamedTitle = topic.title
+                        isRenaming = true
+                    }
+                    Button(topic.isClosed ? "Открыть" : "Закрыть") {
+                        Task { await topicsStore.setClosed(chatID: chatID, topicID: topic.id, closed: !topic.isClosed) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("community-topic-menu-\(topic.id.uuidString)")
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("community-topic-\(topic.id.uuidString)")
+        .alert("Переименовать тему", isPresented: $isRenaming) {
+            TextField("Название", text: $renamedTitle)
+            Button("Отмена", role: .cancel) {}
+            Button("Сохранить") {
+                Task { await topicsStore.rename(chatID: chatID, topicID: topic.id, title: renamedTitle) }
+            }
+        } message: {
+            Text("От 1 до 120 символов.")
+        }
+    }
+}
+
+private struct PhoneCommunityTopicCreateSheet: View {
+    @Bindable var topicsStore: ChatTopicsStore
+    let chatID: UUID
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var isSaving = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Название темы", text: $title)
+                        .accessibilityIdentifier("community-topic-create-title")
+                } footer: {
+                    Text("Темы помогают разложить обсуждение по веткам. От 1 до 120 символов.")
+                }
+                if let error = topicsStore.mutationError {
+                    Section {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            .navigationTitle("Новая тема")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Создать") {
+                        Task {
+                            isSaving = true
+                            let created = await topicsStore.create(chatID: chatID, title: title)
+                            isSaving = false
+                            if created { dismiss() }
+                        }
+                    }
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                    .accessibilityIdentifier("community-topic-create-save")
+                }
+            }
+            .accessibilityIdentifier("community-topic-create-sheet")
+        }
     }
 }
 

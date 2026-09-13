@@ -46,6 +46,7 @@ public struct LuxoraPhoneRootView: View {
     private let pushRegistrationStore: PushRegistrationStore?
     private let chatFoldersStore: ChatFoldersStore?
     private let communityStore: CommunityStore?
+    private let chatTopicsStore: ChatTopicsStore?
     private let globalSearchStore: GlobalSearchStore?
     private let updateChatPreferences: (UUID, ChatPreferencesPatch) async -> Bool
     private let synchronizePushAuthorization: (Bool) -> Void
@@ -68,6 +69,7 @@ public struct LuxoraPhoneRootView: View {
         pushRegistrationStore: PushRegistrationStore? = nil,
         chatFoldersStore: ChatFoldersStore? = nil,
         communityStore: CommunityStore? = nil,
+        chatTopicsStore: ChatTopicsStore? = nil,
         globalSearchStore: GlobalSearchStore? = nil,
         updateChatPreferences: @escaping (UUID, ChatPreferencesPatch) async -> Bool = { _, _ in false },
         synchronizePushAuthorization: @escaping (Bool) -> Void = { _ in },
@@ -83,6 +85,7 @@ public struct LuxoraPhoneRootView: View {
         self.pushRegistrationStore = pushRegistrationStore
         self.chatFoldersStore = chatFoldersStore
         self.communityStore = communityStore
+        self.chatTopicsStore = chatTopicsStore
         self.globalSearchStore = globalSearchStore
         self.updateChatPreferences = updateChatPreferences
         self.synchronizePushAuthorization = synchronizePushAuthorization
@@ -212,6 +215,7 @@ public struct LuxoraPhoneRootView: View {
                                     ?? store.conversations.first(where: { $0.id == conversationID }) {
                                 PhoneCommunityProfileView(
                                     communityStore: communityStore,
+                                    topicsStore: chatTopicsStore,
                                     initialConversation: conversation,
                                     openConversation: { returnToConversation($0) },
                                     leftCommunity: { _ in

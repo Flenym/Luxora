@@ -262,6 +262,37 @@ public struct CommunityOwnershipTransferReceipt: Equatable, Sendable {
     }
 }
 
+public struct ChatTopic: Equatable, Hashable, Sendable, Identifiable {
+    public var id: UUID { topicID }
+    public let topicID: UUID
+    public let chatID: UUID
+    public let title: String
+    public let createdBy: Participant
+    public let createdAt: Date
+    public let updatedAt: Date
+    public let closedAt: Date?
+
+    public init(
+        topicID: UUID,
+        chatID: UUID,
+        title: String,
+        createdBy: Participant,
+        createdAt: Date,
+        updatedAt: Date,
+        closedAt: Date?
+    ) {
+        self.topicID = topicID
+        self.chatID = chatID
+        self.title = title
+        self.createdBy = createdBy
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.closedAt = closedAt
+    }
+
+    public var isClosed: Bool { closedAt != nil }
+}
+
 public enum CommunityMemberMutationKind: String, CaseIterable, Hashable, Sendable {
     case add
     case changeRole

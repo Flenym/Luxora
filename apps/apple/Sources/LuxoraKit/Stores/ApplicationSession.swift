@@ -293,6 +293,7 @@ public final class ApplicationSession {
     public private(set) var chatPreferencesStore: ChatPreferencesStore?
     public private(set) var chatFoldersStore: ChatFoldersStore?
     public private(set) var communityStore: CommunityStore?
+    public private(set) var chatTopicsStore: ChatTopicsStore?
     public private(set) var globalSearchStore: GlobalSearchStore?
     public private(set) var synchronizedDraftStore: SynchronizedChatDraftStore?
     public let avatarImageCache = AuthenticatedAvatarImageCache()
@@ -460,6 +461,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
@@ -487,6 +489,8 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        chatTopicsStore = nil
+        chatTopicsStore = nil
         globalSearchStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
@@ -825,6 +829,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
@@ -855,6 +860,8 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        chatTopicsStore = nil
+        chatTopicsStore = nil
         globalSearchStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
@@ -1658,6 +1665,31 @@ public final class ApplicationSession {
                 )
             }
         )
+
+        let topicsStore = ChatTopicsStore()
+        topicsStore.configureRemote(
+            loader: { chatID in
+                try await coordinator.withAccessToken { token in
+                    try await api.chatTopics(chatID: chatID, token: token)
+                }
+            },
+            creator: { chatID, title in
+                try await coordinator.withAccessToken { token in
+                    try await api.createChatTopic(chatID: chatID, title: title, token: token)
+                }
+            },
+            updater: { chatID, topicID, title, closed in
+                try await coordinator.withAccessToken { token in
+                    try await api.updateChatTopic(
+                        chatID: chatID,
+                        topicID: topicID,
+                        title: title,
+                        closed: closed,
+                        token: token
+                    )
+                }
+            }
+        )
         if let bootstrapReconciliation {
             try ScopedReconciliationPublisher.publish(
                 bootstrapReconciliation,
@@ -1700,6 +1732,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
@@ -1746,6 +1779,7 @@ public final class ApplicationSession {
         chatFoldersStore = foldersStore
         chatFoldersBinding = foldersBinding
         communityStore = communitiesStore
+        chatTopicsStore = topicsStore
         globalSearchStore = searchStore
         synchronizedDraftStore = draftsStore
         synchronizedDraftBinding = draftsBinding
@@ -1914,6 +1948,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
@@ -1931,6 +1966,7 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        chatTopicsStore = nil
         globalSearchStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
@@ -1950,6 +1986,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        chatTopicsStore?.cancelRemoteOperations()
         synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
         cancelRealtime(resetSequence: true)

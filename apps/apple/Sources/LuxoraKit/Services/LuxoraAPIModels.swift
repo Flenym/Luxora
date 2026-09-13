@@ -900,6 +900,37 @@ struct APIForwardProvenance: Decodable, Sendable {
     }
 }
 
+struct APITopic: Decodable, Sendable {
+    let id: UUID
+    let chatId: UUID
+    let title: String
+    let createdBy: APIUser
+    let createdAt: Date
+    let updatedAt: Date
+    let closedAt: Date?
+
+    func topic(expectedChatID: UUID) throws -> ChatTopic {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard chatId == expectedChatID,
+              !normalizedTitle.isEmpty,
+              normalizedTitle.count <= 120,
+              updatedAt >= createdAt,
+              closedAt.map({ $0 >= createdAt }) ?? true
+        else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        return ChatTopic(
+            topicID: id,
+            chatID: chatId,
+            title: normalizedTitle,
+            createdBy: createdBy.participant,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            closedAt: closedAt
+        )
+    }
+}
+
 struct APIMessage: Decodable, Sendable {
     let id: UUID
     let chatId: UUID
@@ -907,8 +938,7 @@ struct APIMessage: Decodable, Sendable {
     let kind: String
     let body: String?
     let replyToMessageId: UUID?
-    let topicId: UUID?
-    let forwardedFrom: APIForwardProvenance?
+    let topicId: UUID?    let forwardedFrom: APIForwardProvenance?
     let isPinned: Bool
     let clientNonce: UUID
     let revision: Int
@@ -1016,7 +1046,8 @@ struct APIMessage: Decodable, Sendable {
             isOutgoing: sender.id == currentUserID,
             attachments: (attachments ?? []).map { $0.attachment() },
             transcriptionAllowed: transcriptionAllowed,
-            transcript: transcript
+            transcript: transcript,
+            topicID: topicId
         )
     }
 

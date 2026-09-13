@@ -44,5 +44,5 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Следующий приоритет (порядок)
 
-1. Topics/threads iPhone (в работе): ChatTopic + client CRUD + send/filter + store + UI + tests. Сервер уже готов.
+1. Topics composer picker + фильтр истории (поверх готового management-слайса).
 2. Voice сквозной QA → media processing → search → calls signaling (по готовности, каждый со Slice-тестами).

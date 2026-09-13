@@ -46,6 +46,7 @@ public struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
     public var attachments: [MessageAttachment]
     public var transcriptionAllowed: Bool
     public var transcript: String?
+    public var topicID: UUID?
 
     public init(
         id: UUID,
@@ -61,7 +62,8 @@ public struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         reactions: [MessageReaction] = [],
         attachments: [MessageAttachment] = [],
         transcriptionAllowed: Bool = false,
-        transcript: String? = nil
+        transcript: String? = nil,
+        topicID: UUID? = nil
     ) {
         self.id = id
         self.clientID = clientID
@@ -77,12 +79,13 @@ public struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         self.attachments = attachments
         self.transcriptionAllowed = transcriptionAllowed
         self.transcript = transcript
+        self.topicID = topicID
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, clientID, conversationID, author, text, sentAt, editedAt, delivery
         case isOutgoing, replyPreview, reactions, attachments
-        case transcriptionAllowed, transcript
+        case transcriptionAllowed, transcript, topicID
     }
 
     // Durable caches written before media support have no `attachments` key.
@@ -102,5 +105,7 @@ public struct ChatMessage: Identifiable, Hashable, Codable, Sendable {
         attachments = try container.decodeIfPresent([MessageAttachment].self, forKey: .attachments) ?? []
         transcriptionAllowed = try container.decodeIfPresent(Bool.self, forKey: .transcriptionAllowed) ?? false
         transcript = try container.decodeIfPresent(String.self, forKey: .transcript)
+        // Durable caches written before topics carry no `topicID` key.
+        topicID = try container.decodeIfPresent(UUID.self, forKey: .topicID)
     }
 }

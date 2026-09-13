@@ -643,7 +643,7 @@ actor LuxoraAPIClient {
         return items
     }
 
-    func messages(chatID: UUID, token: String) async throws -> [APIMessage] {
+    func messages(chatID: UUID, topicID: UUID? = nil, token: String) async throws -> [APIMessage] {
         var items: [APIMessage] = []
         var itemIDs = Set<UUID>()
         var cursor: String?
@@ -656,6 +656,9 @@ actor LuxoraAPIClient {
                 throw LuxoraAPIError.invalidResponse
             }
             var path = "/v1/chats/\(chatID.apiPathComponent)/messages?limit=100"
+            if let topicID {
+                path += "&topicId=\(topicID.apiPathComponent)"
+            }
             if let cursor, let encodedCursor = Self.encodedQueryValue(cursor) {
                 path += "&cursor=\(encodedCursor)"
             }
@@ -677,6 +680,7 @@ actor LuxoraAPIClient {
         clientNonce: UUID,
         body: String,
         replyToMessageID: UUID? = nil,
+        topicID: UUID? = nil,
         attachmentIDs: [UUID] = [],
         transcriptionConsent: Bool = false,
         token: String
@@ -689,12 +693,78 @@ actor LuxoraAPIClient {
                 clientNonce: clientNonce,
                 body: body,
                 replyToMessageID: replyToMessageID,
+                topicID: topicID,
                 attachmentIDs: attachmentIDs,
                 transcriptionConsent: transcriptionConsent
             ),
             token: token
         )
         return response.message
+    }
+
+    func chatTopics(chatID: UUID, token: String) async throws -> [ChatTopic] {
+        struct Response: Decodable, Sendable { let items: [APITopic] }
+        let response: Response = try await request(
+            path: "/v1/chats/\(chatID.apiPathComponent)/topics",
+            token: token
+        )
+        guard response.items.count <= 100 else { throw LuxoraAPIError.invalidResponse }
+        return try response.items.map { try $0.topic(expectedChatID: chatID) }
+    }
+
+    func createChatTopic(chatID: UUID, title: String, token: String) async throws -> ChatTopic {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTitle.isEmpty, normalizedTitle.count <= 120 else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        struct Response: Decodable, Sendable { let topic: APITopic }
+        struct Body: Encodable, Sendable { let title: String }
+        let response: Response = try await requestEncoded(
+            path: "/v1/chats/\(chatID.apiPathComponent)/topics",
+            method: "POST",
+            body: Body(title: normalizedTitle),
+            token: token
+        )
+        return try response.topic.topic(expectedChatID: chatID)
+    }
+
+    func updateChatTopic(
+        chatID: UUID,
+        topicID: UUID,
+        title: String?,
+        closed: Bool?,
+        token: String
+    ) async throws -> ChatTopic {
+        let normalizedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let normalizedTitle, normalizedTitle.isEmpty || normalizedTitle.count > 120 {
+            throw LuxoraAPIError.invalidResponse
+        }
+        guard normalizedTitle != nil || closed != nil else {
+            throw LuxoraAPIError.invalidResponse
+        }
+        struct Response: Decodable, Sendable { let topic: APITopic }
+        struct Body: Encodable, Sendable {
+            let title: String?
+            let closed: Bool?
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys)
+                try container.encodeIfPresent(title, forKey: .title)
+                try container.encodeIfPresent(closed, forKey: .closed)
+            }
+
+            private enum CodingKeys: String, CodingKey {
+                case title
+                case closed
+            }
+        }
+        let response: Response = try await requestEncoded(
+            path: "/v1/topics/\(topicID.apiPathComponent)",
+            method: "PATCH",
+            body: Body(title: normalizedTitle, closed: closed),
+            token: token
+        )
+        return try response.topic.topic(expectedChatID: chatID)
     }
 
     func putMessageTranscript(
@@ -1390,6 +1460,7 @@ struct APISendMessageBody: Encodable, Sendable {
     let body: String?
     let clientNonce: UUID
     let replyToMessageID: UUID?
+    let topicID: UUID?
     let attachmentIds: [UUID]?
     let transcriptionConsent: Bool?
 
@@ -1398,6 +1469,7 @@ struct APISendMessageBody: Encodable, Sendable {
         case body
         case clientNonce
         case replyToMessageID = "replyToMessageId"
+        case topicID = "topicId"
         case attachmentIds
         case transcriptionConsent
     }
@@ -1410,6 +1482,9 @@ struct APISendMessageBody: Encodable, Sendable {
         try container.encode(clientNonce.apiPathComponent, forKey: .clientNonce)
         if let replyToMessageID {
             try container.encode(replyToMessageID.apiPathComponent, forKey: .replyToMessageID)
+        }
+        if let topicID {
+            try container.encode(topicID.apiPathComponent, forKey: .topicID)
         }
         if let attachmentIds, !attachmentIds.isEmpty {
             try container.encode(attachmentIds.map { $0.apiPathComponent }, forKey: .attachmentIds)
@@ -1447,6 +1522,7 @@ enum APIChatBody {
         clientNonce: UUID,
         body: String,
         replyToMessageID: UUID?,
+        topicID: UUID? = nil,
         attachmentIDs: [UUID],
         transcriptionConsent: Bool = false
     ) -> APISendMessageBody {
@@ -1455,6 +1531,7 @@ enum APIChatBody {
             body: body.isEmpty ? nil : body,
             clientNonce: clientNonce,
             replyToMessageID: replyToMessageID,
+            topicID: topicID,
             attachmentIds: attachmentIDs.isEmpty ? nil : attachmentIDs,
             transcriptionConsent: transcriptionConsent ? true : nil
         )
