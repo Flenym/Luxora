@@ -1505,7 +1505,7 @@ private struct APIUpdateTopicBody: Encodable, Sendable {
     }
 
     func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys)
+        var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(title, forKey: .title)
         try container.encodeIfPresent(closed, forKey: .closed)
     }
