@@ -16,8 +16,16 @@ extension MessengerStore {
             accepter: { requestID in try await backend.accept(requestID) },
             dismisser: { requestID in try await backend.dismiss(requestID) },
             privacyLoader: { await backend.loadPrivacy() },
-            privacyUpdater: { discoverable, requests in
-                try await backend.updatePrivacy(discoverable: discoverable, requests: requests)
+            privacyUpdater: { discoverable, requests, lastSeen, profilePhoto, forwards, voiceMessages, calls in
+                try await backend.updatePrivacy(
+                    discoverable: discoverable,
+                    requests: requests,
+                    lastSeen: lastSeen,
+                    profilePhoto: profilePhoto,
+                    forwards: forwards,
+                    voiceMessages: voiceMessages,
+                    calls: calls
+                )
             }
         )
     }
@@ -202,7 +210,12 @@ private actor DebugMessageRequestFixtureBackend {
 
     func updatePrivacy(
         discoverable: Bool?,
-        requests: MessageRequestPolicy?
+        requests: MessageRequestPolicy?,
+        lastSeen: PrivacyVisibility?,
+        profilePhoto: PrivacyVisibility?,
+        forwards: PrivacyVisibility?,
+        voiceMessages: PrivacyVisibility?,
+        calls: PrivacyVisibility?
     ) throws -> PrivacySettingsSnapshot {
         if failureMode == "privacy-update-once", !didFailPrivacyUpdate {
             didFailPrivacyUpdate = true
@@ -210,7 +223,12 @@ private actor DebugMessageRequestFixtureBackend {
         }
         privacy = PrivacySettingsSnapshot(
             usernameDiscoverable: discoverable ?? privacy.usernameDiscoverable,
-            messageRequests: requests ?? privacy.messageRequests
+            messageRequests: requests ?? privacy.messageRequests,
+            lastSeen: lastSeen ?? privacy.lastSeen,
+            profilePhoto: profilePhoto ?? privacy.profilePhoto,
+            forwards: forwards ?? privacy.forwards,
+            voiceMessages: voiceMessages ?? privacy.voiceMessages,
+            calls: calls ?? privacy.calls
         )
         return privacy
     }

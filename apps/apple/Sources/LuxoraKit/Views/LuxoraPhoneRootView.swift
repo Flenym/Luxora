@@ -5271,24 +5271,28 @@ private struct PhoneDataSettingsView: View {
 
     private func refreshCacheSize() async {
         let size = await Task.detached(priority: .utility) {
-            let fm = FileManager.default
-            let urls: [URL] = [
-                fm.urls(for: .cachesDirectory, in: .userDomainMask).first,
-                fm.temporaryDirectory
-            ].compactMap { $0 }
-            var total: UInt64 = 0
-            for base in urls {
-                guard let enumerator = fm.enumerator(at: base, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else { continue }
-                for case let url as URL in enumerator {
-                    if url.lastPathComponent.hasSuffix(".db") || url.pathExtension == "png" || url.pathExtension == "jpg" {
-                        total += (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { UInt64($0) } ?? 0
-                        if total > 500_000_000 { break }
-                    }
-                }
-            }
-            return total
+            Self.measureCacheSize()
         }.value
         cacheSizeText = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+
+    private nonisolated static func measureCacheSize() -> UInt64 {
+        let fm = FileManager.default
+        let urls: [URL] = [
+            fm.urls(for: .cachesDirectory, in: .userDomainMask).first,
+            fm.temporaryDirectory
+        ].compactMap { $0 }
+        var total: UInt64 = 0
+        for base in urls {
+            guard let enumerator = fm.enumerator(at: base, includingPropertiesForKeys: [.fileSizeKey], options: [.skipsHiddenFiles]) else { continue }
+            for case let url as URL in enumerator {
+                if url.lastPathComponent.hasSuffix(".db") || url.pathExtension == "png" || url.pathExtension == "jpg" {
+                    total += (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { UInt64($0) } ?? 0
+                    if total > 500_000_000 { break }
+                }
+            }
+        }
+        return total
     }
 
     private func clearCache() async {

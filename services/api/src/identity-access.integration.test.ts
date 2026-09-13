@@ -134,7 +134,7 @@ describe("IA-1 identity and relationship boundary", () => {
     });
     expect(visible.statusCode).toBe(200);
     expect(Object.keys(visible.json().profile).sort()).toEqual([
-      "avatarPath", "avatarUrl", "bio", "displayName", "id", "username"
+      "avatarPath", "avatarUrl", "bio", "displayName", "id", "lastSeenAt", "username"
     ]);
 
     const hidden = await app.inject({

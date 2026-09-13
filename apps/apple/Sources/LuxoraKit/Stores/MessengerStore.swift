@@ -1318,7 +1318,7 @@ public final class MessengerStore {
         accepter: @escaping @Sendable (UUID) async throws -> MessageRequestAcceptResult,
         dismisser: @escaping @Sendable (UUID) async throws -> Void,
         privacyLoader: @escaping @Sendable () async throws -> PrivacySettingsSnapshot,
-        privacyUpdater: @escaping @Sendable (Bool?, MessageRequestPolicy?) async throws -> PrivacySettingsSnapshot
+        privacyUpdater: @escaping @Sendable (Bool?, MessageRequestPolicy?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?) async throws -> PrivacySettingsSnapshot
     ) {
         remoteMessageRequestLoader = loader
         remoteExactUserLookup = exactUserLookup

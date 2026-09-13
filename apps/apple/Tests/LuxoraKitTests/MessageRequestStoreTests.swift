@@ -251,8 +251,16 @@ final class MessageRequestStoreTests: XCTestCase {
         configure(
             store,
             privacyLoader: { initial },
-            privacyUpdater: { discoverable, requests in
-                try await probe.update(discoverable: discoverable, requests: requests)
+            privacyUpdater: { discoverable, requests, lastSeen, profilePhoto, forwards, voiceMessages, calls in
+                try await probe.update(
+                    discoverable: discoverable,
+                    requests: requests,
+                    lastSeen: lastSeen,
+                    profilePhoto: profilePhoto,
+                    forwards: forwards,
+                    voiceMessages: voiceMessages,
+                    calls: calls
+                )
             }
         )
         await store.loadPrivacySettings()
@@ -287,7 +295,7 @@ final class MessageRequestStoreTests: XCTestCase {
         configure(
             store,
             privacyLoader: { initial },
-            privacyUpdater: { _, _ in initial }
+            privacyUpdater: { _, _, _, _, _, _, _ in initial }
         )
         await store.loadPrivacySettings()
 
@@ -324,7 +332,7 @@ final class MessageRequestStoreTests: XCTestCase {
         accepter: (@Sendable (UUID) async throws -> MessageRequestAcceptResult)? = nil,
         dismisser: (@Sendable (UUID) async throws -> Void)? = nil,
         privacyLoader: (@Sendable () async throws -> PrivacySettingsSnapshot)? = nil,
-        privacyUpdater: (@Sendable (Bool?, MessageRequestPolicy?) async throws -> PrivacySettingsSnapshot)? = nil
+        privacyUpdater: (@Sendable (Bool?, MessageRequestPolicy?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?, PrivacyVisibility?) async throws -> PrivacySettingsSnapshot)? = nil
     ) {
         let currentUser = store.currentUser
         store.configureRemote(
@@ -509,13 +517,23 @@ private actor PrivacySettingsUpdateProbe {
 
     func update(
         discoverable: Bool?,
-        requests: MessageRequestPolicy?
+        requests: MessageRequestPolicy?,
+        lastSeen: PrivacyVisibility?,
+        profilePhoto: PrivacyVisibility?,
+        forwards: PrivacyVisibility?,
+        voiceMessages: PrivacyVisibility?,
+        calls: PrivacyVisibility?
     ) throws -> PrivacySettingsSnapshot {
-        calls.append((discoverable, requests))
-        if calls.count == 1 { throw MessageRequestStoreTestError.rejected }
+        self.calls.append((discoverable, requests))
+        if self.calls.count == 1 { throw MessageRequestStoreTestError.rejected }
         return PrivacySettingsSnapshot(
             usernameDiscoverable: discoverable ?? true,
-            messageRequests: requests ?? .everyone
+            messageRequests: requests ?? .everyone,
+            lastSeen: lastSeen ?? .everyone,
+            profilePhoto: profilePhoto ?? .everyone,
+            forwards: forwards ?? .everyone,
+            voiceMessages: voiceMessages ?? .everyone,
+            calls: calls ?? .everyone
         )
     }
 }
