@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-13 ~18:15 UTC · `main` — 034 зелёный везде (Node/Swift/IPA/Security)
+**Обновлено:** 2026-09-14 ~20:00 UTC · `main` — topics composer+фильтр зелёный везде
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,8 +35,8 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
-- 034 ownership transfer (в QA): двухшаговая церемония, атомарный swap ролей, ceremony-aware DB-триггер, Swift adapter. Protocol 17/104, API 80/657 локально.
-- 033 join-request approval — CI зелёный везде.
+- Topics composer+фильтр (CI зелёный везде): topicID через send/media/durable/retry, chips + индикатор, visibleMessages, canSend-правило, store-тесты. По пути найден и задокументирован риск edit-инструмента (phantom line-merge) — правило: проверять git diff после каждой правки Swift.
+- Topics management slice — CI зелёный везде.
 - Параллельная сессия в workspace: LICENSE (MIT), README.md/RU rework — втянуто, бейджи приведены к truth-гейту.
 - `81ce142` invite-ссылки 032 (+фиксы Swift-тестов, бейджей).
 - `b41448e` ремонт красного main после 030/031.
@@ -44,5 +44,5 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Следующий приоритет (порядок)
 
-1. Topics composer picker + фильтр истории (поверх готового management-слайса).
-2. Voice сквозной QA → media processing → search → calls signaling (по готовности, каждый со Slice-тестами).
+1. Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер (PhoneVoiceRecorder + voice attachments + transcription consent уже есть — проверить и закрыть пробелы).
+2. Media processing → search → calls signaling (по готовности, каждый со Slice-тестами).

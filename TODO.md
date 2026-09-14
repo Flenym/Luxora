@@ -37,7 +37,7 @@
 - [x] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события
 - [x] Ownership transfer ceremony (034): двухшаговый initiate/accept с revision-защитой, ceremony-aware триггер, Swift adapter
 - [x] Topics/threads iPhone management slice: ChatTopic-модель, client CRUD, topicId в send/messages/history-mapping, ChatTopicsStore + UI в профиле сообщества, contract/store tests. Композер-пикер и фильтр истории — следующий шаг
-- [~] Topics composer + фильтр (в работе): topicID сквозь send-фаннел (text/media/durable/retry), chips + индикатор композера, visibleMessages-фильтр
+- [x] Topics composer + фильтр: topicID сквозь send-фаннел (text/media/durable/retry), chips + индикатор композера, visibleMessages-фильтр
 - [ ] Ownership transfer ceremony (двухшаговый, с revision-защитой)
 - [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
 - [ ] Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер
