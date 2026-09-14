@@ -653,6 +653,7 @@ actor ScopedMessengerPersistence {
                     conversationID: $0.conversationID,
                     body: $0.body,
                     replyToMessageID: $0.replyToMessageID,
+                    topicID: nil,
                     enqueuedAt: $0.enqueuedAt,
                     ordinal: $0.ordinal,
                     attemptCount: 0,

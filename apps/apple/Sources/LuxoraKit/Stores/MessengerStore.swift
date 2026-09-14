@@ -133,7 +133,8 @@ public final class MessengerStore {
     public private(set) var currentUserBio: String
     var remoteMessageSender: (@Sendable (UUID, UUID, String) async throws -> ChatMessage)?
     var remoteMessageLoader: (@Sendable (UUID) async throws -> [ChatMessage])?
-    var remoteConversationLoader: (@Sendable () async throws -> [Conversation])?    var remotePeopleSearcher: (@Sendable (String) async throws -> [Participant])?
+    var remoteConversationLoader: (@Sendable () async throws -> [Conversation])?
+    var remotePeopleSearcher: (@Sendable (String) async throws -> [Participant])?
     var remoteDirectConversationCreator: (@Sendable (UUID) async throws -> Conversation)?
     var remoteReadMarker: (@Sendable (UUID, UUID) async throws -> Void)?
     var remoteReactionSetter: (@Sendable (UUID, String, Bool) async throws -> [MessageReaction])?
