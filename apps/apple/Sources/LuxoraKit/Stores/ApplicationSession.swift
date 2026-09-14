@@ -1050,6 +1050,7 @@ public final class ApplicationSession {
                     clientNonce: pending.clientNonce,
                     body: pending.body,
                     replyToMessageID: pending.replyToMessageID,
+                    topicID: pending.topicID,
                     token: token
                 )
             }.snapshot(currentUserID: userID)
@@ -1082,13 +1083,14 @@ public final class ApplicationSession {
                     )
                 }
             },
-            mediaMessageSender: { conversationID, clientID, body, replyToMessageID, attachmentIDs, transcriptionConsent in
+            mediaMessageSender: { conversationID, clientID, body, replyToMessageID, attachmentIDs, transcriptionConsent, topicID in
                 let message = try await coordinator.withAccessToken { token in
                     try await api.sendMessage(
                         chatID: conversationID,
                         clientNonce: clientID,
                         body: body,
                         replyToMessageID: replyToMessageID,
+                        topicID: topicID,
                         attachmentIDs: attachmentIDs,
                         transcriptionConsent: transcriptionConsent,
                         token: token
@@ -1179,13 +1181,14 @@ public final class ApplicationSession {
                     try await api.setReaction(messageID: messageID, emoji: emoji, active: active, token: token)
                 }.map(\.reaction)
             },
-            messageSender: { conversationID, clientID, body, replyToMessageID in
+            messageSender: { conversationID, clientID, body, replyToMessageID, topicID in
                 try await durableMessaging.sendText(
                     scope: durableScope,
                     conversationID: conversationID,
                     clientNonce: clientID,
                     body: body,
                     replyToMessageID: replyToMessageID,
+                    topicID: topicID,
                     sender: durableRemoteSender
                 ).remoteSnapshot
             },

@@ -133,13 +133,12 @@ public final class MessengerStore {
     public private(set) var currentUserBio: String
     var remoteMessageSender: (@Sendable (UUID, UUID, String) async throws -> ChatMessage)?
     var remoteMessageLoader: (@Sendable (UUID) async throws -> [ChatMessage])?
-    var remoteConversationLoader: (@Sendable () async throws -> [Conversation])?
-    var remotePeopleSearcher: (@Sendable (String) async throws -> [Participant])?
+    var remoteConversationLoader: (@Sendable () async throws -> [Conversation])?    var remotePeopleSearcher: (@Sendable (String) async throws -> [Participant])?
     var remoteDirectConversationCreator: (@Sendable (UUID) async throws -> Conversation)?
     var remoteReadMarker: (@Sendable (UUID, UUID) async throws -> Void)?
     var remoteReactionSetter: (@Sendable (UUID, String, Bool) async throws -> [MessageReaction])?
-    var remoteMessageSnapshotSender: (@Sendable (UUID, UUID, String, UUID?) async throws -> RemoteMessageSnapshot)?
-    var remoteMediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)?
+    var remoteMessageSnapshotSender: (@Sendable (UUID, UUID, String, UUID?, UUID?) async throws -> RemoteMessageSnapshot)?
+    var remoteMediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool, UUID?) async throws -> ChatMessage)?
     var remoteAttachmentUploader: (@Sendable (PendingMediaAttachment) async throws -> MessageAttachment)?
     var remoteTranscriptPutter: (@Sendable (UUID, String) async throws -> ChatMessage)?
     var remoteScheduleMessage: (@Sendable (UUID, String, UUID?, Date) async throws -> ScheduledMessage)?
@@ -175,6 +174,10 @@ public final class MessengerStore {
     @ObservationIgnored var composerModeBeforeEditing: MessageComposerMode = .new
     @ObservationIgnored var composerDraftsByConversation: [UUID: String] = [:]
     @ObservationIgnored var composerModesByConversation: [UUID: MessageComposerMode] = [:]
+    /// Selected topic per conversation. Drives both the history filter and the
+    /// composer target, mirroring Telegram tabs: posting while filtered keeps
+    /// the thread. Cleared only explicitly or when the conversation changes.
+    @ObservationIgnored var topicIDsByConversation: [UUID: UUID] = [:]
     @ObservationIgnored var unresolvedReplyIDsByConversation: [UUID: UUID] = [:]
     @ObservationIgnored var composerDraftGenerations: [UUID: UInt] = [:]
     @ObservationIgnored var isRestoringComposerState = false
@@ -231,6 +234,34 @@ public final class MessengerStore {
         return messagesByConversation[selectedConversationID, default: []]
     }
 
+    /// Topic filter for the selected conversation. `nil` shows every message.
+    /// The same selection targets the composer, so posting while filtered
+    /// keeps the thread without extra taps.
+    public func selectedTopicID(for conversationID: UUID) -> UUID? {
+        topicIDsByConversation[conversationID]
+    }
+
+    public func selectTopic(_ topicID: UUID?, in conversationID: UUID) {
+        if let topicID {
+            topicIDsByConversation[conversationID] = topicID
+        } else {
+            topicIDsByConversation.removeValue(forKey: conversationID)
+        }
+    }
+
+    public func visibleSelectedMessages() -> [ChatMessage] {
+        guard let selectedConversationID else { return [] }
+        return visibleMessages(for: selectedConversationID)
+    }
+
+    public func visibleMessages(for conversationID: UUID) -> [ChatMessage] {
+        let messages = messagesByConversation[conversationID, default: []]
+        guard let topicID = topicIDsByConversation[conversationID] else {
+            return messages
+        }
+        return messages.filter { $0.topicID == topicID }
+    }
+
     public var canSend: Bool {
         guard connectionState == .online,
               let selectedConversationID,
@@ -253,6 +284,11 @@ public final class MessengerStore {
 
         switch composerMode {
         case .new:
+            // A selected topic must survive the round trip: only topic-capable
+            // senders may post, never the legacy topic-blind path.
+            if topicIDsByConversation[selectedConversationID] != nil {
+                return remoteMessageSnapshotSender != nil || remoteMediaMessageSender != nil
+            }
             return remoteMessageSnapshotSender != nil || remoteMessageSender != nil
         case .reply:
             return remoteMessageSnapshotSender != nil
@@ -808,7 +844,8 @@ public final class MessengerStore {
             startMediaSend(
                 conversationID: conversationID,
                 body: body,
-                replyTarget: replyTarget
+                replyTarget: replyTarget,
+                topicID: topicIDsByConversation[conversationID]
             )
             return
         }
@@ -822,7 +859,8 @@ public final class MessengerStore {
             text: body,
             sentAt: .now,
             delivery: .sending,
-            isOutgoing: true
+            isOutgoing: true,
+            topicID: topicIDsByConversation[conversationID]
         )
         if let replyTarget {
             message.replyPreview = "\(replyTarget.authorName): \(replyTarget.preview)"
@@ -837,7 +875,8 @@ public final class MessengerStore {
             clientID: clientID,
             messageID: message.id,
             body: body,
-            replyToMessageID: replyTarget?.id
+            replyToMessageID: replyTarget?.id,
+            topicID: message.topicID
         )
     }
 
@@ -857,6 +896,7 @@ public final class MessengerStore {
                 messageID: message.id,
                 body: message.text,
                 replyToMessageID: metadata.replyToMessageID,
+                topicID: message.topicID,
                 attachmentIDs: attachmentIDs,
                 transcriptionConsent: metadata.transcriptionConsent,
                 mediaSender: mediaSender
@@ -868,7 +908,8 @@ public final class MessengerStore {
             clientID: message.clientID,
             messageID: message.id,
             body: message.text,
-            replyToMessageID: metadata.replyToMessageID
+            replyToMessageID: metadata.replyToMessageID,
+            topicID: message.topicID
         )
     }
 
@@ -1239,7 +1280,7 @@ public final class MessengerStore {
     func configureRemote(
         sender: @escaping @Sendable (UUID, UUID, String) async throws -> ChatMessage,
         mediaAttachmentUploader: (@Sendable (PendingMediaAttachment) async throws -> MessageAttachment)? = nil,
-        mediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)? = nil,
+        mediaMessageSender: (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool, UUID?) async throws -> ChatMessage)? = nil,
         transcriptPutter: (@Sendable (UUID, String) async throws -> ChatMessage)? = nil,
         scheduleMessage: (@Sendable (UUID, String, UUID?, Date) async throws -> ScheduledMessage)? = nil,
         scheduledListLoader: (@Sendable (UUID) async throws -> [ScheduledMessage])? = nil,
@@ -1250,7 +1291,7 @@ public final class MessengerStore {
         directConversationCreator: (@Sendable (UUID) async throws -> Conversation)? = nil,
         readMarker: (@Sendable (UUID, UUID) async throws -> Void)? = nil,
         reactionSetter: (@Sendable (UUID, String, Bool) async throws -> [MessageReaction])? = nil,
-        messageSender: (@Sendable (UUID, UUID, String, UUID?) async throws -> RemoteMessageSnapshot)? = nil,
+        messageSender: (@Sendable (UUID, UUID, String, UUID?, UUID?) async throws -> RemoteMessageSnapshot)? = nil,
         messageSnapshotLoader: (@Sendable (UUID) async throws -> [RemoteMessageSnapshot])? = nil,
         messageEditor: (@Sendable (UUID, String, Int?) async throws -> RemoteMessageSnapshot)? = nil,
         messageDeleter: (@Sendable (UUID) async throws -> RemoteMessageSnapshot)? = nil,
@@ -2228,7 +2269,8 @@ public final class MessengerStore {
     private func startMediaSend(
         conversationID: UUID,
         body: String,
-        replyTarget: MessageComposerTarget?
+        replyTarget: MessageComposerTarget?,
+        topicID: UUID?
     ) {
         guard let uploader = remoteAttachmentUploader,
               let mediaSender = remoteMediaMessageSender,
@@ -2272,6 +2314,7 @@ public final class MessengerStore {
                     body: body,
                     replyToMessageID: replyToMessageID,
                     replyPreview: replyPreview,
+                    topicID: topicID,
                     attachmentIDs: attachmentIDs,
                     attachments: attachments,
                     mediaSender: mediaSender
@@ -2285,9 +2328,10 @@ public final class MessengerStore {
         body: String,
         replyToMessageID: UUID?,
         replyPreview: String?,
+        topicID: UUID?,
         attachmentIDs: [UUID],
         attachments: [MessageAttachment],
-        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)
+        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool, UUID?) async throws -> ChatMessage)
     ) {
         isUploadingMedia = false
         mediaUploadProgress = 0
@@ -2307,7 +2351,8 @@ public final class MessengerStore {
             isOutgoing: true,
             replyPreview: replyPreview,
             attachments: attachments,
-            transcriptionAllowed: consent
+            transcriptionAllowed: consent,
+            topicID: topicID
         )
         messagesByConversation[conversationID, default: []].append(message)
         messageMetadataByID[message.id] = MessageRemoteMetadata(
@@ -2325,6 +2370,7 @@ public final class MessengerStore {
             messageID: message.id,
             body: body,
             replyToMessageID: replyToMessageID,
+            topicID: topicID,
             attachmentIDs: attachmentIDs,
             transcriptionConsent: consent,
             mediaSender: mediaSender
@@ -2337,9 +2383,10 @@ public final class MessengerStore {
         messageID: UUID,
         body: String,
         replyToMessageID: UUID?,
+        topicID: UUID?,
         attachmentIDs: [UUID],
         transcriptionConsent: Bool,
-        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool) async throws -> ChatMessage)
+        mediaSender: @escaping (@Sendable (UUID, UUID, String, UUID?, [UUID], Bool, UUID?) async throws -> ChatMessage)
     ) {
         let lifecycleGeneration = conversationLifecycleGenerations[conversationID] ?? 0
         let operationID = UUID()
@@ -2347,7 +2394,7 @@ public final class MessengerStore {
             defer { self?.remoteOperations[operationID] = nil }
             do {
                 let confirmed = try await mediaSender(
-                    conversationID, clientID, body, replyToMessageID, attachmentIDs, transcriptionConsent
+                    conversationID, clientID, body, replyToMessageID, attachmentIDs, transcriptionConsent, topicID
                 )
                 guard let self,
                       !Task.isCancelled,
@@ -2387,7 +2434,8 @@ public final class MessengerStore {
         clientID: UUID,
         messageID: UUID,
         body: String,
-        replyToMessageID: UUID?
+        replyToMessageID: UUID?,
+        topicID: UUID?
     ) {
         let lifecycleGeneration = conversationLifecycleGenerations[conversationID] ?? 0
         let operationID = UUID()
@@ -2395,7 +2443,7 @@ public final class MessengerStore {
             defer { self?.remoteOperations[operationID] = nil }
             do {
                 if let snapshotSender = self?.remoteMessageSnapshotSender {
-                    let confirmed = try await snapshotSender(conversationID, clientID, body, replyToMessageID)
+                    let confirmed = try await snapshotSender(conversationID, clientID, body, replyToMessageID, topicID)
                     guard let self,
                           !Task.isCancelled,
                           ownsConversationLifecycle(
@@ -2404,7 +2452,7 @@ public final class MessengerStore {
                           )
                     else { return }
                     replaceOptimisticSnapshot(clientID, in: conversationID, with: confirmed)
-                } else if let sender = self?.remoteMessageSender {
+                } else if topicID == nil, let sender = self?.remoteMessageSender {
                     let confirmed = try await sender(conversationID, clientID, body)
                     guard let self,
                           !Task.isCancelled,

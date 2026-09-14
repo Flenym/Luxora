@@ -179,6 +179,7 @@ public struct LuxoraPhoneRootView: View {
                                     mediaGate: featureMatrix.mediaFiles,
                                     securityGate: featureMatrix.securityE2EE,
                                     communityStore: communityStore,
+                                    topicsStore: chatTopicsStore,
                                     attachmentImageCache: attachmentImageCache,
                                     openCommunityProfile: {
                                         chatsPath.append(.communityProfile(conversationID))
@@ -2174,6 +2175,7 @@ private struct PhoneDirectConversationView: View {
     let mediaGate: FeatureGate
     let securityGate: FeatureGate
     let communityStore: CommunityStore?
+    let topicsStore: ChatTopicsStore?
     let attachmentImageCache: AuthenticatedAvatarImageCache?
     let openCommunityProfile: () -> Void
 
@@ -2195,7 +2197,84 @@ private struct PhoneDirectConversationView: View {
     #endif
 
     private var messages: [ChatMessage] {
-        store.messagesByConversation[conversation.id, default: []]
+        store.visibleMessages(for: conversation.id)
+    }
+
+    private var conversationTopics: [ChatTopic] {
+        topicsStore?.topics(for: conversation.id) ?? []
+    }
+
+    private var selectedTopicID: UUID? {
+        store.selectedTopicID(for: conversation.id)
+    }
+
+    private var selectedTopic: ChatTopic? {
+        guard let selectedTopicID else { return nil }
+        return conversationTopics.first { $0.id == selectedTopicID }
+    }
+
+    private var supportsTopicFilter: Bool {
+        topicsStore != nil
+            && (conversation.kind == .group || conversation.kind == .channel)
+            && topicsStore?.loadState(for: conversation.id) == .loaded
+            && !conversationTopics.isEmpty
+    }
+
+    @ViewBuilder
+    private var topicFilterBar: some View {
+        if supportsTopicFilter {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    topicChip(title: "Все", symbol: "bubble.left.and.bubble.right", isSelected: selectedTopicID == nil) {
+                        store.selectTopic(nil, in: conversation.id)
+                    }
+                    .accessibilityIdentifier("topic-filter-all")
+                    ForEach(conversationTopics) { topic in
+                        topicChip(
+                            title: topic.title,
+                            symbol: topic.isClosed ? "lock.fill" : "number",
+                            isSelected: selectedTopicID == topic.id
+                        ) {
+                            store.selectTopic(topic.id, in: conversation.id)
+                        }
+                        .accessibilityIdentifier("topic-filter-\(topic.id.uuidString.lowercased())")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Фильтр тем")
+        }
+    }
+
+    private func topicChip(
+        title: String,
+        symbol: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 32)
+            .background {
+                if isSelected {
+                    Capsule().fill(LuxoraTheme.electricBlue)
+                } else {
+                    Capsule().fill(Color.secondary.opacity(0.15))
+                }
+            }
+            .foregroundStyle(isSelected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -2370,12 +2449,22 @@ private struct PhoneDirectConversationView: View {
                         .padding(.top, 32)
                         .accessibilityIdentifier("conversation-load-failed")
                     } else if displayedMessages.isEmpty {
-                        ContentUnavailableView(
-                            phoneString("conversation.no_messages"),
-                            systemImage: "text.bubble",
-                            description: Text(phoneString("conversation.no_messages_detail"))
-                        )
-                        .padding(.top, 48)
+                        if selectedTopic != nil {
+                            ContentUnavailableView(
+                                "В этой теме пока тихо",
+                                systemImage: "bubble.left.and.bubble.right",
+                                description: Text("Сообщения темы появятся здесь. Отправьте первое.")
+                            )
+                            .padding(.top, 48)
+                            .accessibilityIdentifier("conversation-topic-empty")
+                        } else {
+                            ContentUnavailableView(
+                                phoneString("conversation.no_messages"),
+                                systemImage: "text.bubble",
+                                description: Text(phoneString("conversation.no_messages_detail"))
+                            )
+                            .padding(.top, 48)
+                        }
                     } else {
                         ForEach(displayedMessages) { message in
                             messageBubbleRow(
@@ -2413,14 +2502,15 @@ private struct PhoneDirectConversationView: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 if usesExpandedMessageLayout {
                     conversationTitle(isExpanded: true)
-                    // Navigation chrome must remain readable without taking
-                    // the transcript's entire viewport at Accessibility XXXL.
-                    // Message bodies keep the user's uncapped Dynamic Type.
-                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                    .padding(.bottom, 6)
-                    .background(Color(uiColor: .systemGroupedBackground))
+                        // Navigation chrome must remain readable without taking
+                        // the transcript's entire viewport at Accessibility XXXL.
+                        // Message bodies keep the user's uncapped Dynamic Type.
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                        .padding(.bottom, 6)
+                        .background(Color(uiColor: .systemGroupedBackground))
+                    topicFilterBar
                 } else {
                     if let pinnedMessage = store.pinnedMessages(for: conversation.id).last {
                         PhonePinnedContext(gate: securityGate, message: pinnedMessage)
@@ -2431,6 +2521,7 @@ private struct PhoneDirectConversationView: View {
                             .padding(.horizontal, 12)
                             .padding(.top, 8)
                     }
+                    topicFilterBar
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -2484,6 +2575,10 @@ private struct PhoneDirectConversationView: View {
                         }
                         MessageComposer(
                             store: store,
+                            topicTitle: selectedTopic?.title,
+                            onClearTopic: selectedTopic == nil ? nil : {
+                                store.selectTopic(nil, in: conversation.id)
+                            },
                             onAttachment: {
                                 presentsMediaPicker = true
                             },
@@ -2601,6 +2696,9 @@ private struct PhoneDirectConversationView: View {
             await store.loadSynchronizedDraft(for: conversation.id)
             await store.loadMessages(for: conversation.id)
             await store.markConversationRead(conversation.id)
+            if conversation.kind == .group || conversation.kind == .channel {
+                await topicsStore?.refresh(chatID: conversation.id)
+            }
             #if DEBUG
             applyDebugMessageCaptureStateIfRequested()
             #endif

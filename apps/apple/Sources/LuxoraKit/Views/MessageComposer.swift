@@ -241,8 +241,7 @@ struct MessageComposer: View {
         }
     }
 
-    private func composerContext(_ target: MessageComposerTarget) -> some View {
-        HStack(spacing: 10) {
+    private func composerContext(_ target: MessageComposerTarget) -> some View {        HStack(spacing: 10) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(LuxoraTheme.iris)
                 .frame(width: 3, height: 36)
@@ -275,6 +274,38 @@ struct MessageComposer: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("message-composer-mode")
+    }
+
+    private func composerTopicContext(title: String, clear: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(LuxoraTheme.electricBlue)
+                .frame(width: 3, height: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Тема")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(LuxoraTheme.electricBlue)
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Button(action: clear) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .frame(minWidth: 44, minHeight: 44)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Убрать тему")
+            .accessibilityIdentifier("message-composer-clear-topic")
+        }
+        .frame(maxWidth: 920)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("message-composer-topic")
     }
 
     private var isEditingMessage: Bool {

@@ -923,7 +923,7 @@ struct PhoneCommunityProfileView: View {
                             .font(.callout)
                             .accessibilityIdentifier("community-topics-mutation-error")
                     }
-                    if canManageTopics {
+                    if canCreateTopic {
                         Button {
                             showsTopicCreator = true
                         } label: {
@@ -969,6 +969,14 @@ struct PhoneCommunityProfileView: View {
         case .member, nil:
             return false
         }
+    }
+
+    /// Server rule: any group member may open a topic; channels restrict
+    /// creation to managers, exactly like sending there.
+    private var canCreateTopic: Bool {
+        guard topicsStore != nil else { return false }
+        if conversation.kind == .group { return true }
+        return canManageTopics
     }
 
     private var profileSubtitle: String {

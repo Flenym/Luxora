@@ -86,7 +86,7 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
         messenger.configureRemote(
             sender: { _, _, _ in throw LuxoraAPIError.invalidResponse },
             loader: { _ in [] },
-            messageSender: { chatID, clientID, body, replyID in
+            messageSender: { chatID, clientID, body, replyID, _ in
                 await sender.send(
                     chatID: chatID,
                     clientID: clientID,
@@ -275,7 +275,7 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
         messenger.configureRemote(
             sender: { _, _, _ in throw LuxoraAPIError.invalidResponse },
             loader: { _ in [] },
-            messageSender: { chatID, clientID, body, replyID in
+            messageSender: { chatID, clientID, body, replyID, _ in
                 await sender.send(
                     chatID: chatID,
                     clientID: clientID,
@@ -506,7 +506,7 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
                 )
             },
             loader: { chatID in messages[chatID] ?? [] },
-            messageSender: { conversationID, clientID, body, replyID in
+            messageSender: { conversationID, clientID, body, replyID, _ in
                 RemoteMessageSnapshot(
                     message: ChatMessage(
                         id: clientID,

@@ -202,6 +202,7 @@ actor ScopedMessengerPersistence {
         clientNonce: UUID,
         body: String,
         replyToMessageID: UUID?,
+        topicID: UUID? = nil,
         enqueuedAt: Date? = nil
     ) throws -> DurablePendingTextMessage {
         var state = try mutableState(scope: scope)
@@ -213,7 +214,8 @@ actor ScopedMessengerPersistence {
         if let existing = state.pendingTextOutbox.first(where: { $0.clientNonce == clientNonce }) {
             guard existing.conversationID == conversationID,
                   existing.body == normalizedBody,
-                  existing.replyToMessageID == replyToMessageID
+                  existing.replyToMessageID == replyToMessageID,
+                  existing.topicID == topicID
             else { throw DurableMessagingError.nonceCollision }
             return existing
         }
@@ -231,6 +233,7 @@ actor ScopedMessengerPersistence {
             conversationID: conversationID,
             body: normalizedBody,
             replyToMessageID: replyToMessageID,
+            topicID: topicID,
             enqueuedAt: enqueuedAt ?? now(),
             ordinal: state.nextOutboxOrdinal,
             attemptCount: 0,
@@ -251,6 +254,7 @@ actor ScopedMessengerPersistence {
         clientNonce: UUID,
         body: String,
         replyToMessageID: UUID?,
+        topicID: UUID? = nil,
         enqueuedAt: Date? = nil,
         sender: @escaping MessageSender
     ) async throws -> DurableConfirmedMessageSnapshot {
@@ -260,6 +264,7 @@ actor ScopedMessengerPersistence {
             clientNonce: clientNonce,
             body: body,
             replyToMessageID: replyToMessageID,
+            topicID: topicID,
             enqueuedAt: enqueuedAt
         )
         return try await sendExisting(scope: scope, pending: pending, sender: sender)

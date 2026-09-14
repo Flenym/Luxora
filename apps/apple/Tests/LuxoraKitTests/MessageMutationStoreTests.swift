@@ -9,7 +9,7 @@ final class MessageMutationStoreTests: XCTestCase {
         let target = try XCTUnwrap(store.selectedMessages.first(where: { !$0.isOutgoing }))
         let currentUser = store.currentUser
         let probe = ReplyMutationProbe()
-        configure(store, messageSender: { conversationID, nonce, body, replyID in
+        configure(store, messageSender: { conversationID, nonce, body, replyID, _ in
             await probe.record(nonce: nonce, replyID: replyID)
             return RemoteMessageSnapshot(
                 message: ChatMessage(
@@ -257,9 +257,47 @@ final class MessageMutationStoreTests: XCTestCase {
         XCTAssertTrue(store.metadata(for: original.id).isDeleted)
     }
 
+    func testSendDraftCarriesSelectedTopicAndFiltersThread() async throws {
+        let store = LuxoraDesignFixtures.makeStore()
+        let conversationID = try XCTUnwrap(store.selectedConversationID)
+        let currentUser = store.currentUser
+        let topicID = UUID()
+        let probe = TopicSendProbe(currentUser: currentUser)
+        configure(store, messageSender: { chatID, nonce, body, replyID, topic in
+            await probe.send(chatID: chatID, nonce: nonce, body: body, replyID: replyID, topicID: topic)
+        })
+        store.connectionState = .online
+        try await waitUntil {
+            store.messageState(for: conversationID) == .loaded
+        }
+
+        store.selectTopic(topicID, in: conversationID)
+        XCTAssertEqual(store.selectedTopicID(for: conversationID), topicID)
+        store.draft = "Тематическое сообщение"
+        store.sendDraft()
+
+        try await waitUntil { store.selectedMessages.last?.delivery == .sent }
+        let sentTopics = await probe.topicIDs
+        XCTAssertEqual(sentTopics, [topicID])
+        XCTAssertEqual(store.selectedMessages.last?.topicID, topicID)
+
+        let visible = store.visibleMessages(for: conversationID)
+        let full = store.messagesByConversation[conversationID, default: []]
+        XCTAssertTrue(visible.allSatisfy { $0.topicID == topicID })
+        XCTAssertEqual(visible.count, full.filter { $0.topicID == topicID }.count)
+        XCTAssertGreaterThan(full.count, visible.count)
+
+        store.selectTopic(nil, in: conversationID)
+        XCTAssertNil(store.selectedTopicID(for: conversationID))
+        XCTAssertEqual(
+            store.visibleMessages(for: conversationID).count,
+            store.messagesByConversation[conversationID, default: []].count
+        )
+    }
+
     private func configure(
         _ store: MessengerStore,
-        messageSender: (@Sendable (UUID, UUID, String, UUID?) async throws -> RemoteMessageSnapshot)? = nil,
+        messageSender: (@Sendable (UUID, UUID, String, UUID?, UUID?) async throws -> RemoteMessageSnapshot)? = nil,
         messageEditor: (@Sendable (UUID, String, Int?) async throws -> RemoteMessageSnapshot)? = nil,
         messageDeleter: (@Sendable (UUID) async throws -> RemoteMessageSnapshot)? = nil,
         messageForwarder: (@Sendable (UUID, UUID, UUID) async throws -> RemoteMessageSnapshot)? = nil,
@@ -376,5 +414,32 @@ private actor PinMutationProbe {
         activeValues.append(active)
         if activeValues.count == 1 { throw MutationTestError.rejected }
         return active
+    }
+}
+
+private actor TopicSendProbe {
+    private(set) var topicIDs: [UUID?] = []
+    private let currentUser: Participant
+
+    init(currentUser: Participant) {
+        self.currentUser = currentUser
+    }
+
+    func send(
+        chatID: UUID,
+        nonce: UUID,
+        body: String,
+        replyID: UUID?,
+        topicID: UUID?
+    ) -> RemoteMessageSnapshot {
+        topicIDs.append(topicID)
+        return RemoteMessageSnapshot(
+            message: ChatMessage(
+                id: UUID(), clientID: nonce, conversationID: chatID,
+                author: currentUser, text: body, sentAt: .now,
+                delivery: .sent, isOutgoing: true, topicID: topicID
+            ),
+            metadata: MessageRemoteMetadata(revision: 0, replyToMessageID: replyID)
+        )
     }
 }

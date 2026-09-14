@@ -38,15 +38,44 @@ struct DurableConversationMessages: Codable, Equatable, Sendable {
     var snapshots: [DurableConfirmedMessageSnapshot]
 }
 
-struct DurablePendingTextMessage: Codable, Equatable, Sendable {
+struct DurablePendingTextMessage: Equatable, Sendable {
     let clientNonce: UUID
     let conversationID: UUID
     let body: String
     let replyToMessageID: UUID?
+    let topicID: UUID?
     let enqueuedAt: Date
     let ordinal: UInt64
     var attemptCount: Int
     var lastAttemptAt: Date?
+}
+
+extension DurablePendingTextMessage: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case clientNonce
+        case conversationID
+        case body
+        case replyToMessageID
+        case topicID
+        case enqueuedAt
+        case ordinal
+        case attemptCount
+        case lastAttemptAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        clientNonce = try container.decode(UUID.self, forKey: .clientNonce)
+        conversationID = try container.decode(UUID.self, forKey: .conversationID)
+        body = try container.decode(String.self, forKey: .body)
+        replyToMessageID = try container.decodeIfPresent(UUID.self, forKey: .replyToMessageID)
+        // Outbox entries written before topics carry no `topicID` key.
+        topicID = try container.decodeIfPresent(UUID.self, forKey: .topicID)
+        enqueuedAt = try container.decode(Date.self, forKey: .enqueuedAt)
+        ordinal = try container.decode(UInt64.self, forKey: .ordinal)
+        attemptCount = try container.decode(Int.self, forKey: .attemptCount)
+        lastAttemptAt = try container.decodeIfPresent(Date.self, forKey: .lastAttemptAt)
+    }
 }
 
 struct DurableMessagingState: Codable, Equatable, Sendable {

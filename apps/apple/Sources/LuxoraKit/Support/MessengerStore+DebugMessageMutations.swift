@@ -24,7 +24,7 @@ extension MessengerStore {
             directConversationCreator: remoteDirectConversationCreator,
             readMarker: remoteReadMarker,
             reactionSetter: remoteReactionSetter,
-            messageSender: { conversationID, nonce, body, replyToID in
+            messageSender: { conversationID, nonce, body, replyToID, _ in
                 RemoteMessageSnapshot(
                     message: ChatMessage(
                         id: UUID(),
