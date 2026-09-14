@@ -2213,6 +2213,99 @@ private struct PhoneDirectConversationView: View {
         return conversationTopics.first { $0.id == selectedTopicID }
     }
 
+    private var conversationComposerArea: some View {
+        VStack(spacing: 0) {
+            if voiceRecorder.isRecording {
+                PhoneVoiceRecordingBar(
+                    elapsedSeconds: voiceRecorder.elapsedSeconds,
+                    levels: voiceRecorder.levels,
+                    onStop: finishVoiceRecording,
+                    onCancel: { voiceRecorder.cancel() }
+                )
+            }
+            if store.composerMedia.contains(where: { $0.kind == "voice" }) {
+                Toggle("Разрешить расшифровку", isOn: $store.composerTranscriptionConsent)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+                    .accessibilityIdentifier("composer-transcription-consent")
+            }
+            if !store.composerMedia.isEmpty {
+                PhoneComposerMediaStrip(
+                    media: store.composerMedia,
+                    onRemove: { store.removeComposerMedia(id: $0) }
+                )
+            }
+            if store.isUploadingMedia {
+                HStack(spacing: 8) {
+                    ProgressView(value: max(0.05, store.mediaUploadProgress))
+                        .progressViewStyle(.linear)
+                        .tint(LuxoraTheme.accent)
+                    Text("Загрузка…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+            }
+            if let uploadError = store.mediaUploadError, !uploadError.isEmpty {
+                Label(uploadError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+                    .accessibilityIdentifier("composer-media-error")
+            }
+            MessageComposer(
+                store: store,
+                topicTitle: selectedTopic?.title,
+                onClearTopic: selectedTopic == nil ? nil : {
+                    store.selectTopic(nil, in: conversation.id)
+                },
+                onAttachment: {
+                    presentsMediaPicker = true
+                },
+                onVoiceRecord: toggleVoiceRecording,
+                isRecordingVoice: voiceRecorder.isRecording,
+                onSchedule: {
+                    scheduleDraft = store.draft
+                    presentsScheduleSheet = true
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func conversationTranscriptMessages(_ displayedMessages: [ChatMessage]) -> some View {
+        if displayedMessages.isEmpty {
+            if selectedTopic != nil {
+                ContentUnavailableView(
+                    "В этой теме пока тихо",
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text("Сообщения темы появятся здесь. Отправьте первое.")
+                )
+                .padding(.top, 48)
+                .accessibilityIdentifier("conversation-topic-empty")
+            } else {
+                ContentUnavailableView(
+                    phoneString("conversation.no_messages"),
+                    systemImage: "text.bubble",
+                    description: Text(phoneString("conversation.no_messages_detail"))
+                )
+                .padding(.top, 48)
+            }
+        } else {
+            ForEach(displayedMessages) { message in
+                messageBubbleRow(
+                    for: message,
+                    isLast: message.id == displayedMessages.last?.id
+                )
+            }
+        }
+    }
+
     private var supportsTopicFilter: Bool {
         topicsStore != nil
             && (conversation.kind == .group || conversation.kind == .channel)
@@ -2448,30 +2541,8 @@ private struct PhoneDirectConversationView: View {
                         }
                         .padding(.top, 32)
                         .accessibilityIdentifier("conversation-load-failed")
-                    } else if displayedMessages.isEmpty {
-                        if selectedTopic != nil {
-                            ContentUnavailableView(
-                                "В этой теме пока тихо",
-                                systemImage: "bubble.left.and.bubble.right",
-                                description: Text("Сообщения темы появятся здесь. Отправьте первое.")
-                            )
-                            .padding(.top, 48)
-                            .accessibilityIdentifier("conversation-topic-empty")
-                        } else {
-                            ContentUnavailableView(
-                                phoneString("conversation.no_messages"),
-                                systemImage: "text.bubble",
-                                description: Text(phoneString("conversation.no_messages_detail"))
-                            )
-                            .padding(.top, 48)
-                        }
                     } else {
-                        ForEach(displayedMessages) { message in
-                            messageBubbleRow(
-                                for: message,
-                                isLast: message.id == displayedMessages.last?.id
-                            )
-                        }
+                        conversationTranscriptMessages(displayedMessages)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -2529,67 +2600,7 @@ private struct PhoneDirectConversationView: View {
                    communityStore?.canPublish(in: conversation) != true {
                     PhoneChannelReadOnlyComposer(conversation: conversation)
                 } else {
-                    VStack(spacing: 0) {
-                        if voiceRecorder.isRecording {
-                            PhoneVoiceRecordingBar(
-                                elapsedSeconds: voiceRecorder.elapsedSeconds,
-                                levels: voiceRecorder.levels,
-                                onStop: finishVoiceRecording,
-                                onCancel: { voiceRecorder.cancel() }
-                            )
-                        }
-                        if store.composerMedia.contains(where: { $0.kind == "voice" }) {
-                            Toggle("Разрешить расшифровку", isOn: $store.composerTranscriptionConsent)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 4)
-                                .accessibilityIdentifier("composer-transcription-consent")
-                        }
-                        if !store.composerMedia.isEmpty {
-                            PhoneComposerMediaStrip(
-                                media: store.composerMedia,
-                                onRemove: { store.removeComposerMedia(id: $0) }
-                            )
-                        }
-                        if store.isUploadingMedia {
-                            HStack(spacing: 8) {
-                                ProgressView(value: max(0.05, store.mediaUploadProgress))
-                                    .progressViewStyle(.linear)
-                                    .tint(LuxoraTheme.accent)
-                                Text("Загрузка…")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
-                        }
-                        if let uploadError = store.mediaUploadError, !uploadError.isEmpty {
-                            Label(uploadError, systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 4)
-                                .accessibilityIdentifier("composer-media-error")
-                        }
-                        MessageComposer(
-                            store: store,
-                            topicTitle: selectedTopic?.title,
-                            onClearTopic: selectedTopic == nil ? nil : {
-                                store.selectTopic(nil, in: conversation.id)
-                            },
-                            onAttachment: {
-                                presentsMediaPicker = true
-                            },
-                            onVoiceRecord: toggleVoiceRecording,
-                            isRecordingVoice: voiceRecorder.isRecording,
-                            onSchedule: {
-                                scheduleDraft = store.draft
-                                presentsScheduleSheet = true
-                            }
-                        )
-                    }
+                    conversationComposerArea
                 }
             }
             .sheet(isPresented: $presentsMediaPicker) {                PhoneMediaPickerSheet(
