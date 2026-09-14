@@ -3,20 +3,26 @@ import SwiftUI
 struct MessageComposer: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var store: MessengerStore
-    var onAttachment: (() -> Void)?
-    var onVoiceRecord: (() -> Void)?
+    var topicTitle: String? = nil
+    var onClearTopic: (() -> Void)? = nil
+    var onAttachment: (() -> Void)? = nil
+    var onVoiceRecord: (() -> Void)? = nil
     var isRecordingVoice: Bool = false
-    var onSchedule: (() -> Void)?
+    var onSchedule: (() -> Void)? = nil
     @FocusState private var isFocused: Bool
 
     init(
         store: MessengerStore,
+        topicTitle: String? = nil,
+        onClearTopic: (() -> Void)? = nil,
         onAttachment: (() -> Void)? = nil,
         onVoiceRecord: (() -> Void)? = nil,
         isRecordingVoice: Bool = false,
         onSchedule: (() -> Void)? = nil
     ) {
         self.store = store
+        self.topicTitle = topicTitle
+        self.onClearTopic = onClearTopic
         self.onAttachment = onAttachment
         self.onVoiceRecord = onVoiceRecord
         self.isRecordingVoice = isRecordingVoice
@@ -29,6 +35,11 @@ struct MessageComposer: View {
 
             if let target = store.composerMode.target {
                 composerContext(target)
+                    .padding(.bottom, 8)
+            }
+
+            if let topicTitle, let onClearTopic {
+                composerTopicContext(title: topicTitle, clear: onClearTopic)
                     .padding(.bottom, 8)
             }
 
@@ -241,7 +252,8 @@ struct MessageComposer: View {
         }
     }
 
-    private func composerContext(_ target: MessageComposerTarget) -> some View {        HStack(spacing: 10) {
+    private func composerContext(_ target: MessageComposerTarget) -> some View {
+        HStack(spacing: 10) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(LuxoraTheme.iris)
                 .frame(width: 3, height: 36)
