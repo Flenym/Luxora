@@ -69,23 +69,33 @@ describe("voice message transcription consent", () => {
     };
   }
 
-  async function uploadVoice(
+  const PNG_PIXEL = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64"
+  );
+
+  async function uploadAttachment(
     identity: { accessToken: string },
-    metadata: Record<string, unknown> = { durationMs: 5_000, waveform: [10, 200] }
+    options: {
+      kind: string;
+      fileName: string;
+      mimeType: string;
+      bytes: Buffer;
+      metadata: Record<string, unknown>;
+    }
   ): Promise<string> {
-    const bytes = wavBytes();
     const created = await app!.inject({
       method: "POST",
       url: "/v1/uploads",
       headers: { authorization: `Bearer ${identity.accessToken}` },
       payload: {
-        kind: "voice",
-        fileName: "note.wav",
-        mimeType: "audio/wav",
-        sizeBytes: bytes.length,
-        sha256: sha256(bytes),
+        kind: options.kind,
+        fileName: options.fileName,
+        mimeType: options.mimeType,
+        sizeBytes: options.bytes.length,
+        sha256: sha256(options.bytes),
         idempotencyKey: randomUUID(),
-        metadata
+        metadata: options.metadata
       }
     });
     expect(created.statusCode, created.body).toBe(201);
@@ -96,11 +106,11 @@ describe("voice message transcription consent", () => {
       headers: {
         authorization: `Bearer ${identity.accessToken}`,
         "content-type": "application/octet-stream",
-        "content-length": String(bytes.length),
-        "content-range": `bytes 0-${bytes.length - 1}/${bytes.length}`,
-        "x-chunk-sha256": sha256(bytes)
+        "content-length": String(options.bytes.length),
+        "content-range": `bytes 0-${options.bytes.length - 1}/${options.bytes.length}`,
+        "x-chunk-sha256": sha256(options.bytes)
       },
-      payload: bytes
+      payload: options.bytes
     });
     expect(chunk.statusCode, chunk.body).toBe(200);
     const completed = await app!.inject({
@@ -110,6 +120,19 @@ describe("voice message transcription consent", () => {
     });
     expect(completed.statusCode, completed.body).toBe(200);
     return completed.json().upload.attachment.id as string;
+  }
+
+  async function uploadVoice(
+    identity: { accessToken: string },
+    metadata: Record<string, unknown> = { durationMs: 5_000, waveform: [10, 200] }
+  ): Promise<string> {
+    return uploadAttachment(identity, {
+      kind: "voice",
+      fileName: "note.wav",
+      mimeType: "audio/wav",
+      bytes: wavBytes(),
+      metadata
+    });
   }
 
   it("attaches a receiver transcript only to consenting voice messages, once", async () => {
@@ -239,5 +262,75 @@ describe("voice message transcription consent", () => {
       }
     });
     expect(consentWithoutAttachments.statusCode, consentWithoutAttachments.body).toBe(400);
+  }, 60_000);
+
+  it("rejects transcription consent on non-audio attachments but keeps audio parity", async () => {
+    await boot();
+    const alice = await register("consent_kind_alice");
+    const bob = await register("consent_kind_bob");
+    const aliceHeaders = { authorization: `Bearer ${alice.accessToken}` };
+    const bobHeaders = { authorization: `Bearer ${bob.accessToken}` };
+
+    const chat = await app!.inject({
+      method: "POST",
+      url: "/v1/chats",
+      headers: aliceHeaders,
+      payload: { kind: "direct", userId: bob.id }
+    });
+    expect(chat.statusCode, chat.body).toBe(201);
+    const chatId = chat.json().chat.id as string;
+
+    const imageAttachmentId = await uploadAttachment(alice, {
+      kind: "image",
+      fileName: "pixel.png",
+      mimeType: "image/png",
+      bytes: PNG_PIXEL,
+      metadata: { width: 1, height: 1 }
+    });
+    const imageWithConsent = await app!.inject({
+      method: "POST",
+      url: `/v1/chats/${chatId}/messages`,
+      headers: aliceHeaders,
+      payload: {
+        body: null,
+        clientNonce: randomUUID(),
+        replyToMessageId: null,
+        topicId: null,
+        attachmentIds: [imageAttachmentId],
+        transcriptionConsent: true
+      }
+    });
+    expect(imageWithConsent.statusCode, imageWithConsent.body).toBe(400);
+
+    const audioAttachmentId = await uploadAttachment(alice, {
+      kind: "audio",
+      fileName: "note.wav",
+      mimeType: "audio/wav",
+      bytes: wavBytes(),
+      metadata: { durationMs: 5_000, waveform: [10, 200] }
+    });
+    const audioWithConsent = await app!.inject({
+      method: "POST",
+      url: `/v1/chats/${chatId}/messages`,
+      headers: aliceHeaders,
+      payload: {
+        body: null,
+        clientNonce: randomUUID(),
+        replyToMessageId: null,
+        topicId: null,
+        attachmentIds: [audioAttachmentId],
+        transcriptionConsent: true
+      }
+    });
+    expect(audioWithConsent.statusCode, audioWithConsent.body).toBe(201);
+    const audioMessageId = audioWithConsent.json().message.id as string;
+    const attached = await app!.inject({
+      method: "PUT",
+      url: `/v1/messages/${audioMessageId}/transcript`,
+      headers: bobHeaders,
+      payload: { text: "Расшифровка аудио.", clientNonce: randomUUID() }
+    });
+    expect(attached.statusCode, attached.body).toBe(200);
+    expect(attached.json().message.transcript).toBe("Расшифровка аудио.");
   }, 60_000);
 });

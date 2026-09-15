@@ -238,8 +238,12 @@ describe("chat ownership transfer ceremony", () => {
 
     // Access tokens live 15 minutes, so the far-future expiry probes
     // re-authenticate inside the fixed clock for fresh bearer tokens.
+    // The probe clock is derived from the real now (transfer TTL is 24 h),
+    // never hardcoded: a fixed calendar date turns into a time bomb once
+    // wall-clock time passes it.
     const transferId = (created.json().transfer as { id: string }).id;
-    const expiredAccept = await withFixedClock("2026-09-15T12:00:01.000Z", async () => {
+    const expiredIso = new Date(Date.now() + 25 * 3_600_000).toISOString();
+    const expiredAccept = await withFixedClock(expiredIso, async () => {
       const futureFirst = await login("transfer_single_first");
       return app!.inject({
         method: "POST",
@@ -251,7 +255,8 @@ describe("chat ownership transfer ceremony", () => {
     expect(expiredAccept.json().error.details).toMatchObject({ reason: "transfer_expired" });
 
     // The expired ceremony no longer blocks a fresh one.
-    const fresh = await withFixedClock("2026-09-15T12:00:02.000Z", async () => {
+    const freshIso = new Date(Date.parse(expiredIso) + 1_000).toISOString();
+    const fresh = await withFixedClock(freshIso, async () => {
       const futureOwner = await login("transfer_single_owner");
       return initiate(futureOwner, chatId, second.id);
     });

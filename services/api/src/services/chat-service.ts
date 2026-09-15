@@ -1171,6 +1171,10 @@ export class ChatService {
       this.#requireTopic(chatId, input.topicId, false);
       const attachments = this.#requireOwnedAttachments(userId, attachmentIds);
       this.#requireVoiceMessagePolicy(currentChat, userId, attachments);
+      if (input.transcriptionConsent === true
+        && !attachments.some(({ kind }) => kind === "voice" || kind === "audio")) {
+        throw badRequest("Transcription consent requires a voice or audio attachment");
+      }
       if (input.replyToMessageId !== null) {
         const replied = this.store.findMessageRecord(input.replyToMessageId);
         if (replied === null || replied.chatId !== chatId || replied.deletedAt !== null) {
