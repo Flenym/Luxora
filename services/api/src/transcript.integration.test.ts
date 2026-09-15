@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LuxoraApp } from "./app.js";
 import { buildApp } from "./app.js";
-import { testConfig } from "./test-helpers.js";
+import { establishAcceptedRelationship, testConfig } from "./test-helpers.js";
 
 const DATA_KEY = Buffer.alloc(32, 61).toString("base64url");
 
@@ -332,5 +332,129 @@ describe("voice message transcription consent", () => {
     });
     expect(attached.statusCode, attached.body).toBe(200);
     expect(attached.json().message.transcript).toBe("Расшифровка аудио.");
+  }, 60_000);
+
+  it("streams a multi-chunk voice note to the receiver byte-exact and converges the transcript", async () => {
+    await boot();
+    const alice = await register("playback_alice");
+    const bob = await register("playback_bob");
+    const carol = await register("playback_carol");
+    const aliceHeaders = { authorization: `Bearer ${alice.accessToken}` };
+    const bobHeaders = { authorization: `Bearer ${bob.accessToken}` };
+    await establishAcceptedRelationship(app!, alice, bob);
+
+    // A voice note larger than one 262_144-byte chunk, uploaded out of order
+    // like a client resuming after poor network. Magic bytes stay WAV-valid.
+    const bytes = Buffer.alloc(262_144 + 4_096, 7);
+    wavBytes().subarray(0, 44).copy(bytes, 0);
+    const digest = sha256(bytes);
+    const created = await app!.inject({
+      method: "POST",
+      url: "/v1/uploads",
+      headers: aliceHeaders,
+      payload: {
+        kind: "voice",
+        fileName: "voice-note.wav",
+        mimeType: "audio/wav",
+        sizeBytes: bytes.length,
+        sha256: digest,
+        idempotencyKey: randomUUID(),
+        metadata: { durationMs: 61_000, waveform: [0, 128, 255] }
+      }
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const uploadId = created.json().upload.id as string;
+    const putChunk = async (index: number, chunk: Buffer, start: number) =>
+      app!.inject({
+        method: "PUT",
+        url: `/v1/uploads/${uploadId}/chunks/${index}`,
+        headers: {
+          authorization: `Bearer ${alice.accessToken}`,
+          "content-type": "application/octet-stream",
+          "content-length": String(chunk.length),
+          "content-range": `bytes ${start}-${start + chunk.length - 1}/${bytes.length}`,
+          "x-chunk-sha256": sha256(chunk)
+        },
+        payload: chunk
+      });
+    expect((await putChunk(1, bytes.subarray(262_144), 262_144)).statusCode).toBe(200);
+    expect((await putChunk(0, bytes.subarray(0, 262_144), 0)).statusCode).toBe(200);
+    const completed = await app!.inject({
+      method: "POST",
+      url: `/v1/uploads/${uploadId}/complete`,
+      headers: aliceHeaders
+    });
+    expect(completed.statusCode, completed.body).toBe(200);
+    const attachment = completed.json().upload.attachment;
+    expect(attachment).toMatchObject({ kind: "voice", metadataTrust: "client_declared" });
+    const attachmentId = attachment.id as string;
+
+    const chat = await app!.inject({
+      method: "POST",
+      url: "/v1/chats",
+      headers: aliceHeaders,
+      payload: { kind: "direct", userId: bob.id }
+    });
+    expect(chat.statusCode, chat.body).toBe(201);
+    const chatId = chat.json().chat.id as string;
+
+    const sent = await app!.inject({
+      method: "POST",
+      url: `/v1/chats/${chatId}/messages`,
+      headers: aliceHeaders,
+      payload: {
+        body: null,
+        clientNonce: randomUUID(),
+        replyToMessageId: null,
+        topicId: null,
+        attachmentIds: [attachmentId],
+        transcriptionConsent: true
+      }
+    });
+    expect(sent.statusCode, sent.body).toBe(201);
+    const messageId = sent.json().message.id as string;
+
+    // Streaming-style partial fetch, as an audio player would request.
+    const stream = await app!.inject({
+      method: "GET",
+      url: `/v1/attachments/${attachmentId}/content`,
+      headers: { authorization: `Bearer ${bob.accessToken}`, range: "bytes=0-1023" }
+    });
+    expect(stream.statusCode).toBe(206);
+    expect(stream.headers["content-range"]).toBe(`bytes 0-1023/${bytes.length}`);
+    expect(stream.rawPayload).toEqual(bytes.subarray(0, 1_024));
+
+    // Full playback bytes are bit-exact.
+    const playback = await app!.inject({
+      method: "GET",
+      url: `/v1/attachments/${attachmentId}/content`,
+      headers: bobHeaders
+    });
+    expect(playback.statusCode).toBe(200);
+    expect(sha256(playback.rawPayload)).toBe(digest);
+
+    // A stranger with no share sees nothing, not even existence.
+    const stranger = await app!.inject({
+      method: "GET",
+      url: `/v1/attachments/${attachmentId}/content`,
+      headers: { authorization: `Bearer ${carol.accessToken}` }
+    });
+    expect(stranger.statusCode).toBe(404);
+
+    const transcriptPayload = { text: "Слушаю голосовое целиком.", clientNonce: randomUUID() };
+    const attachedTranscript = await app!.inject({
+      method: "PUT",
+      url: `/v1/messages/${messageId}/transcript`,
+      headers: bobHeaders,
+      payload: transcriptPayload
+    });
+    expect(attachedTranscript.statusCode, attachedTranscript.body).toBe(200);
+
+    const listed = await app!.inject({
+      method: "GET",
+      url: `/v1/chats/${chatId}/messages?limit=10`,
+      headers: aliceHeaders
+    });
+    expect(listed.json().items[0]).toMatchObject({ transcript: transcriptPayload.text });
   }, 60_000);
 });
