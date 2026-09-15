@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-15 ~19:00 UTC · `main` — voice consent-kind gate + Swift guard-тесты, API 80/658 зелёный локально
+**Обновлено:** 2026-09-15 ~21:45 UTC · `main` — voice playback round-trip, API 80/659 зелёный локально, CI повторный в пути
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -8,7 +8,7 @@
 - **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `032_chat_invite_links`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
 - **Protocol:** `@luxora/protocol` — строгие zod-контракты (17 файлов / 104 теста).
 - **iPhone:** Swift 6 `LuxoraKit` + `LuxoraMobile`, Keychain-сессии, серверные stores, DEBUG-фикстуры только для геометрии.
-- **Проверено:** API 80 файлов / 658 тестов PASS (локально Windows; CI ждёт пуша), protocol 17/104, оба typecheck PASS. Swift-тесты только через CI.
+- **Проверено:** API 80 файлов / 659 тестов PASS (локально Windows; CI ждёт пуша), protocol 17/104, оба typecheck PASS. Swift-тесты только через CI.
 
 ## Что работает (end-to-end, с тестами)
 
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Voice playback round-trip (локально зелёный): multi-chunk out-of-order upload → consent-send → receiver `206` + sha-точное скачивание → transcript-конвергенция, stranger `404`. CI-red Swift-фикс (`await` вне XCTAssert) запушен отдельно.
 - Voice consent-kind gate (локально зелёный, CI ждёт пуша): send-time `400` для `transcriptionConsent` без voice/audio, audio parity для consent/transcript, iPhone `VoiceTranscriptStoreTests` (4 guard-теста). По пути починен предсуществующий time-bomb в ownership-transfer expiry-тесте (хардкод 2026-09-15T12:00Z → now+25h; падал и без моих правок).
 - Topics composer+фильтр (CI зелёный везде): topicID через send/media/durable/retry, chips + индикатор, visibleMessages, canSend-правило, store-тесты.
 - Topics management slice — CI зелёный везде.
@@ -45,5 +46,4 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Следующий приоритет (порядок)
 
-1. Voice остаток QA: playback через authenticated download + poor-network/process-death доказательства (запись/upload/consent/transcript уже покрыты).
-2. Media processing → search → calls signaling (по готовности, каждый со Slice-тестами).
+1. Дождаться CI по voice-срезам; затем media processing → search → calls signaling (каждый со slice-тестами).

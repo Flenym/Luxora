@@ -29,6 +29,13 @@
 > (локально Windows). По пути починен предсуществующий time-bomb в
 > ownership-transfer expiry-тесте (захардкоженная дата 2026-09-15T12:00Z —
 > заменена на now+25h). Swift-тесты — только через CI (Windows без Xcode).
+>
+> **Дополнение 2026-09-15 (voice playback round-trip, DONE, локально зелёный):**
+> мультichunk voice-загрузка out-of-order → send с consent → Range-стриминг
+> получателем (`206`) → байт-точное скачивание (sha256) → transcript сходится
+> у обоих; stranger получает `404`. API 80 файлов / 659 тестов PASS.
+> Swift guard-тесты починены после CI-red (`await` вне XCTAssert) — повторный
+> CI ждёт проверки.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
@@ -49,8 +56,9 @@
 - [x] Topics/threads iPhone management slice: ChatTopic-модель, client CRUD, topicId в send/messages/history-mapping, ChatTopicsStore + UI в профиле сообщества, contract/store tests. Композер-пикер и фильтр истории — следующий шаг
 - [x] Topics composer + фильтр: topicID сквозь send-фаннел (text/media/durable/retry), chips + индикатор композера, visibleMessages-фильтр
 - [x] Voice consent-kind gate: send-time `400` без voice/audio, audio parity, client transcribe guards + time-bomb фикс expiry-теста
+- [x] Voice playback round-trip: multi-chunk upload out-of-order, receiver Range-стриминг `206`, байт-точное скачивание, transcript-конвергенция, stranger `404`
 - [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
-- [ ] Voice сквозной QA (остаток): playback через authenticated download + poor-network/process-death доказательства; запись/upload/consent/transcript уже покрыты
+- [ ] Voice остаток: poor-network/process-death доказательства именно для voice-цепочки (generic resume покрыт); real-device gates
 
 ### MEDIUM
 

@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-15):** `main` = `6f88ffe`, локально зелёный (protocol 17/104, API 80/658, оба typecheck). CI ждёт пуша — Swift только там.
+**Точка продолжения (обновлено 2026-09-15):** `main` = `3b5379b`, локально зелёный (protocol 17/104, API 80/659, оба typecheck). CI повторный в пути — Swift только там.
 
 ## Как продолжить без потери контекста
 
@@ -25,7 +25,7 @@
 
 ## Ближайшая очередь
 
-1. Voice остаток QA: playback через authenticated download + poor-network/process-death доказательства (consent-kind gate `6f88ffe` уже зелёный локально, Swift-guard тесты ждут CI).
-2. Media processing → search → calls signaling.
+1. Дождаться CI по voice-срезам (`3b5379b` + Swift-фикс `9c8c3b3`); при зелёном — media processing → search → calls signaling.
+2. Export/delete, QR-linking, contact discovery.
 3. Export/delete, QR-linking, contact discovery.
 4. Финальный QA.
