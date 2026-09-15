@@ -142,7 +142,8 @@ describe("resumable media uploads", () => {
       kind: "image",
       mimeType: "image/png",
       safetyStatus: "unscanned",
-      metadataTrust: "client_declared"
+      metadataTrust: "server_verified",
+      metadata: { width: 1, height: 1 }
     });
     const attachmentId = attachment.id as string;
 
@@ -585,5 +586,50 @@ describe("resumable media uploads", () => {
       payload: { ...voice({}), kind: "audio", fileName: "track.mp3", mimeType: "audio/mpeg" }
     });
     expect(audioAccepted.statusCode, audioAccepted.body).toBe(201);
+  });
+
+  it("verifies image dimensions from file bytes and rejects mismatched declarations", async () => {
+    const key = Buffer.alloc(32, 44).toString("base64url");
+    const storageRoot = await mkdtemp(join(tmpdir(), "luxora-image-dims-"));
+    temporaryRoots.push(storageRoot);
+    app = await buildApp({
+      config: testConfig({
+        dataEncryptionKeys: { test: key },
+        activeDataEncryptionKeyId: "test",
+        storageLocalPath: join(storageRoot, "blobs"),
+        uploadStagingPath: join(storageRoot, "uploads")
+      }),
+      logger: false
+    });
+    const alice = await register("dims_alice");
+    const aliceHeaders = { authorization: `Bearer ${alice.accessToken}` };
+
+    const lying = await createUpload(alice, PNG, { metadata: { width: 9, height: 9 } });
+    expect(lying.response.statusCode).toBe(201);
+    const lyingId = lying.response.json().upload.id as string;
+    expect((await putChunk(alice, lyingId, PNG)).statusCode).toBe(200);
+    const lyingComplete = await app.inject({
+      method: "POST",
+      url: `/v1/uploads/${lyingId}/complete`,
+      headers: aliceHeaders
+    });
+    expect(lyingComplete.statusCode, lyingComplete.body).toBe(400);
+    expect(lyingComplete.json().error.message).toContain("dimensions");
+
+    const silent = await createUpload(alice, PNG, { metadata: {} });
+    expect(silent.response.statusCode).toBe(201);
+    const silentId = silent.response.json().upload.id as string;
+    expect((await putChunk(alice, silentId, PNG)).statusCode).toBe(200);
+    const silentComplete = await app.inject({
+      method: "POST",
+      url: `/v1/uploads/${silentId}/complete`,
+      headers: aliceHeaders
+    });
+    expect(silentComplete.statusCode, silentComplete.body).toBe(200);
+    expect(silentComplete.json().upload.attachment).toMatchObject({
+      kind: "image",
+      metadataTrust: "server_verified",
+      metadata: { width: 1, height: 1 }
+    });
   });
 });

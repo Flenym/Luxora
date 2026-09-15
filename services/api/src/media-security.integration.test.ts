@@ -532,7 +532,8 @@ describe("media security and correctness boundaries", () => {
     expect(completed.json().upload.attachment).toMatchObject({
       mimeType: "image/png",
       safetyStatus: "unscanned",
-      metadataTrust: "client_declared"
+      metadataTrust: "server_verified",
+      metadata: { width: 1, height: 1 }
     });
   });
 });

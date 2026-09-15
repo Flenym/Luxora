@@ -22,6 +22,7 @@ import { contentCipherFromConfig, type ContentCipher } from "../infrastructure/c
 import type { SearchHasher } from "../infrastructure/search-hasher.js";
 import type { StorageProvider } from "../infrastructure/storage.js";
 import type { EventPublisher } from "./event-publisher.js";
+import { measureImageDimensions } from "./image-dimensions.js";
 
 const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
@@ -338,6 +339,27 @@ export class UploadService {
         this.store.failUpload(upload.id, "MIME_VALIDATION_FAILED", new Date().toISOString());
         throw error;
       }
+      // Media processing foundation: measured image dimensions replace
+      // client claims. A declared width/height that disagrees with the
+      // actual bytes is rejected; unmeasurable formats (AVIF/HEIC,
+      // truncated headers) honestly keep `client_declared` trust.
+      let attachmentMetadata: Record<string, unknown> = upload.metadata;
+      let attachmentMetadataTrust: "client_declared" | "server_verified" | undefined;
+      if (upload.kind === "image") {
+        const measured = measureImageDimensions(inspection.prefix);
+        if (measured !== null) {
+          const declared = upload.metadata as { width?: unknown; height?: unknown };
+          if (
+            (declared.width !== undefined && declared.width !== measured.width) ||
+            (declared.height !== undefined && declared.height !== measured.height)
+          ) {
+            this.store.failUpload(upload.id, "IMAGE_DIMENSION_MISMATCH", new Date().toISOString());
+            throw badRequest("Declared image dimensions do not match the uploaded image");
+          }
+          attachmentMetadata = { ...upload.metadata, width: measured.width, height: measured.height };
+          attachmentMetadataTrust = "server_verified";
+        }
+      }
       const attachmentId = randomUUID();
       objectKey = this.#objectKey(upload);
       await this.storage.put({
@@ -359,7 +381,10 @@ export class UploadService {
           detectedMimeType,
           sizeBytes: upload.sizeBytes,
           sha256: upload.sha256,
-          metadata: upload.metadata,
+          metadata: attachmentMetadata,
+          ...(attachmentMetadataTrust === undefined
+            ? {}
+            : { metadataTrust: attachmentMetadataTrust }),
           storageProvider: upload.storageProvider,
           storageKey: objectKey as string,
           createdAt: completedAt
