@@ -42,6 +42,12 @@
 > `complete()` (`400` при mismatch, иначе `server_verified` + измеренные
 > width/height; AVIF/HEIC честно остаются `client_declared`). Protocol без
 > изменений (схема уже покрывала). API 81 файл / 666 тестов PASS.
+>
+> **Дополнение 2026-09-15 (search pagination convergence, DONE, локально зелёный):**
+> messages global+chat-scoped (`2/2/1`, без потерь/дублей, garbage cursor `400`),
+> known-users (`2/1` через relationships), files (`1/1/1` по трём загрузкам).
+> API 82 файла / 669 тестов PASS (плюс 1 инфраструктурный flake vitest-worker
+> `onTaskUpdate` на Windows — не тестовая ошибка, все тесты зелёные).
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
@@ -63,6 +69,7 @@
 - [x] Topics composer + фильтр: topicID сквозь send-фаннел (text/media/durable/retry), chips + индикатор композера, visibleMessages-фильтр
 - [x] Voice consent-kind gate: send-time `400` без voice/audio, audio parity, client transcribe guards + time-bomb фикс expiry-теста
 - [x] Voice playback round-trip: multi-chunk upload out-of-order, receiver Range-стриминг `206`, байт-точное скачивание, transcript-конвергенция, stranger `404`
+- [x] Search pagination convergence: messages global+scoped, known-users, files (без потерь/дублей, garbage cursor `400`)
 - [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
 - [ ] Voice остаток: poor-network/process-death доказательства именно для voice-цепочки (generic resume покрыт); real-device gates
 
@@ -70,7 +77,7 @@
 
 - [x] Image dimensions server-verified (mismatch `400`, measured adopt, AVIF/HEIC остаются client_declared)
 - [ ] Media processing остаток: thumbnails, duration/waveform на сервере, quarantine/transcode pipeline
-- [ ] Global search pagination + contacts/address-book policy
+- [x] Search pagination convergence (messages/people/files); остаток: contacts/address-book policy
 - [ ] Calls signaling + state machine + честный UI (SFU/TURN — по готовности инфры)
 - [ ] Account export/delete/retention + data inventory
 - [ ] QR device linking + security event/device compromise flow

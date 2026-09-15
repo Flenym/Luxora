@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-15):** `main` = `f98d8d3`, локально зелёный (protocol 17/104, API 81/666, оба typecheck). CI: Apple Swift по Swift-фиксу success.
+**Точка продолжения (обновлено 2026-09-15):** `main` = `6a3645a`, локально зелёный (protocol 17/104, API 82/669, оба typecheck). CI: Apple Swift по Swift-фиксу success.
 
 ## Как продолжить без потери контекста
 

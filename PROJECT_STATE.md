@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-15 ~22:00 UTC · `main` — server-verified image dimensions, API 81/666 зелёный локально
+**Обновлено:** 2026-09-15 ~22:15 UTC · `main` — search pagination convergence, API 82/669 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -8,7 +8,7 @@
 - **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `032_chat_invite_links`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
 - **Protocol:** `@luxora/protocol` — строгие zod-контракты (17 файлов / 104 теста).
 - **iPhone:** Swift 6 `LuxoraKit` + `LuxoraMobile`, Keychain-сессии, серверные stores, DEBUG-фикстуры только для геометрии.
-- **Проверено:** API 81 файл / 666 тестов PASS (локально Windows), protocol 17/104, оба typecheck PASS. CI: Apple Swift по Swift-фиксу — success; остальные workflow следить по пушу.
+- **Проверено:** API 82 файла / 669 тестов PASS (локально Windows; 1 инфраструктурный flake vitest-worker `onTaskUpdate` — не тестовая ошибка), protocol 17/104, оба typecheck PASS. CI: Apple Swift по Swift-фиксу — success; остальные workflow следить по пушу.
 
 ## Что работает (end-to-end, с тестами)
 
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Search pagination convergence (локально зелёный): messages global+scoped `2/2/1`, known-users `2/1`, files `1/1/1`, garbage cursor `400`.
 - Media: server-verified image dimensions (локально зелёный): zero-dependency PNG/GIF/WebP/JPEG-парсер, mismatch `400`, adopt + `server_verified`, AVIF/HEIC честно `client_declared`.
 - Voice playback round-trip (локально зелёный): multi-chunk out-of-order upload → consent-send → receiver `206` + sha-точное скачивание → transcript-конвергенция, stranger `404`. CI-red Swift-фикс (`await` вне XCTAssert) — Apple Swift success в CI.
 - Voice consent-kind gate (локально зелёный, CI ждёт пуша): send-time `400` для `transcriptionConsent` без voice/audio, audio parity для consent/transcript, iPhone `VoiceTranscriptStoreTests` (4 guard-теста). По пути починен предсуществующий time-bomb в ownership-transfer expiry-тесте (хардкод 2026-09-15T12:00Z → now+25h; падал и без моих правок).
@@ -47,4 +48,4 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Следующий приоритет (порядок)
 
-1. Media processing остаток → search → calls signaling (каждый со slice-тестами).
+1. Media processing остаток (thumbnails/transcode, duration/waveform) → calls signaling → export/delete (каждый со slice-тестами).
