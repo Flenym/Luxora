@@ -28,7 +28,8 @@ final class VoiceTranscriptStoreTests: XCTestCase {
         let applied = await store.transcribeMessage(message.id, text: "Расшифровка")
 
         XCTAssertFalse(applied)
-        XCTAssertEqual(await probe.calls.count, 0)
+        let putCalls = await probe.calls
+        XCTAssertEqual(putCalls.count, 0)
     }
 
     func testTranscribeFailsClosedWhenTranscriptAlreadyExists() async throws {
@@ -50,7 +51,8 @@ final class VoiceTranscriptStoreTests: XCTestCase {
         let applied = await store.transcribeMessage(message.id, text: "Повторная")
 
         XCTAssertFalse(applied)
-        XCTAssertEqual(await probe.calls.count, 0)
+        let putCalls = await probe.calls
+        XCTAssertEqual(putCalls.count, 0)
     }
 
     func testTranscribeRejectsBlankText() async throws {
@@ -72,7 +74,8 @@ final class VoiceTranscriptStoreTests: XCTestCase {
         let applied = await store.transcribeMessage(message.id, text: "   \n ")
 
         XCTAssertFalse(applied)
-        XCTAssertEqual(await probe.calls.count, 0)
+        let putCalls = await probe.calls
+        XCTAssertEqual(putCalls.count, 0)
     }
 
     func testTranscribeSuccessStoresServerTranscript() async throws {
@@ -97,7 +100,8 @@ final class VoiceTranscriptStoreTests: XCTestCase {
         let applied = await store.transcribeMessage(message.id, text: "Текст расшифровки")
 
         XCTAssertTrue(applied)
-        XCTAssertEqual(await probe.calls.count, 1)
+        let putCalls = await probe.calls
+        XCTAssertEqual(putCalls.count, 1)
         XCTAssertEqual(store.messagesByConversation[conversationID]?.first?.transcript, "Текст расшифровки")
     }
 
