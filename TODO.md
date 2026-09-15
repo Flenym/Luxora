@@ -20,6 +20,16 @@
 > API 78 файлов / 646 тестов PASS (локально + CI). Join-request approval
 > очереди — следующий явный шаг.
 
+> **Дополнение 2026-09-15 (voice consent-kind gate, DONE, локально зелёный):**
+> `POST /v1/chats/:id/messages` отклоняет `transcriptionConsent: true` без
+> `voice`/`audio` вложения (`400`), audio парит voice для consent/transcript,
+> iPhone `transcribeMessage` покрыт guard-тестами
+> (`VoiceTranscriptStoreTests`: без consent / повтор / пустой текст / успех).
+> Protocol 17 файлов / 104 теста PASS, API 80 файлов / 658 тестов PASS
+> (локально Windows). По пути починен предсуществующий time-bomb в
+> ownership-transfer expiry-тесте (захардкоженная дата 2026-09-15T12:00Z —
+> заменена на now+25h). Swift-тесты — только через CI (Windows без Xcode).
+
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
 `- [ ]` не сделано · `- [~]` в процессе · `- [x]` сделано. Статус — в
@@ -38,9 +48,9 @@
 - [x] Ownership transfer ceremony (034): двухшаговый initiate/accept с revision-защитой, ceremony-aware триггер, Swift adapter
 - [x] Topics/threads iPhone management slice: ChatTopic-модель, client CRUD, topicId в send/messages/history-mapping, ChatTopicsStore + UI в профиле сообщества, contract/store tests. Композер-пикер и фильтр истории — следующий шаг
 - [x] Topics composer + фильтр: topicID сквозь send-фаннел (text/media/durable/retry), chips + индикатор композера, visibleMessages-фильтр
-- [ ] Ownership transfer ceremony (двухшаговый, с revision-защитой)
+- [x] Voice consent-kind gate: send-time `400` без voice/audio, audio parity, client transcribe guards + time-bomb фикс expiry-теста
 - [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
-- [ ] Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер
+- [ ] Voice сквозной QA (остаток): playback через authenticated download + poor-network/process-death доказательства; запись/upload/consent/transcript уже покрыты
 
 ### MEDIUM
 

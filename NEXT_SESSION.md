@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-13):** `main` = `e0063be`, CI зелёный.
+**Точка продолжения (обновлено 2026-09-15):** `main` = `6f88ffe`, локально зелёный (protocol 17/104, API 80/658, оба typecheck). CI ждёт пуша — Swift только там.
 
 ## Как продолжить без потери контекста
 
@@ -8,7 +8,7 @@
 2. Проверь состояние: `git status --short --branch`, `git log --oneline -5`,
    `gh run list --repo Flenym/Luxora --limit 4`.
 3. Канонические контракты: `packages/protocol/src/index.ts`,
-   `services/api/src/infrastructure/migrations.ts` (последняя `032`),
+   `services/api/src/infrastructure/migrations.ts` (последняя `034`),
    `docs/specs/IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md` (частично устарела).
 
 ## Правила цикла (не нарушать)
@@ -25,7 +25,7 @@
 
 ## Ближайшая очередь
 
-1. Topics iPhone (в работе): сервер готов — `GET/POST /v1/chats/:id/topics`, `PATCH /v1/topics/:id`, `topicId` в send/list messages + realtime `topic.created/updated`. Клиент: модель `ChatTopic`, методы в `LuxoraAPIClient` (CRUD + `topicId` в `messages`/`sendMessage`/`APISendMessageBody`), фильтр истории в store, UI chips + composer, contract tests. Начало: `LuxoraAPIClient.swift:646` (`messages`), `:675` (`sendMessage`), `:1388` (`APISendMessageBody`).
-2. Voice QA → media processing → search → calls signaling.
+1. Voice остаток QA: playback через authenticated download + poor-network/process-death доказательства (consent-kind gate `6f88ffe` уже зелёный локально, Swift-guard тесты ждут CI).
+2. Media processing → search → calls signaling.
 3. Export/delete, QR-linking, contact discovery.
 4. Финальный QA.

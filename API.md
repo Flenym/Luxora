@@ -639,7 +639,7 @@ Authorized cursor page `{items, nextCursor}`. Current order is most-recent-first
 
 `201` alone means server accepted. A client may show “Delivered” only after an explicit recipient acknowledgement below, never from a timer or mere socket presence.
 
-Media messages pass `attachmentIds` (owned, completed uploads) instead of/in addition to `body`, plus optional `transcriptionConsent: true` to let members attach a transcript to the voice note later. Consent without attachments is rejected; the fingerprint covers consent, so a reused nonce with different consent conflicts.
+Media messages pass `attachmentIds` (owned, completed uploads) instead of/in addition to `body`, plus optional `transcriptionConsent: true` to let members attach a transcript to the voice note later. Consent without a `voice`/`audio` attachment is rejected with `400`; the fingerprint covers consent, so a reused nonce with different consent conflicts.
 
 ### `PUT /v1/messages/:messageId/transcript`
 

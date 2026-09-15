@@ -1,14 +1,14 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-14 ~20:00 UTC · `main` — topics composer+фильтр зелёный везде
+**Обновлено:** 2026-09-15 ~19:00 UTC · `main` — voice consent-kind gate + Swift guard-тесты, API 80/658 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
 
 - **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `032_chat_invite_links`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
-- **Protocol:** `@luxora/protocol` — строгие zod-контракты (16 файлов / 102 теста).
+- **Protocol:** `@luxora/protocol` — строгие zod-контракты (17 файлов / 104 теста).
 - **iPhone:** Swift 6 `LuxoraKit` + `LuxoraMobile`, Keychain-сессии, серверные stores, DEBUG-фикстуры только для геометрии.
-- **Проверено:** API 78 файлов / 646 тестов PASS (локально + CI Linux), Swift package + IPA собираются, Trivy/Security зелёные.
+- **Проверено:** API 80 файлов / 658 тестов PASS (локально Windows; CI ждёт пуша), protocol 17/104, оба typecheck PASS. Swift-тесты только через CI.
 
 ## Что работает (end-to-end, с тестами)
 
@@ -35,7 +35,8 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
-- Topics composer+фильтр (CI зелёный везде): topicID через send/media/durable/retry, chips + индикатор, visibleMessages, canSend-правило, store-тесты. По пути найден и задокументирован риск edit-инструмента (phantom line-merge) — правило: проверять git diff после каждой правки Swift.
+- Voice consent-kind gate (локально зелёный, CI ждёт пуша): send-time `400` для `transcriptionConsent` без voice/audio, audio parity для consent/transcript, iPhone `VoiceTranscriptStoreTests` (4 guard-теста). По пути починен предсуществующий time-bomb в ownership-transfer expiry-тесте (хардкод 2026-09-15T12:00Z → now+25h; падал и без моих правок).
+- Topics composer+фильтр (CI зелёный везде): topicID через send/media/durable/retry, chips + индикатор, visibleMessages, canSend-правило, store-тесты.
 - Topics management slice — CI зелёный везде.
 - Параллельная сессия в workspace: LICENSE (MIT), README.md/RU rework — втянуто, бейджи приведены к truth-гейту.
 - `81ce142` invite-ссылки 032 (+фиксы Swift-тестов, бейджей).
@@ -44,5 +45,5 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Следующий приоритет (порядок)
 
-1. Voice сквозной QA: запись→upload→playback→транскрипт через реальный сервер (PhoneVoiceRecorder + voice attachments + transcription consent уже есть — проверить и закрыть пробелы).
+1. Voice остаток QA: playback через authenticated download + poor-network/process-death доказательства (запись/upload/consent/transcript уже покрыты).
 2. Media processing → search → calls signaling (по готовности, каждый со Slice-тестами).
