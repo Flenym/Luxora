@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-15):** `main` = `3b5379b`, локально зелёный (protocol 17/104, API 80/659, оба typecheck). CI повторный в пути — Swift только там.
+**Точка продолжения (обновлено 2026-09-15):** `main` = `f98d8d3`, локально зелёный (protocol 17/104, API 81/666, оба typecheck). CI: Apple Swift по Swift-фиксу success.
 
 ## Как продолжить без потери контекста
 
@@ -25,7 +25,7 @@
 
 ## Ближайшая очередь
 
-1. Дождаться CI по voice-срезам (`3b5379b` + Swift-фикс `9c8c3b3`); при зелёном — media processing → search → calls signaling.
+1. Media processing остаток (thumbnails/transcode, duration/waveform сервера) → search → calls signaling.
 2. Export/delete, QR-linking, contact discovery.
 3. Export/delete, QR-linking, contact discovery.
 4. Финальный QA.

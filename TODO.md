@@ -36,6 +36,12 @@
 > у обоих; stranger получает `404`. API 80 файлов / 659 тестов PASS.
 > Swift guard-тесты починены после CI-red (`await` вне XCTAssert) — повторный
 > CI ждёт проверки.
+>
+> **Дополнение 2026-09-15 (media: server-verified image dimensions, DONE, локально зелёный):**
+> zero-dependency парсер PNG/GIF/WebP/JPEG + проверка declared размеров в
+> `complete()` (`400` при mismatch, иначе `server_verified` + измеренные
+> width/height; AVIF/HEIC честно остаются `client_declared`). Protocol без
+> изменений (схема уже покрывала). API 81 файл / 666 тестов PASS.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
@@ -62,7 +68,8 @@
 
 ### MEDIUM
 
-- [ ] Media processing: thumbnails, duration/waveform на сервере, quarantine/transcode pipeline
+- [x] Image dimensions server-verified (mismatch `400`, measured adopt, AVIF/HEIC остаются client_declared)
+- [ ] Media processing остаток: thumbnails, duration/waveform на сервере, quarantine/transcode pipeline
 - [ ] Global search pagination + contacts/address-book policy
 - [ ] Calls signaling + state machine + честный UI (SFU/TURN — по готовности инфры)
 - [ ] Account export/delete/retention + data inventory

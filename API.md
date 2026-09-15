@@ -698,6 +698,10 @@ Authenticated reconciliation reads are `GET /v1/messages/:messageId/reactions` a
 return `no-store` canonical state and filter actors hidden by a current block.
 `GET /v1/attachments` is a paginated owner-only attachment list; it never grants
 items merely because the requester can access a message-derived download.
+Completed image uploads carry server-measured `width`/`height` with
+`metadataTrust:"server_verified"` (PNG/GIF/WebP/JPEG; a declared size that
+disagrees with the bytes is rejected with `400`); unmeasurable formats
+honestly keep `client_declared`.
 
 ## 8. Core response shapes
 
