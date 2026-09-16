@@ -44,6 +44,7 @@ import { ChatFolderService } from "./services/chat-folder-service.js";
 import { ChatDraftService } from "./services/chat-draft-service.js";
 import { ChatService } from "./services/chat-service.js";
 import { DataExportService } from "./services/data-export-service.js";
+import { AccountDeletionService } from "./services/account-deletion-service.js";
 import { IdentityAccessService } from "./services/identity-access-service.js";
 import { NotificationService } from "./services/notification-service.js";
 import { PasskeyAuthenticatorManagementService } from "./services/passkey-authenticator-management-service.js";
@@ -445,6 +446,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const uploads = await UploadService.create(store, storage, searchHasher, outbox, config);
   const attachments = new AttachmentService(store, storage);
   const dataExports = new DataExportService(store, storage);
+  const accountDeletion = new AccountDeletionService(store);
   const profileAvatars = new ProfileAvatarService(
     store,
     storage,
@@ -638,6 +640,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     storage,
     metrics,
     dataExports,
+    accountDeletion,
     serverSearchConfigured: searchHasher.available,
     authGuard
   });
@@ -783,6 +786,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   } catch (error) {
     app.log.error({ err: error }, "Initial scheduled message dispatch failed");
   }
+  try {
+    const deletionResult = accountDeletion.sweep(new Date());
+    if (deletionResult.processed > 0) {
+      app.log.info(deletionResult, "Due account deletions processed on startup");
+    }
+  } catch (error) {
+    app.log.error({ err: error }, "Initial account deletion sweep failed");
+  }
   scheduledTimer = setInterval(() => {
     try {
       const dispatched = chats.dispatchDueScheduledMessages(new Date());
@@ -831,6 +842,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
       }
     } catch (error) {
       app.log.error({ err: error }, "Periodic chat-folder receipt cleanup failed");
+    }
+  try {
+      const deletionResult = accountDeletion.sweep(new Date());
+      if (deletionResult.processed > 0) {
+        app.log.info(deletionResult, "Due account deletions processed");
+      }
+    } catch (error) {
+      app.log.error({ err: error }, "Periodic account deletion sweep failed");
     }
   }, 10 * 60_000);
   cleanupTimer.unref();

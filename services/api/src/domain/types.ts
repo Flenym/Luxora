@@ -601,6 +601,21 @@ export interface ExportChatRow {
 
 export interface ExportAttachmentRow extends AttachmentRecord {}
 
+export type AccountDeletionState = "none" | "scheduled" | "deletion_pending" | "executing" | "completed" | "failed_retryable";
+
+export interface AccountDeletionRecord {
+  accountId: string;
+  state: AccountDeletionState;
+  scheduledAt: string | null;
+  graceDeadlineAt: string | null;
+  scheduledBySessionId: string | null;
+  canceledAt: string | null;
+  executedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  lastError: string | null;
+}
+
 export type RealtimeOutboxFailureCode = "event_unreadable" | "publish_failed";
 
 export type ClaimedRealtimeOutboxEvent =

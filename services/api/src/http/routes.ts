@@ -52,9 +52,11 @@ import {
   UpdateTopicRequestSchema,
   UpsertPushRegistrationSchema,
   VerifyPhoneChallengeSchema,
-  CreateDataExportRequestSchema
+  CreateDataExportRequestSchema,
+  ScheduleAccountDeletionRequestSchema
 } from "@luxora/protocol";
-import type { DataExportState } from "@luxora/protocol";
+import type { AccountDeletionState, DataExportState } from "@luxora/protocol";
+import type { AccountDeletionService } from "../services/account-deletion-service.js";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import type { Store } from "../domain/store.js";
@@ -109,6 +111,7 @@ interface RouteDependencies {
   storage: StorageProvider;
   metrics: Metrics;
   dataExports: DataExportService;
+  accountDeletion: AccountDeletionService;
   serverSearchConfigured: boolean;
   authGuard: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
 }
@@ -983,6 +986,26 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     }
     return reply.send(download.content.stream);
   });
+
+  app.post("/v1/account/deletion", { preHandler: dependencies.authGuard }, async (request, reply) => {
+    ScheduleAccountDeletionRequestSchema.parse(request.body ?? {});
+    const record = dependencies.accountDeletion.scheduleAccountDeletion(
+      request.auth.userId,
+      request.auth.sessionId ?? "",
+      new Date()
+    );
+    return reply.code(201).send({ deletion: mapAccountDeletionRecord(record) });
+  });
+
+  app.get("/v1/account/deletion", { preHandler: dependencies.authGuard }, async (request) => {
+    const status = dependencies.accountDeletion.getStatus(request.auth.userId);
+    return { deletion: mapAccountDeletionRecord(status.record) };
+  });
+
+  app.delete("/v1/account/deletion", { preHandler: dependencies.authGuard }, async (request, reply) => {
+    const record = dependencies.accountDeletion.cancelAccountDeletion(request.auth.userId, new Date());
+    return reply.code(200).send({ deletion: mapAccountDeletionRecord(record) });
+  });
 }
 
 function mapDataExportRecord(record: {
@@ -1012,5 +1035,36 @@ function mapDataExportRecord(record: {
     createdAt: record.createdAt,
     readyAt: record.readyAt,
     expiresAt: record.expiresAt
+  };
+}
+
+function mapAccountDeletionRecord(record: {
+  accountId: string;
+  state: AccountDeletionState;
+  scheduledAt: string | null;
+  graceDeadlineAt: string | null;
+  scheduledBySessionId: string | null;
+  canceledAt: string | null;
+  executedAt: string | null;
+  completedAt: string | null;
+}): {
+  accountId: string;
+  state: AccountDeletionState;
+  scheduledAt: string | null;
+  graceDeadlineAt: string | null;
+  scheduledBySessionId: string | null;
+  canceledAt: string | null;
+  executedAt: string | null;
+  completedAt: string | null;
+} {
+  return {
+    accountId: record.accountId,
+    state: record.state,
+    scheduledAt: record.scheduledAt,
+    graceDeadlineAt: record.graceDeadlineAt,
+    scheduledBySessionId: record.scheduledBySessionId,
+    canceledAt: record.canceledAt,
+    executedAt: record.executedAt,
+    completedAt: record.completedAt
   };
 }

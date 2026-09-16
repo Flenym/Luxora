@@ -727,6 +727,29 @@ and line-delimited JSON entries: `profile.jsonl`, `settings.jsonl`,
 and token/secret material, which are declared in the manifest under
 `omittedCategories`.
 
+### Account deletion
+
+`POST /v1/account/deletion` schedules account deletion for the current user.
+A scheduled deletion enters a seven-day grace period (`state:"scheduled"` with
+`scheduledAt` and `graceDeadlineAt`); while scheduled it can be cancelled with
+`DELETE /v1/account/deletion`, which returns the account to `active`
+(`state:"none"`, `canceledAt` set). Re-scheduling during grace reuses the
+existing record (idempotent). The grace state machine is
+`none → scheduled → deletion_pending → executing → completed | failed_retryable`
+and is driven by a periodic worker.
+
+At the deadline the worker freezes the account: it revokes every active device
+session and push registration, tombstones the profile (`username` becomes a
+reserved `deleted:<id>` value that cannot be looked up or searched, display name
+becomes `Deleted Account`), expires data-export artifacts and marks owned
+attachments deleted. The task state transitions
+`scheduled → deletion_pending → executing → completed`; a task failure leaves a
+retryable `failed_retryable` record with `lastError` and is re-attempted by the
+next sweep. `GET /v1/account/deletion` returns the current record (or
+`state:"none"` when nothing is scheduled). Whole-account access is always bound
+to the current bearer session; a different account cannot read or cancel it
+(`404` on cancel when none is scheduled).
+
 ## 8. Core response shapes
 
 `User`: `id`, `username`, `displayName`, `bio`, legacy nullable `avatarUrl`, authenticated nullable `avatarPath`, `createdAt`, optional presence/lastSeen.
@@ -849,10 +872,10 @@ are retained. These are availability controls, not a distributed risk engine.
 
 Current Docker Node 22 evidence: shared protocol 17 files / 104 tests; folder
 API, storage and independent-writer race suites 3 files / 22 tests; full merged
-API 84 files / 675 tests; and HTTP/realtime authorization matrices 2 files / 16
+API 86 files / 685 tests; and HTTP/realtime authorization matrices 2 files / 16
 tests. The final expiry-purge query-plan check additionally passes 7/7 after the
 full run and proves both paths use their declared indexes without a temporary
-B-tree. The matrices inventory 97 protected HTTP routes, 87 explicit source
+B-tree. The matrices inventory 100 protected HTTP routes, 87 explicit source
 routes and 23 durable realtime audience branches.
 
 `GET /v1/capabilities` is the canonical public discovery contract. It needs no
@@ -872,9 +895,9 @@ The golden response is `packages/protocol/fixtures/capabilities/v1/current.json`
 Public passkeys/WebAuthn, passkey signup/signin/bootstrap/management, recovery,
 user-facing step-up, QR device linking, contact upload, account delete/retention
 workers, push, full moderation workflow, calls and E2EE remain explicitly
-`false` or absent. Account data export is now exposed as plain authenticated
-HTTP routes without a capabilities flag or a worker-backed queue. The
-default-off, non-production internal passkey and
+`false` or absent. Account data export and the account-deletion state machine
+are now exposed as plain authenticated HTTP routes without a capabilities flag
+or a worker-backed queue. The default-off, non-production internal passkey and
 authenticator-management seams do not change that public contract. First-request media, link fetching/previews and malware
 scanning remain disabled; URLs are only syntax-validated and rendered inert.
 Creating similarly named local UI does not extend this API.

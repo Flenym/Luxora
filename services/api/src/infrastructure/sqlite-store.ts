@@ -163,7 +163,9 @@ import type {
   ExportRelationshipRow,
   ExportBlockRow,
   ExportChatRow,
-  ExportAttachmentRow
+  ExportAttachmentRow,
+  AccountDeletionRecord,
+  AccountDeletionState
 } from "../domain/types.js";
 import type { ContentCipher } from "./content-cipher.js";
 import { PlaintextContentCipher } from "./content-cipher.js";
@@ -191,6 +193,20 @@ interface UserRow {
   phone_password_enabled: number;
   created_at: string;
   last_seen_at: string | null;
+  deleted_at: string | null;
+}
+
+interface AccountDeletionRow {
+  account_id: string;
+  state: AccountDeletionState;
+  scheduled_at: string;
+  grace_deadline_at: string | null;
+  scheduled_by_session_id: string;
+  canceled_at: string | null;
+  executed_at: string | null;
+  completed_at: string | null;
+  failed_at: string | null;
+  last_error: string | null;
 }
 
 interface SessionRow {
@@ -7533,7 +7549,7 @@ export class SqliteStore implements Store {
   }
 
   findUserByUsername(normalizedUsername: string): UserRecord | null {
-    const row = this.#db.prepare("SELECT * FROM users WHERE username_normalized = ?")
+    const row = this.#db.prepare("SELECT * FROM users WHERE username_normalized = ? AND deleted_at IS NULL")
       .get(normalizedUsername) as UserRow | undefined;
     return row === undefined ? null : mapUser(row);
   }
@@ -7544,6 +7560,7 @@ export class SqliteStore implements Store {
       FROM users u
       JOIN account_privacy_settings privacy ON privacy.user_id = u.id
       WHERE u.username_normalized = @normalizedUsername
+        AND u.deleted_at IS NULL
         AND (u.id = @viewerUserId OR privacy.username_discoverable = 1)
         AND NOT EXISTS (
           SELECT 1 FROM account_blocks blocks
@@ -7565,6 +7582,7 @@ export class SqliteStore implements Store {
     const rows = this.#db.prepare(`
       SELECT u.* FROM users u
       WHERE u.id <> @viewerUserId
+        AND u.deleted_at IS NULL
         AND (u.username_normalized LIKE @pattern ESCAPE '\\' OR lower(u.display_name) LIKE @pattern ESCAPE '\\')
         AND EXISTS (
           SELECT 1 FROM account_relationships relationships
@@ -10977,5 +10995,169 @@ export class SqliteStore implements Store {
       SELECT * FROM attachments WHERE owner_user_id = @userId AND deleted_at IS NULL
       ORDER BY created_at ASC, id ASC
     `).all({ userId }) as ExportAttachmentRow[];
+  }
+
+  createAccountDeletion(input: {
+    accountId: string;
+    state: "scheduled";
+    scheduledAt: string;
+    graceDeadlineAt: string;
+    scheduledBySessionId: string;
+  }): AccountDeletionRecord {
+    this.#db.prepare(`
+      INSERT INTO account_deletions (
+        account_id, state, scheduled_at, grace_deadline_at, scheduled_by_session_id
+      )
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(account_id) DO UPDATE SET
+        state = 'scheduled',
+        scheduled_at = excluded.scheduled_at,
+        grace_deadline_at = excluded.grace_deadline_at,
+        scheduled_by_session_id = excluded.scheduled_by_session_id,
+        canceled_at = NULL,
+        executed_at = NULL,
+        completed_at = NULL,
+        failed_at = NULL,
+        last_error = NULL
+    `).run(
+      input.accountId,
+      input.state,
+      input.scheduledAt,
+      input.graceDeadlineAt,
+      input.scheduledBySessionId
+    );
+    const record = this.#mapAccountDeletion(input.accountId);
+    if (record === null) throw new Error("Account deletion was not readable");
+    return record;
+  }
+
+  findAccountDeletion(accountId: string): AccountDeletionRecord | null {
+    return this.#mapAccountDeletion(accountId);
+  }
+
+  deleteAccountDeletion(accountId: string): void {
+    this.#db.prepare("DELETE FROM account_deletions WHERE account_id = ?").run(accountId);
+  }
+
+  listDueAccountDeletions(now: string, limit: number): AccountDeletionRecord[] {
+    const bound = Math.max(1, Math.min(limit, 1_000));
+    const rows = this.#db.prepare(`
+      SELECT * FROM account_deletions
+      WHERE state IN ('scheduled', 'deletion_pending', 'executing', 'failed_retryable')
+        AND grace_deadline_at IS NOT NULL
+        AND grace_deadline_at <= @now
+      ORDER BY grace_deadline_at ASC, account_id ASC
+      LIMIT @limit
+    `).all({ now, limit: bound }) as AccountDeletionRow[];
+    return rows.map((row) => this.#mapAccountDeletionFromRow(row));
+  }
+
+  transitionAccountDeletionState(
+    accountId: string,
+    fromState: AccountDeletionState,
+    toState: AccountDeletionState,
+    now: string
+  ): boolean {
+    const result = this.#db.prepare(`
+      UPDATE account_deletions
+      SET state = @toState
+      WHERE account_id = @accountId AND state = @fromState
+    `).run({ accountId, fromState, toState });
+    if (result.changes === 1 && (toState === "deletion_pending" || toState === "executing")) {
+      this.#db.prepare(`
+        UPDATE account_deletions
+        SET executed_at = COALESCE(executed_at, @now)
+        WHERE account_id = @accountId
+      `).run({ accountId, now });
+    }
+    return result.changes === 1;
+  }
+
+  markAccountDeletionCompleted(accountId: string, at: string): boolean {
+    return this.#db.prepare(`
+      UPDATE account_deletions
+      SET state = 'completed', completed_at = COALESCE(completed_at, @at), last_error = NULL
+      WHERE account_id = @accountId AND state = 'executing'
+    `).run({ accountId, at }).changes === 1;
+  }
+
+  markAccountDeletionFailed(accountId: string, error: string, at: string): boolean {
+    return this.#db.prepare(`
+      UPDATE account_deletions
+      SET state = 'failed_retryable', failed_at = @at, last_error = @error
+      WHERE account_id = @accountId AND state IN ('executing', 'deletion_pending', 'failed_retryable')
+    `).run({ accountId, error, at }).changes === 1;
+  }
+
+  revokeAllSessionsForAccount(accountId: string, at: string): void {
+    this.#db.transaction(() => {
+      this.#db.prepare("UPDATE device_sessions SET revoked_at = COALESCE(revoked_at, @at) WHERE user_id = @accountId")
+        .run({ accountId, at });
+      this.#db.prepare(`
+        UPDATE push_registrations
+        SET revoked_at = COALESCE(revoked_at, @at),
+            updated_at = CASE WHEN updated_at < @at THEN @at ELSE updated_at END
+        WHERE user_id = @accountId AND revoked_at IS NULL
+      `).run({ accountId, at });
+    }).immediate();
+  }
+
+  tombstoneAccountProfile(accountId: string, at: string): void {
+    this.#db.prepare(`
+      UPDATE users
+      SET deleted_at = @at,
+          username = 'deleted',
+          username_normalized = @reservedNormalized,
+          display_name = 'Deleted Account',
+          bio = '',
+          avatar_attachment_id = NULL,
+          updated_at = @at
+      WHERE id = @accountId
+    `).run({ accountId, at, reservedNormalized: `deleted:${accountId}` });
+  }
+
+  deletePushRegistrationsForAccount(accountId: string, at: string): void {
+    this.#db.prepare(`
+      UPDATE push_registrations
+      SET revoked_at = COALESCE(revoked_at, @at),
+          updated_at = CASE WHEN updated_at < @at THEN @at ELSE updated_at END
+      WHERE user_id = @accountId AND revoked_at IS NULL
+    `).run({ accountId, at });
+  }
+
+  markOwnedAttachmentsDeletedForAccount(accountId: string, at: string): void {
+    this.#db.prepare(`
+      UPDATE attachments SET deleted_at = COALESCE(deleted_at, @at)
+      WHERE owner_user_id = @accountId AND deleted_at IS NULL
+    `).run({ accountId, at });
+  }
+
+  expireDataExportsForAccount(accountId: string, at: string): void {
+    this.#db.prepare(`
+      UPDATE data_exports
+      SET state = 'expired', deleted_at = COALESCE(deleted_at, @at)
+      WHERE account_id = @accountId AND state != 'expired'
+    `).run({ accountId, at });
+  }
+
+  #mapAccountDeletion(accountId: string): AccountDeletionRecord | null {
+    const row = this.#db.prepare("SELECT * FROM account_deletions WHERE account_id = ?")
+      .get(accountId) as AccountDeletionRow | undefined;
+    return row === undefined ? null : this.#mapAccountDeletionFromRow(row);
+  }
+
+  #mapAccountDeletionFromRow(row: AccountDeletionRow): AccountDeletionRecord {
+    return {
+      accountId: row.account_id,
+      state: row.state,
+      scheduledAt: row.scheduled_at,
+      graceDeadlineAt: row.grace_deadline_at,
+      scheduledBySessionId: row.scheduled_by_session_id,
+      canceledAt: row.canceled_at,
+      executedAt: row.executed_at,
+      completedAt: row.completed_at,
+      failedAt: row.failed_at,
+      lastError: row.last_error
+    };
   }
 }

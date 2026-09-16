@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-16):** account export first slice готов (локально зелёный: protocol 17/104, API 84/675, оба typecheck). Не закоммичен — работа в рабочем дереве.
+**Точка продолжения (обновлено 2026-09-16):** account export first slice (035, `5df2317`, CI PASS) и account deletion state machine first slice (036) готовы. Локально зелёный: protocol 17/104, API 86/685, оба typecheck. Deletion-слайц не закоммичен — работа в рабочем дереве.
 
 ## Как продолжить без потери контекста
 
@@ -8,12 +8,12 @@
 2. Проверь состояние: `git status --short --branch`, `git log --oneline -5`,
    `gh run list --repo Flenym/Luxora --limit 4`.
 3. Канонические контракты: `packages/protocol/src/index.ts`,
-   `services/api/src/infrastructure/migrations.ts` (последняя `035`),
+   `services/api/src/infrastructure/migrations.ts` (последняя `036`),
    `docs/specs/IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md` (частично устарела).
 
 ## Ближайшая очередь
 
-1. Account delete/retention state machine (`none → scheduled → … → completed|failed_retryable`) + media binaries в экспорте.
+1. Media binaries в экспорте + retention workers (deletion ledger, backup replay пока не заявлены).
 2. Media processing остаток (thumbnails/transcode, duration/waveform) → search → calls signaling.
 3. Export/delete, QR-linking, contact discovery.
 4. Финальный QA.
@@ -22,7 +22,7 @@
 
 - Server-first: сначала protocol → migration → store → service → routes → тесты.
 - Перед пушем: `npm --prefix packages/protocol run build`, оба typecheck,
-  **полный** `npm --prefix services/api test` (84 файла / ~3 мин). Частичные
+  **полный** `npm --prefix services/api test` (86 файлов / ~3 мин). Частичные
   прогоны уже дважды давали красный CI.
 - Swift проверить нельзя локально (Windows) — только CI. После правок Swift
   ждать Apple Swift + IPA.
@@ -35,3 +35,4 @@
 - Скачивание: `GET /v1/data-exports/:id/download` (по спеке §14).
 - Шаг-up “phishing_resistant” не реализован как отдельный purpose (StepUpTokenPurpose — только authenticator.add/revoke); честная декларация «сильнейший настроенный аутентификатор + предупреждение о миграции».
 - Экспорт: идемпотентный `POST /v1/data-exports` (reuse последнего ready с живым TTL), state polling, 7-day TTL, manifest SHA-256, NDJSON категории, encrypted-at-rest тела сообщений (сервер не видит plaintext). `omittedCategories:["mediaBinaries","tokens"]`.
+- Deletion: `POST/GET/DELETE /v1/account/deletion`, state machine `none → scheduled → deletion_pending → executing → completed|failed_retryable`, grace 7 дней, cancel только в `scheduled`. Sweep на старте + каждые 10 минут. Tombstone: `username → deleted:{id}`, `display_name → Deleted Account`, `deleted_at` в users + `WHERE deleted_at IS NULL` в lookup (findUserByUsername/Discovery/search). Execution ревокит все sessions + push, tombstone профиль, помечает owned attachments удалёнными, истекает export-артефакты. Step-up “phishing_resistant” в cancel не реализован как отдельный purpose — как у экспорта: сильнейший настроенный аутентификатор + предупреждение о миграции.

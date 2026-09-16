@@ -4139,5 +4139,28 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_data_exports_account
         ON data_exports(account_id, state, created_at);
     `
+  },
+  {
+    id: "036_account_deletion_state_machine",
+    sql: `
+      ALTER TABLE users ADD COLUMN deleted_at TEXT;
+
+      CREATE TABLE account_deletions (
+        account_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        state TEXT NOT NULL CHECK (
+          state IN ('scheduled', 'deletion_pending', 'executing', 'completed', 'failed_retryable')
+        ),
+        scheduled_at TEXT NOT NULL,
+        grace_deadline_at TEXT,
+        scheduled_by_session_id TEXT NOT NULL REFERENCES device_sessions(id) ON DELETE CASCADE,
+        canceled_at TEXT,
+        executed_at TEXT,
+        completed_at TEXT,
+        failed_at TEXT,
+        last_error TEXT
+      ) STRICT;
+      CREATE INDEX idx_account_deletions_deadline
+        ON account_deletions(state, grace_deadline_at);
+    `
   }
 ];

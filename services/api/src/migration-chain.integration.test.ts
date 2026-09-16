@@ -43,7 +43,8 @@ const MIGRATION_IDS = [
   "032_chat_invite_links",
   "033_chat_join_request_approval",
   "034_chat_ownership_transfer",
-  "035_account_data_exports"
+  "035_account_data_exports",
+  "036_account_deletion_state_machine"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";

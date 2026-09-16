@@ -2204,6 +2204,44 @@ export const DataExportStatusResponseSchema = z.object({
   dataExport: DataExportRecordSchema
 });
 
+// Account deletion state machine from IDENTITY_ACCESS §14.2:
+// none -> scheduled -> deletion_pending -> executing -> completed | failed_retryable.
+// A scheduled deletion is cancellable during its grace window with the original
+// scheduling session; after the deadline the account is irrevocably tombstones.
+export const AccountDeletionStateSchema = z.enum([
+  "none",
+  "scheduled",
+  "deletion_pending",
+  "executing",
+  "completed",
+  "failed_retryable"
+]);
+
+export const AccountDeletionRecordSchema = z.object({
+  accountId: IdSchema,
+  state: AccountDeletionStateSchema,
+  scheduledAt: z.string().nullable(),
+  graceDeadlineAt: z.string().nullable(),
+  scheduledBySessionId: z.string().nullable(),
+  canceledAt: z.string().nullable(),
+  executedAt: z.string().nullable(),
+  completedAt: z.string().nullable()
+});
+
+export const AccountDeletionStatusResponseSchema = z.object({
+  deletion: AccountDeletionRecordSchema
+});
+
+export const ScheduleAccountDeletionResponseSchema = z.object({
+  deletion: AccountDeletionRecordSchema
+});
+
+export const CancelAccountDeletionResponseSchema = z.object({
+  deletion: AccountDeletionRecordSchema
+});
+
+export const ScheduleAccountDeletionRequestSchema = z.object({}).strict();
+
 export const MessageRequestStateSchema = z.enum([
   "pending",
   "accepted",
@@ -3152,3 +3190,9 @@ export type DataExportRecord = z.infer<typeof DataExportRecordSchema>;
 export type CreateDataExportRequest = z.infer<typeof CreateDataExportRequestSchema>;
 export type DataExportRequestResponse = z.infer<typeof DataExportRequestResponseSchema>;
 export type DataExportStatusResponse = z.infer<typeof DataExportStatusResponseSchema>;
+export type AccountDeletionState = z.infer<typeof AccountDeletionStateSchema>;
+export type AccountDeletionRecord = z.infer<typeof AccountDeletionRecordSchema>;
+export type AccountDeletionStatusResponse = z.infer<typeof AccountDeletionStatusResponseSchema>;
+export type ScheduleAccountDeletionResponse = z.infer<typeof ScheduleAccountDeletionResponseSchema>;
+export type CancelAccountDeletionResponse = z.infer<typeof CancelAccountDeletionResponseSchema>;
+export type ScheduleAccountDeletionRequest = z.infer<typeof ScheduleAccountDeletionRequestSchema>;

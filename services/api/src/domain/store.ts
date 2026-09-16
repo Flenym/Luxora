@@ -89,7 +89,9 @@ import type {
   ExportRelationshipRow,
   ExportBlockRow,
   ExportChatRow,
-  ExportAttachmentRow
+  ExportAttachmentRow,
+  AccountDeletionRecord,
+  AccountDeletionState
 } from "./types.js";
 
 export interface NewUser {
@@ -1242,4 +1244,31 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   listExportBlocks(userId: string): ExportBlockRow[];
   listExportChats(userId: string): ExportChatRow[];
   listAllOwnedAttachments(userId: string): ExportAttachmentRow[];
+
+  // Account deletion state machine (§14.2)
+  createAccountDeletion(input: {
+    accountId: string;
+    state: "scheduled";
+    scheduledAt: string;
+    graceDeadlineAt: string;
+    scheduledBySessionId: string;
+  }): AccountDeletionRecord;
+  findAccountDeletion(accountId: string): AccountDeletionRecord | null;
+  deleteAccountDeletion(accountId: string): void;
+  listDueAccountDeletions(now: string, limit: number): AccountDeletionRecord[];
+  transitionAccountDeletionState(
+    accountId: string,
+    fromState: AccountDeletionState,
+    toState: AccountDeletionState,
+    now: string
+  ): boolean;
+  markAccountDeletionCompleted(accountId: string, at: string): boolean;
+  markAccountDeletionFailed(accountId: string, error: string, at: string): boolean;
+
+  // Deletion execution helpers
+  revokeAllSessionsForAccount(accountId: string, at: string): void;
+  tombstoneAccountProfile(accountId: string, at: string): void;
+  deletePushRegistrationsForAccount(accountId: string, at: string): void;
+  markOwnedAttachmentsDeletedForAccount(accountId: string, at: string): void;
+  expireDataExportsForAccount(accountId: string, at: string): void;
 }

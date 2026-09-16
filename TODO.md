@@ -48,6 +48,22 @@
 > known-users (`2/1` через relationships), files (`1/1/1` по трём загрузкам).
 > API 82 файла / 669 тестов PASS (плюс 1 инфраструктурный flake vitest-worker
 > `onTaskUpdate` на Windows — не тестовая ошибка, все тесты зелёные).
+>
+> **Дополнение 2026-09-16 (account data export, DONE, main зелёный CI):**
+> export first slice (035) закоммичен `5df2317`, push на main, оба CI PASS.
+> API 84 файла / 675 тестов PASS, protocol 17/104 PASS. Скачивание
+> `/v1/data-exports/:id/download` приведено к спеке §14 (`/download` не `/content`).
+> Идемпотентный POST, 7-day TTL, manifest SHA-256, NDJSON, encrypted-at-rest bodies,
+> `omittedCategories:["mediaBinaries","tokens"]`.
+>
+> **Дополнение 2026-09-16 (account deletion state machine first slice, DONE, локально зелёный):**
+> account deletion state machine: migration `036` (`account_deletions` + `users.deleted_at`),
+> protocol `AccountDeletion*` схемы, `AccountDeletionService` с schedule/status/cancel/sweep,
+> 3 HTTP routes (`POST/GET/DELETE /v1/account/deletion`), sweeper по образцу passkey-свиперов,
+> unit-тесты 7/7 + интеграционные 3/3. Authorization matrix 3 маршрута → 100 protected routes.
+> Tombstone-подход: `username → deleted:{id}`, `display_name → Deleted Account`, `deleted_at` +
+> `WHERE deleted_at IS NULL` в lookup queries. API 86 файлов / 685 тестов PASS, protocol 17/104 PASS,
+> оба typecheck PASS. Осталось: media binaries в экспорте, retention workers.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
@@ -79,8 +95,8 @@
 - [ ] Media processing остаток: thumbnails, duration/waveform на сервере, quarantine/transcode pipeline
 - [x] Search pagination convergence (messages/people/files); остаток: contacts/address-book policy
 - [ ] Calls signaling + state machine + честный UI (SFU/TURN — по готовности инфры)
-- [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON (profile/settings/sessions/relationships/blocks/chats/messages/media-meta), 7-day TTL, Range download; остаток — delete/retention state machine и mediaBinaries
-- [ ] Account delete/retention (осталось: deletion state machine `none → scheduled → … → completed|failed_retryable`, media binaries в экспорте, retention workers)
+- [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON (profile/settings/sessions/relationships/blocks/chats/messages/media-meta), 7-day TTL, Range download; остаток — media binaries в экспорте
+- [x] Account deletion state machine first slice (036): state machine `none → scheduled → … → completed|failed_retryable`, grace 7 дней, cancel, sweep, tombstone-подход, routes + unit/integration тесты; остаток — media binaries в экспорте и retention workers
 - [ ] QR device linking + security event/device compromise flow
 - [ ] Privacy-preserving contact discovery/upload
 
@@ -191,7 +207,7 @@
 - [ ] Multi-process/production-database request/report nonce and accept-vs-block fault-injection evidence.
 - [ ] Privacy-preserving contact discovery/upload design and abuse evidence.
 - [x] Account export first slice (035: create/status/content, async tar.gz + manifest/SHA-256, NDJSON categories, 7-day TTL, Range download, stranger 404).
-- [ ] Account delete/retention state machine and media binaries in export.
+- [x] Account deletion state machine first slice (036: schedule/status/cancel/sweep, grace 7d, tombstone, session revoke, push/attachment/export cleanup, unit+integration tests, auth matrix 100 routes). Осталось: media binaries в экспорте и retention workers.
 
 ## Server Phase 3 — complete chat/community domain
 

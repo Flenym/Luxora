@@ -1,14 +1,14 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-16 ~15:00 UTC · `main` — account export first slice, API 84/675 зелёный локально
+**Обновлено:** 2026-09-16 · `main` — account export 035 + account deletion state machine 036, API 86/685 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
 
-- **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `035_account_data_exports`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
+- **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `036_account_deletion_state_machine`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
 - **Protocol:** `@luxora/protocol` — строгие zod-контракты (17 файлов / 104 теста).
 - **iPhone:** Swift 6 `LuxoraKit` + `LuxoraMobile`, Keychain-сессии, серверные stores, DEBUG-фикстуры только для геометрии.
-- **Проверено:** API 84 файла / 675 тестов PASS (локально Windows), protocol 17/104, оба typecheck PASS. CI: следить по пушу.
+- **Проверено:** API 86 файлов / 685 тестов PASS (локально Windows), protocol 17/104, оба typecheck PASS. CI: по пушу после export (обоих воркфлоу PASS).
 
 ## Что работает (end-to-end, с тестами)
 
@@ -35,7 +35,8 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
-- Account export first slice (локально зелёный): `POST /v1/data-exports` (идемпотентный, 201), async tar.gz сборка, `manifest.json` с per-file SHA-256 + `omittedCategories:["mediaBinaries","tokens"]`, NDJSON profile/settings/sessions/relationships/blocks/chats/messages/media, 7-day TTL, `GET .../:id` polling, `GET .../:id/download` Range+no-store+ETag (по спеке §14), stranger `404`.
+- Account deletion state machine first slice (локально зелёный): migration `036` (`account_deletions` + `users.deleted_at`), protocol `AccountDeletion*` схемы, `AccountDeletionService` (schedule/status/cancel/sweep), 3 HTTP routes `POST/GET/DELETE /v1/account/deletion`, sweep по образцу passkey-свиперов, grace 7 дней. Execution: revoke всех sessions + push, tombstone profile (`deleted:{id}`, `Deleted Account`, `deleted_at`, lookup `WHERE deleted_at IS NULL`), expire export artifacts, mark owned attachments deleted. Authorization matrix 3 маршрута → 100 protected routes. Unit 7/7 + integration 3/3; полный API 86 файлов / 685 тестов PASS.
+- Account export first slice (DONE, CI PASS): `POST /v1/data-exports` (идемпотентный, 201), async tar.gz сборка, `manifest.json` с per-file SHA-256 + `omittedCategories:["mediaBinaries","tokens"]`, NDJSON profile/settings/sessions/relationships/blocks/chats/messages/media, 7-day TTL, `GET .../:id` polling, `GET .../:id/download` Range+no-store+ETag (по спеке §14), stranger `404`. Коммит `5df2317`, push на main, оба CI workflow success.
 - Search pagination convergence (локально зелёный): messages global+scoped `2/2/1`, known-users `2/1`, files `1/1/1`, garbage cursor `400`.
 - Media: server-verified image dimensions (локально зелёный): zero-dependency PNG/GIF/WebP/JPEG-парсер, mismatch `400`, adopt + `server_verified`, AVIF/HEIC честно `client_declared`.
 - Voice playback round-trip (локально зелёный): multi-chunk out-of-order upload → consent-send → receiver `206` + sha-точное скачивание → transcript-конвергенция, stranger `404`. CI-red Swift-фикс (`await` вне XCTAssert) — Apple Swift success в CI.
@@ -49,5 +50,5 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Следующий приоритет (порядок)
 
-1. Account delete/retention state machine (`none → scheduled → … → completed|failed_retryable`) + media binaries в экспорте.
+1. Media binaries в экспорте + retention workers (deletion ledger, backup replay не заявлены).
 2. Media processing остаток (thumbnails/transcode, duration/waveform) → calls signaling.
