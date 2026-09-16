@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-16):** account export first slice (035, `5df2317`, CI PASS) и account deletion state machine first slice (036) готовы. Локально зелёный: protocol 17/104, API 86/685, оба typecheck. Deletion-слайц не закоммичен — работа в рабочем дереве.
+**Точка продолжения (обновлено 2026-09-16):** export (035, `5df2317`, CI PASS), account deletion state machine (036) и media binaries в экспорте готовы. Локально зелёный: protocol 17/104 build, API 86/685, оба typecheck. Deletion и media-binaries слайцы не закоммичены — работа в рабочем дереве.
 
 ## Как продолжить без потери контекста
 
@@ -13,7 +13,7 @@
 
 ## Ближайшая очередь
 
-1. Media binaries в экспорте + retention workers (deletion ledger, backup replay пока не заявлены).
+1. Retention workers (deletion ledger, TTL) — медиа-бинары в экспорте уже сделаны.
 2. Media processing остаток (thumbnails/transcode, duration/waveform) → search → calls signaling.
 3. Export/delete, QR-linking, contact discovery.
 4. Финальный QA.
@@ -34,5 +34,4 @@
 
 - Скачивание: `GET /v1/data-exports/:id/download` (по спеке §14).
 - Шаг-up “phishing_resistant” не реализован как отдельный purpose (StepUpTokenPurpose — только authenticator.add/revoke); честная декларация «сильнейший настроенный аутентификатор + предупреждение о миграции».
-- Экспорт: идемпотентный `POST /v1/data-exports` (reuse последнего ready с живым TTL), state polling, 7-day TTL, manifest SHA-256, NDJSON категории, encrypted-at-rest тела сообщений (сервер не видит plaintext). `omittedCategories:["mediaBinaries","tokens"]`.
-- Deletion: `POST/GET/DELETE /v1/account/deletion`, state machine `none → scheduled → deletion_pending → executing → completed|failed_retryable`, grace 7 дней, cancel только в `scheduled`. Sweep на старте + каждые 10 минут. Tombstone: `username → deleted:{id}`, `display_name → Deleted Account`, `deleted_at` в users + `WHERE deleted_at IS NULL` в lookup (findUserByUsername/Discovery/search). Execution ревокит все sessions + push, tombstone профиль, помечает owned attachments удалёнными, истекает export-артефакты. Step-up “phishing_resistant” в cancel не реализован как отдельный purpose — как у экспорта: сильнейший настроенный аутентификатор + предупреждение о миграции.
+- Export/Delete done: `POST/GET/DELETE /v1/account/deletion`, state machine `none → scheduled → deletion_pending → executing → completed|failed_retryable`, grace 7 дней, cancel только в `scheduled`. Sweep на старте + каждые 10 минут. Tombstone: `username → deleted:{id}`, `display_name → Deleted Account`, `deleted_at` в users + `WHERE deleted_at IS NULL` в lookup (findUserByUsername/Discovery/search). Execution ревокит все sessions + push, tombstone профиль, помечает owned attachments удалёнными, истекает export-артефакты. Step-up “phishing_resistant” в cancel не реализован как отдельный purpose — как у экспорта: сильнейший настроенный аутентификатор + предупреждение о миграции.

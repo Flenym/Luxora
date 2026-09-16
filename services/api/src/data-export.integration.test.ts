@@ -29,8 +29,8 @@ function decompress(bytes: Buffer): Promise<Buffer> {
   });
 }
 
-function parseTarFiles(bytes: Buffer): Map<string, string> {
-  const files = new Map<string, string>();
+function parseTarFiles(bytes: Buffer): Map<string, Buffer> {
+  const files = new Map<string, Buffer>();
   let offset = 0;
   while (offset < bytes.length) {
     const header = bytes.subarray(offset, offset + BLOCK_SIZE);
@@ -39,7 +39,7 @@ function parseTarFiles(bytes: Buffer): Map<string, string> {
     const size = parseInt(header.subarray(124, 136).toString("ascii").replace(/[^\d]/gu, "").padStart(1, "0"), 8);
     offset += BLOCK_SIZE;
     const padded = Math.ceil(size / BLOCK_SIZE) * BLOCK_SIZE;
-    files.set(name, bytes.subarray(offset, offset + size).toString("utf8"));
+    files.set(name, bytes.subarray(offset, offset + size));
     offset += padded;
   }
   return files;
@@ -115,6 +115,57 @@ describe("data export", () => {
     return response.json().message.id as string;
   }
 
+  async function uploadPng(identity: Identity, fileName = "exported.png"): Promise<{ id: string; sha256: string }> {
+    const PNG = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+      0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41,
+      0x54, 0x08, 0x1d, 0x01, 0x1f, 0x00, 0xe0, 0xff,
+      0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+      0xae, 0x42, 0x60, 0x82
+    ]);
+    const digest = sha256(PNG);
+    const upload = await app!.inject({
+      method: "POST",
+      url: "/v1/uploads",
+      headers: auth(identity),
+      payload: {
+        kind: "image",
+        fileName,
+        mimeType: "image/png",
+        sizeBytes: PNG.length,
+        sha256: digest,
+        idempotencyKey: randomUUID(),
+        metadata: {}
+      }
+    });
+    expect(upload.statusCode, upload.body).toBe(201);
+    const uploadId = upload.json().upload.id as string;
+    const chunk = await app!.inject({
+      method: "PUT",
+      url: `/v1/uploads/${uploadId}/chunks/0`,
+      headers: {
+        ...auth(identity),
+        "content-type": "application/octet-stream",
+        "content-range": `bytes 0-${PNG.length - 1}/${PNG.length}`,
+        "content-length": String(PNG.length),
+        "x-chunk-sha256": digest
+      },
+      payload: PNG
+    });
+    expect(chunk.statusCode, chunk.body).toBe(200);
+    const complete = await app!.inject({
+      method: "POST",
+      url: `/v1/uploads/${uploadId}/complete`,
+      headers: auth(identity)
+    });
+    expect(complete.statusCode, complete.body).toBe(200);
+    const attachmentId = complete.json().upload.attachment.id as string;
+    return { id: attachmentId, sha256: digest };
+  }
+
   it("builds a ready archive with manifest and own-message lines, supports range download, and hides it from strangers", async () => {
     await boot();
     const alice = await register("alice_exportd");
@@ -122,6 +173,7 @@ describe("data export", () => {
     const chatId = await createDirectChat(alice, bob);
     await sendText(alice, chatId, "first exportable line");
     await sendText(bob, chatId, "peer line that must not leak as own message");
+    const media = await uploadPng(alice);
 
     const request = await app!.inject({
       method: "POST",
@@ -158,12 +210,12 @@ describe("data export", () => {
     const files = parseTarFiles(await decompress(archive));
     expect(files.has("manifest.json")).toBe(true);
     expect(files.has("messages.jsonl")).toBe(true);
-    const messages = files.get("messages.jsonl")!.trim().split("\n").map((line) => JSON.parse(line) as { body: string; chatId: string });
+    const messages = files.get("messages.jsonl")!.toString("utf8").trim().split("\n").map((line) => JSON.parse(line) as { body: string; chatId: string });
     expect(messages.length).toBeGreaterThanOrEqual(1);
     expect(messages.every((m) => typeof m.body === "string" && m.body.startsWith("luxora:"))).toBe(true);
     expect(messages.every((m) => typeof m.chatId === "string" && m.chatId.length > 0)).toBe(true);
 
-    const manifest = JSON.parse(files.get("manifest.json")!) as {
+    const manifest = JSON.parse(files.get("manifest.json")!.toString("utf8")) as {
       schemaVersion: number;
       accountId: string;
       includedCategories: string[];
@@ -173,8 +225,18 @@ describe("data export", () => {
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.accountId).toBe(alice.id);
     expect(manifest.includedCategories).toContain("messages");
-    expect(manifest.omittedCategories).toContain("mediaBinaries");
+    expect(manifest.includedCategories).toContain("mediaBinaries");
+    expect(manifest.omittedCategories).not.toContain("mediaBinaries");
+    expect(manifest.omittedCategories).toContain("tokens");
     expect(manifest.files.some((file) => file.path === "messages.jsonl")).toBe(true);
+    expect(manifest.files.some((file) => file.path === `media/${media.id}/exported.png`)).toBe(true);
+
+    const mediaFiles = [...files.keys()].filter((path) => path.startsWith("media/"));
+    expect(mediaFiles).toHaveLength(1);
+    const mediaPath = mediaFiles[0]!;
+    const mediaBytes = files.get(mediaPath)!;
+    expect(sha256(mediaBytes)).toBe(media.sha256);
+    expect(files.get("media.jsonl")!.toString("utf8").includes(media.id)).toBe(true);
 
     const stranger = await register("carol");
     const strangerStatus = await app!.inject({

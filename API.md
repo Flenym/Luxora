@@ -723,9 +723,11 @@ containing `manifest.json` (per-file SHA-256 plus included/omitted categories)
 and line-delimited JSON entries: `profile.jsonl`, `settings.jsonl`,
 `sessions.jsonl`, `relationships.jsonl`, `blocks.jsonl`, `chats.jsonl`,
 `messages.jsonl` and `media.jsonl`. Messages are exported as stored
-(encrypted-at-rest) payloads; this slice intentionally omits media binaries
-and token/secret material, which are declared in the manifest under
-`omittedCategories`.
+(encrypted-at-rest) payloads. Owned attachment binaries are included as
+`media/<attachmentId>/<fileName>` entries whose per-file SHA-256 lets the
+client verify them against `media.jsonl`; missing or resized objects fail the
+export rather than silently omitting data. Only token/secret material is
+declared in the manifest under `omittedCategories`.
 
 ### Account deletion
 

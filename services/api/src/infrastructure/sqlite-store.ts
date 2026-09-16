@@ -10991,10 +10991,11 @@ export class SqliteStore implements Store {
   }
 
   listAllOwnedAttachments(userId: string): ExportAttachmentRow[] {
-    return this.#db.prepare(`
+    const rows = this.#db.prepare(`
       SELECT * FROM attachments WHERE owner_user_id = @userId AND deleted_at IS NULL
       ORDER BY created_at ASC, id ASC
-    `).all({ userId }) as ExportAttachmentRow[];
+    `).all({ userId }) as AttachmentRow[];
+    return rows.map((row) => this.#mapAttachment(row));
   }
 
   createAccountDeletion(input: {

@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import type { Store } from "../domain/store.js";
 import type { StorageProvider, ByteRange, StorageReadResult } from "../infrastructure/storage.js";
 import { notFound, conflict, serviceUnavailable } from "../errors.js";
-import { buildManifest, buildTarGzip } from "./export-archive.js";
+import { buildManifest, buildTarGzip, readableToBuffer } from "./export-archive.js";
 import type { DataExportRecord } from "../domain/types.js";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -75,6 +75,7 @@ export class DataExportService {
       const addEntry = async (name: string, data: Buffer, mimeType: string): Promise<void> => {
         const sha = createHash("sha256").update(data).digest("hex");
         const filePath = join(tmpDir, name);
+        await mkdir(dirname(filePath), { recursive: true });
         await writeFile(filePath, data);
         manifestFiles.push({ path: name, sha256: sha, mimeType, sizeBytes: data.length });
       };
@@ -120,8 +121,21 @@ export class DataExportService {
         id: a.id, kind: a.kind, fileName: a.fileName, detectedMimeType: a.detectedMimeType, sizeBytes: a.sizeBytes, sha256: a.sha256, createdAt: a.createdAt, deletedAt: a.deletedAt
       }))), "application/x-ndjson");
 
-      const includedCategories = ["profile", "settings", "sessions", "relationships", "blocks", "chats", "messages", "mediaMetadata"];
-      const omittedCategories = ["mediaBinaries", "tokens"];
+      for (const attachment of attachments) {
+        const read = await this.storage.read(attachment.storageKey, attachment.sizeBytes, attachment.sha256);
+        const bytes = await readableToBuffer(read.stream);
+        if (bytes.length !== attachment.sizeBytes) {
+          throw serviceUnavailable(`Media binary size mismatch for attachment ${attachment.id}`);
+        }
+        await addEntry(
+          `media/${attachment.id}/${attachment.fileName}`,
+          bytes,
+          attachment.detectedMimeType
+        );
+      }
+
+      const includedCategories = ["profile", "settings", "sessions", "relationships", "blocks", "chats", "messages", "mediaMetadata", "mediaBinaries"];
+      const omittedCategories = ["tokens"];
       const manifestData = buildManifest({
         schemaVersion: 1,
         accountId: userId,

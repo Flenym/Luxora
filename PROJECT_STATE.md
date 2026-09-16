@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-16 · `main` — account export 035 + account deletion state machine 036, API 86/685 зелёный локально
+**Обновлено:** 2026-09-16 · `main` — export 035 + deletion 036 + media binaries, API 86/685 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,8 +35,9 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Media binaries в экспорте (локально зелёный, 86/685): `listAllOwnedAttachments` маппится через `#mapAttachment` (camelCase + расшифровка имён), бинарники в архиве как `media/<attachmentId>/<fileName>`, per-file SHA-256 в manifest, расхождение размера объекта фейлит экспорт (503) вместо тихой потери. Экспорт-тест теперь грузит PNG и сверяет его в архиве. `omittedCategories` остался `["tokens"]`.
 - Account deletion state machine first slice (локально зелёный): migration `036` (`account_deletions` + `users.deleted_at`), protocol `AccountDeletion*` схемы, `AccountDeletionService` (schedule/status/cancel/sweep), 3 HTTP routes `POST/GET/DELETE /v1/account/deletion`, sweep по образцу passkey-свиперов, grace 7 дней. Execution: revoke всех sessions + push, tombstone profile (`deleted:{id}`, `Deleted Account`, `deleted_at`, lookup `WHERE deleted_at IS NULL`), expire export artifacts, mark owned attachments deleted. Authorization matrix 3 маршрута → 100 protected routes. Unit 7/7 + integration 3/3; полный API 86 файлов / 685 тестов PASS.
-- Account export first slice (DONE, CI PASS): `POST /v1/data-exports` (идемпотентный, 201), async tar.gz сборка, `manifest.json` с per-file SHA-256 + `omittedCategories:["mediaBinaries","tokens"]`, NDJSON profile/settings/sessions/relationships/blocks/chats/messages/media, 7-day TTL, `GET .../:id` polling, `GET .../:id/download` Range+no-store+ETag (по спеке §14), stranger `404`. Коммит `5df2317`, push на main, оба CI workflow success.
+- Account export first slice (DONE, CI PASS): `POST /v1/data-exports` (идемпотентный, 201), async tar.gz сборка, `manifest.json` с per-file SHA-256 + `omittedCategories:["tokens"]`, NDJSON profile/settings/sessions/relationships/blocks/chats/messages/media, 7-day TTL, `GET .../:id` polling, `GET .../:id/download` Range+no-store+ETag (по спеке §14), stranger `404`. Коммит `5df2317`, push на main, оба CI workflow success.
 - Search pagination convergence (локально зелёный): messages global+scoped `2/2/1`, known-users `2/1`, files `1/1/1`, garbage cursor `400`.
 - Media: server-verified image dimensions (локально зелёный): zero-dependency PNG/GIF/WebP/JPEG-парсер, mismatch `400`, adopt + `server_verified`, AVIF/HEIC честно `client_declared`.
 - Voice playback round-trip (локально зелёный): multi-chunk out-of-order upload → consent-send → receiver `206` + sha-точное скачивание → transcript-конвергенция, stranger `404`. CI-red Swift-фикс (`await` вне XCTAssert) — Apple Swift success в CI.
@@ -50,5 +51,5 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Следующий приоритет (порядок)
 
-1. Media binaries в экспорте + retention workers (deletion ledger, backup replay не заявлены).
+1. Retention workers (deletion ledger, TTL) — медиа-бинары в экспорте уже сделаны.
 2. Media processing остаток (thumbnails/transcode, duration/waveform) → calls signaling.
