@@ -2178,6 +2178,32 @@ export const SearchQuerySchema = CursorQuerySchema.extend({
   chatId: IdSchema.optional()
 });
 
+// Account data export: a single authenticated artifact built server-side and
+// deleted after a short TTL. The client asks for the export (idempotently
+// returning the latest live artifact) and later downloads it with byte-range
+// support. No token, password, passkey, raw-IP or other-user restricted data
+// is ever included by the builder.
+export const DataExportStateSchema = z.enum(["pending", "ready", "expired"]);
+
+export const DataExportRecordSchema = z.object({
+  id: IdSchema,
+  state: DataExportStateSchema,
+  createdAt: z.string(),
+  readyAt: z.string().nullable(),
+  expiresAt: z.string().nullable(),
+  sizeBytes: z.number().int().nullable()
+});
+
+export const CreateDataExportRequestSchema = z.object({}).strict();
+
+export const DataExportRequestResponseSchema = z.object({
+  dataExport: DataExportRecordSchema
+});
+
+export const DataExportStatusResponseSchema = z.object({
+  dataExport: DataExportRecordSchema
+});
+
 export const MessageRequestStateSchema = z.enum([
   "pending",
   "accepted",
@@ -3121,3 +3147,8 @@ export type ClientRealtimeMessage = z.infer<typeof ClientRealtimeMessageSchema>;
 export type ServerRealtimeMessage = z.infer<typeof ServerRealtimeMessageSchema>;
 export type IA1ServerRealtimeMessage = z.infer<typeof IA1ServerRealtimeMessageSchema>;
 export type ServerRealtimeMessageV2 = z.infer<typeof ServerRealtimeMessageV2Schema>;
+export type DataExportState = z.infer<typeof DataExportStateSchema>;
+export type DataExportRecord = z.infer<typeof DataExportRecordSchema>;
+export type CreateDataExportRequest = z.infer<typeof CreateDataExportRequestSchema>;
+export type DataExportRequestResponse = z.infer<typeof DataExportRequestResponseSchema>;
+export type DataExportStatusResponse = z.infer<typeof DataExportStatusResponseSchema>;

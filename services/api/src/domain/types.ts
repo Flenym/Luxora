@@ -545,6 +545,62 @@ export interface StoredEvent {
   createdAt: string;
 }
 
+export type DataExportState = "pending" | "ready" | "expired";
+
+export interface DataExportRecord {
+  id: string;
+  accountId: string;
+  state: DataExportState;
+  objectKey: string;
+  sizeBytes: number | null;
+  sha256: string | null;
+  createdAt: string;
+  readyAt: string | null;
+  expiresAt: string | null;
+  deletedAt: string | null;
+}
+
+export interface DataExportRow {
+  id: string;
+  account_id: string;
+  state: DataExportState;
+  object_key: string;
+  size_bytes: number | null;
+  sha256: string | null;
+  created_at: string;
+  ready_at: string | null;
+  expires_at: string | null;
+  deleted_at: string | null;
+}
+
+export interface ExportMessageRow {
+  id: string;
+  chatId: string;
+  body: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export interface ExportRelationshipRow {
+  peerUserId: string;
+  createdAt: string;
+}
+
+export interface ExportBlockRow {
+  blockedUserId: string;
+  createdAt: string;
+}
+
+export interface ExportChatRow {
+  chatId: string;
+  kind: string;
+  title: string | null;
+  memberSince: string;
+}
+
+export interface ExportAttachmentRow extends AttachmentRecord {}
+
 export type RealtimeOutboxFailureCode = "event_unreadable" | "publish_failed";
 
 export type ClaimedRealtimeOutboxEvent =

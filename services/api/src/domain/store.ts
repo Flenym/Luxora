@@ -83,7 +83,13 @@ import type {
   TopicRecord,
   UploadChunkRecord,
   UploadSessionRecord,
-  UserRecord
+  UserRecord,
+  DataExportRecord,
+  ExportMessageRow,
+  ExportRelationshipRow,
+  ExportBlockRow,
+  ExportChatRow,
+  ExportAttachmentRow
 } from "./types.js";
 
 export interface NewUser {
@@ -1218,4 +1224,22 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     at: string,
     failureCode: RealtimeOutboxFailureCode
   ): boolean;
+
+  createDataExport(input: {
+    id: string;
+    accountId: string;
+    objectKey: string;
+    createdAt: string;
+  }): DataExportRecord;
+  findDataExport(accountId: string, id: string): DataExportRecord | null;
+  findLatestReadyExport(accountId: string): DataExportRecord | null;
+  markDataExportReady(id: string, sizeBytes: number, sha256: string, readyAt: string, expiresAt: string): boolean;
+  expireDataExport(id: string, at: string): boolean;
+  listExpiredDataExports(before: string, limit: number): DataExportRecord[];
+
+  listExportMessages(userId: string): ExportMessageRow[];
+  listExportRelationships(userId: string): ExportRelationshipRow[];
+  listExportBlocks(userId: string): ExportBlockRow[];
+  listExportChats(userId: string): ExportChatRow[];
+  listAllOwnedAttachments(userId: string): ExportAttachmentRow[];
 }

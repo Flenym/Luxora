@@ -486,7 +486,10 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
   { key: "GET /v1/safety/reports", method: "GET", url: "/v1/safety/reports" },
   { key: "GET /v2/sync/chats", method: "GET", url: "/v2/sync/chats" },
   { key: "GET /v2/sync/blocks", method: "GET", url: "/v2/sync/blocks" },
-  { key: "GET /v2/sync/snapshot", method: "GET", url: "/v2/sync/snapshot" }
+  { key: "GET /v2/sync/snapshot", method: "GET", url: "/v2/sync/snapshot" },
+  { key: "POST /v1/data-exports", method: "POST", url: "/v1/data-exports", payload: {} },
+  { key: "GET /v1/data-exports/:id", method: "GET", url: `/v1/data-exports/${RESOURCE_ID_CANARY}` },
+  { key: "GET /v1/data-exports/:id/download", method: "GET", url: `/v1/data-exports/${RESOURCE_ID_CANARY}/download` }
 ];
 
 interface Identity {
@@ -634,7 +637,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(94);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(97);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

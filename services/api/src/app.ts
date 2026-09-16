@@ -43,6 +43,7 @@ import { AuthService } from "./services/auth-service.js";
 import { ChatFolderService } from "./services/chat-folder-service.js";
 import { ChatDraftService } from "./services/chat-draft-service.js";
 import { ChatService } from "./services/chat-service.js";
+import { DataExportService } from "./services/data-export-service.js";
 import { IdentityAccessService } from "./services/identity-access-service.js";
 import { NotificationService } from "./services/notification-service.js";
 import { PasskeyAuthenticatorManagementService } from "./services/passkey-authenticator-management-service.js";
@@ -443,6 +444,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const notifications = new NotificationService(store);
   const uploads = await UploadService.create(store, storage, searchHasher, outbox, config);
   const attachments = new AttachmentService(store, storage);
+  const dataExports = new DataExportService(store, storage);
   const profileAvatars = new ProfileAvatarService(
     store,
     storage,
@@ -635,6 +637,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     admin,
     storage,
     metrics,
+    dataExports,
     serverSearchConfigured: searchHasher.available,
     authGuard
   });

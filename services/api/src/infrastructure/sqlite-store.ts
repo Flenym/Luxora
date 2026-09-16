@@ -156,7 +156,14 @@ import type {
   TopicRecord,
   UploadChunkRecord,
   UploadSessionRecord,
-  UserRecord
+  UserRecord,
+  DataExportRecord,
+  DataExportRow,
+  ExportMessageRow,
+  ExportRelationshipRow,
+  ExportBlockRow,
+  ExportChatRow,
+  ExportAttachmentRow
 } from "../domain/types.js";
 import type { ContentCipher } from "./content-cipher.js";
 import { PlaintextContentCipher } from "./content-cipher.js";
@@ -10855,5 +10862,120 @@ export class SqliteStore implements Store {
       case "chat.draft.changed": return `${event.chatId}:${event.accountId}`;
       case "sync.invalidated": return event.accountId;
     }
+  }
+
+  #mapDataExport(row: DataExportRow): DataExportRecord {
+    return {
+      id: row.id,
+      accountId: row.account_id,
+      state: row.state,
+      objectKey: row.object_key,
+      sizeBytes: row.size_bytes,
+      sha256: row.sha256,
+      createdAt: row.created_at,
+      readyAt: row.ready_at,
+      expiresAt: row.expires_at,
+      deletedAt: row.deleted_at,
+    };
+  }
+
+  createDataExport(input: {
+    id: string;
+    accountId: string;
+    objectKey: string;
+    createdAt: string;
+  }): DataExportRecord {
+    this.#db.prepare(`
+      INSERT INTO data_exports (id, account_id, state, object_key, created_at)
+      VALUES (@id, @accountId, 'pending', @objectKey, @createdAt)
+    `).run({ id: input.id, accountId: input.accountId, objectKey: input.objectKey, createdAt: input.createdAt });
+    const row = this.#db.prepare(
+      `SELECT * FROM data_exports WHERE id = ?`
+    ).get(input.id) as DataExportRow;
+    return this.#mapDataExport(row);
+  }
+
+  findDataExport(accountId: string, id: string): DataExportRecord | null {
+    const row = this.#db.prepare(
+      `SELECT * FROM data_exports WHERE id = ? AND account_id = ?`
+    ).get(id, accountId) as DataExportRow | undefined;
+    return row !== undefined ? this.#mapDataExport(row) : null;
+  }
+
+  findLatestReadyExport(accountId: string): DataExportRecord | null {
+    const row = this.#db.prepare(
+      `SELECT * FROM data_exports WHERE account_id = ? AND state = 'ready' AND deleted_at IS NULL ORDER BY ready_at DESC, id DESC LIMIT 1`
+    ).get(accountId) as DataExportRow | undefined;
+    return row !== undefined ? this.#mapDataExport(row) : null;
+  }
+
+  markDataExportReady(id: string, sizeBytes: number, sha256: string, readyAt: string, expiresAt: string): boolean {
+    const result = this.#db.prepare(`
+      UPDATE data_exports SET state = 'ready', size_bytes = @sizeBytes, sha256 = @sha256, ready_at = @readyAt, expires_at = @expiresAt
+      WHERE id = @id AND state = 'pending'
+    `).run({ id, sizeBytes, sha256, readyAt, expiresAt });
+    return result.changes === 1;
+  }
+
+  expireDataExport(id: string, at: string): boolean {
+    const result = this.#db.prepare(`
+      UPDATE data_exports SET state = 'expired', deleted_at = @at
+      WHERE id = @id AND state = 'ready'
+    `).run({ id, at });
+    return result.changes === 1;
+  }
+
+  listExpiredDataExports(before: string, limit: number): DataExportRecord[] {
+    const rows = this.#db.prepare(`
+      SELECT * FROM data_exports WHERE state = 'ready' AND expires_at IS NOT NULL AND expires_at <= @before
+      ORDER BY expires_at ASC, id ASC LIMIT @limit
+    `).all({ before, limit }) as DataExportRow[];
+    return rows.map((row) => this.#mapDataExport(row));
+  }
+
+  listExportMessages(userId: string): ExportMessageRow[] {
+    return this.#db.prepare(`
+      SELECT m.id, m.chat_id AS chatId, m.body, m.created_at AS createdAt, m.updated_at AS updatedAt, m.deleted_at AS deletedAt
+      FROM messages m
+      WHERE m.sender_id = @userId AND m.deleted_at IS NULL
+      ORDER BY m.created_at ASC, m.id ASC
+    `).all({ userId }) as ExportMessageRow[];
+  }
+
+  listExportRelationships(userId: string): ExportRelationshipRow[] {
+    return this.#db.prepare(`
+      SELECT
+        CASE WHEN left_user_id = @userId THEN right_user_id ELSE left_user_id END AS peerUserId,
+        created_at AS createdAt
+      FROM account_relationships
+      WHERE left_user_id = @userId OR right_user_id = @userId
+      ORDER BY created_at ASC, peerUserId ASC
+    `).all({ userId }) as ExportRelationshipRow[];
+  }
+
+  listExportBlocks(userId: string): ExportBlockRow[] {
+    return this.#db.prepare(`
+      SELECT blocked_user_id AS blockedUserId, created_at AS createdAt
+      FROM account_blocks
+      WHERE blocker_user_id = @userId
+      ORDER BY created_at ASC, blocked_user_id ASC
+    `).all({ userId }) as ExportBlockRow[];
+  }
+
+  listExportChats(userId: string): ExportChatRow[] {
+    return this.#db.prepare(`
+      SELECT c.id AS chatId, c.kind, c.title, cm.joined_at AS memberSince
+      FROM chats c
+      JOIN chat_members cm ON cm.chat_id = c.id
+      WHERE cm.user_id = @userId
+      ORDER BY cm.joined_at ASC, c.id ASC
+    `).all({ userId }) as ExportChatRow[];
+  }
+
+  listAllOwnedAttachments(userId: string): ExportAttachmentRow[] {
+    return this.#db.prepare(`
+      SELECT * FROM attachments WHERE owner_user_id = @userId AND deleted_at IS NULL
+      ORDER BY created_at ASC, id ASC
+    `).all({ userId }) as ExportAttachmentRow[];
   }
 }

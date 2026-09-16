@@ -4120,5 +4120,24 @@ export const migrations: Migration[] = [
         SELECT RAISE(ABORT, 'chat owner transfer requires a dedicated ceremony');
       END;
     `
+  },
+  {
+    id: "035_account_data_exports",
+    sql: `
+      CREATE TABLE data_exports (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'ready', 'expired')),
+        object_key TEXT NOT NULL,
+        size_bytes INTEGER,
+        sha256 TEXT,
+        created_at TEXT NOT NULL,
+        ready_at TEXT,
+        expires_at TEXT,
+        deleted_at TEXT
+      ) STRICT;
+      CREATE INDEX idx_data_exports_account
+        ON data_exports(account_id, state, created_at);
+    `
   }
 ];

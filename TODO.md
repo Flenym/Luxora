@@ -79,7 +79,8 @@
 - [ ] Media processing остаток: thumbnails, duration/waveform на сервере, quarantine/transcode pipeline
 - [x] Search pagination convergence (messages/people/files); остаток: contacts/address-book policy
 - [ ] Calls signaling + state machine + честный UI (SFU/TURN — по готовности инфры)
-- [ ] Account export/delete/retention + data inventory
+- [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON (profile/settings/sessions/relationships/blocks/chats/messages/media-meta), 7-day TTL, Range download; остаток — delete/retention state machine и mediaBinaries
+- [ ] Account delete/retention (осталось: deletion state machine `none → scheduled → … → completed|failed_retryable`, media binaries в экспорте, retention workers)
 - [ ] QR device linking + security event/device compromise flow
 - [ ] Privacy-preserving contact discovery/upload
 
@@ -189,7 +190,8 @@
 - [x] Independent two-connection SQLite writer races return the first message-request/report result for identical nonces and stable conflict for changed fingerprints.
 - [ ] Multi-process/production-database request/report nonce and accept-vs-block fault-injection evidence.
 - [ ] Privacy-preserving contact discovery/upload design and abuse evidence.
-- [ ] Account export/delete/retention and data inventory.
+- [x] Account export first slice (035: create/status/content, async tar.gz + manifest/SHA-256, NDJSON categories, 7-day TTL, Range download, stranger 404).
+- [ ] Account delete/retention state machine and media binaries in export.
 
 ## Server Phase 3 — complete chat/community domain
 

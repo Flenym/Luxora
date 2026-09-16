@@ -703,6 +703,30 @@ Completed image uploads carry server-measured `width`/`height` with
 disagrees with the bytes is rejected with `400`); unmeasurable formats
 honestly keep `client_declared`.
 
+### Account data export
+
+`POST /v1/data-exports` requests an on-demand export archive. It is
+idempotent: repeated requests reuse the most recent `ready` export while it is
+still valid and return `201` with the same record. A fresh export is built
+asynchronously over an in-process queue; polling `GET /v1/data-exports/:id`
+until `state` leaves `pending` is the delivery mechanism. A ready export
+expires after 7 days; expired archives become `state:"expired"` and the next
+request rebuilds them. Whole-account access is always bound to the current
+bearer session and record ownership; a stranger's attempt returns `404`.
+
+The response record is `{id,state,sizeBytes,sha256,createdAt,readyAt,expiresAt}`.
+`GET /v1/data-exports/:id/download` downloads the artifact as
+`application/gzip` with `Cache-Control: private, no-store`, an ETag equal to
+the SHA-256, `Accept-Ranges: bytes` and byte-range `206` responses, so a large
+archive can be resumed or hashed incrementally. The archive is a `.tar.gz`
+containing `manifest.json` (per-file SHA-256 plus included/omitted categories)
+and line-delimited JSON entries: `profile.jsonl`, `settings.jsonl`,
+`sessions.jsonl`, `relationships.jsonl`, `blocks.jsonl`, `chats.jsonl`,
+`messages.jsonl` and `media.jsonl`. Messages are exported as stored
+(encrypted-at-rest) payloads; this slice intentionally omits media binaries
+and token/secret material, which are declared in the manifest under
+`omittedCategories`.
+
 ## 8. Core response shapes
 
 `User`: `id`, `username`, `displayName`, `bio`, legacy nullable `avatarUrl`, authenticated nullable `avatarPath`, `createdAt`, optional presence/lastSeen.
@@ -823,12 +847,12 @@ are retained. These are availability controls, not a distributed risk engine.
 
 `/v1/realtime` remains the strict messaging stream and skips additive identity/membership/preference/folder durable events. `/v2/realtime` is additive and accepts messaging plus `chat.member.changed`, `chat.preferences.updated`, `chat.folders.updated`, `relationship.request.created|removed|accepted|expired`, `relationship.block.changed`, and `safety.report.submitted`; explicit audience fields are enforced by server routing and re-authorized against current state before live/replay dispatch. Request removal is recipient-account-only and carries no dismissal reason. Sender-visible dismissal, block-target and report-subject events intentionally do not exist.
 
-Current Docker Node 22 evidence: shared protocol 10 files / 84 tests; folder
+Current Docker Node 22 evidence: shared protocol 17 files / 104 tests; folder
 API, storage and independent-writer race suites 3 files / 22 tests; full merged
-API 67 files / 592 tests; and HTTP/realtime authorization matrices 2 files / 14
+API 84 files / 675 tests; and HTTP/realtime authorization matrices 2 files / 16
 tests. The final expiry-purge query-plan check additionally passes 7/7 after the
 full run and proves both paths use their declared indexes without a temporary
-B-tree. The matrices inventory 71 protected HTTP routes, 84 explicit source
+B-tree. The matrices inventory 97 protected HTTP routes, 87 explicit source
 routes and 23 durable realtime audience branches.
 
 `GET /v1/capabilities` is the canonical public discovery contract. It needs no
@@ -846,9 +870,11 @@ build or an unproved security posture.
 The golden response is `packages/protocol/fixtures/capabilities/v1/current.json`.
 
 Public passkeys/WebAuthn, passkey signup/signin/bootstrap/management, recovery,
-user-facing step-up, QR device linking, contact upload, export/delete/retention
+user-facing step-up, QR device linking, contact upload, account delete/retention
 workers, push, full moderation workflow, calls and E2EE remain explicitly
-`false` or absent. The default-off, non-production internal passkey and
+`false` or absent. Account data export is now exposed as plain authenticated
+HTTP routes without a capabilities flag or a worker-backed queue. The
+default-off, non-production internal passkey and
 authenticator-management seams do not change that public contract. First-request media, link fetching/previews and malware
 scanning remain disabled; URLs are only syntax-validated and rendered inert.
 Creating similarly named local UI does not extend this API.

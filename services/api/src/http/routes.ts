@@ -51,8 +51,10 @@ import {
   UpdateChatMemberRoleRequestSchema,
   UpdateTopicRequestSchema,
   UpsertPushRegistrationSchema,
-  VerifyPhoneChallengeSchema
+  VerifyPhoneChallengeSchema,
+  CreateDataExportRequestSchema
 } from "@luxora/protocol";
+import type { DataExportState } from "@luxora/protocol";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import type { Store } from "../domain/store.js";
@@ -71,6 +73,7 @@ import type { PhoneAuthService } from "../services/phone-auth-service.js";
 import type { ProfileAvatarService } from "../services/profile-avatar-service.js";
 import type { SearchService } from "../services/search-service.js";
 import type { UploadService } from "../services/upload-service.js";
+import type { DataExportService } from "../services/data-export-service.js";
 import { createIdentityRateLimitGuards } from "./identity-rate-limit.js";
 
 const IdParamSchema = z.object({ id: IdSchema });
@@ -105,6 +108,7 @@ interface RouteDependencies {
   admin: AdminService;
   storage: StorageProvider;
   metrics: Metrics;
+  dataExports: DataExportService;
   serverSearchConfigured: boolean;
   authGuard: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
 }
@@ -940,4 +944,73 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { emoji } = ReactionRequestSchema.parse(request.body);
     return { items: dependencies.chats.setReaction(request.auth.userId, messageId, emoji, false) };
   });
+
+  app.post("/v1/data-exports", { preHandler: dependencies.authGuard }, async (request, reply) => {
+    const parsed = CreateDataExportRequestSchema.parse(request.body ?? {});
+    void parsed;
+    const record = await dependencies.dataExports.requestExport(request.auth.userId);
+    return reply.code(201).send({ dataExport: mapDataExportRecord(record) });
+  });
+
+  app.get("/v1/data-exports/:id", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const record = dependencies.dataExports.getStatus(request.auth.userId, id);
+    return { dataExport: mapDataExportRecord(record) };
+  });
+
+  app.get("/v1/data-exports/:id/download", {
+    onRequest: [async (_request, reply) => {
+      reply
+        .header("accept-ranges", "bytes")
+        .header("cache-control", "private, no-store")
+        .header("x-content-type-options", "nosniff");
+    }, dependencies.authGuard]
+  }, async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const record = dependencies.dataExports.getStatus(request.auth.userId, id);
+    const range = parseDownloadRange(request.headers.range, record.sizeBytes ?? 0, reply);
+    const download = await dependencies.dataExports.download(request.auth.userId, id, range);
+    reply
+      .header("content-disposition", `attachment; filename="luxora-export-${record.id}.tar.gz"`)
+      .header("content-length", download.content.contentLength)
+      .header("content-type", "application/gzip")
+      .header("etag", `"${record.sha256 ?? ""}"`);
+    if (download.content.range !== null) {
+      reply.code(206).header(
+        "content-range",
+        `bytes ${download.content.range.start}-${download.content.range.end}/${download.content.totalSize}`
+      );
+    }
+    return reply.send(download.content.stream);
+  });
+}
+
+function mapDataExportRecord(record: {
+  id: string;
+  accountId: string;
+  state: DataExportState;
+  objectKey: string;
+  sizeBytes: number | null;
+  sha256: string | null;
+  createdAt: string;
+  readyAt: string | null;
+  expiresAt: string | null;
+}): {
+  id: string;
+  state: DataExportState;
+  sizeBytes: number | null;
+  sha256: string | null;
+  createdAt: string;
+  readyAt: string | null;
+  expiresAt: string | null;
+} {
+  return {
+    id: record.id,
+    state: record.state,
+    sizeBytes: record.sizeBytes,
+    sha256: record.sha256,
+    createdAt: record.createdAt,
+    readyAt: record.readyAt,
+    expiresAt: record.expiresAt
+  };
 }
