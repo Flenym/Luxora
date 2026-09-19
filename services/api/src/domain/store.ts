@@ -1284,6 +1284,7 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   loadCallAggregate(callId: string): CallAggregate | null;
   findCallIdByRoomName(roomName: string): string | null;
   listLiveCallsForChat(chatId: string): CallAggregate[];
+  listStaleReconnectingCalls(beforeIso: string, limit: number): CallAggregate[];
   findCallCommandReceipt(scope: string): CommandReceipt | null;
   findCallCreationReceipt(scope: string): CreationReceipt | null;
   commitCallMutation(input: PersistCallMutation): void;

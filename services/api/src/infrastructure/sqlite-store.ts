@@ -11180,19 +11180,22 @@ export class SqliteStore implements Store {
   // Call control records (CALLS_PLATFORM §7). Snapshots, events, outbox
   // payloads and receipts are written atomically; the executor reconciles
   // CAS-before-receipt and receipt-before-CAS orderings on conflict.
+  #mapCallAggregate(snapshotJson: string): CallAggregate {
+    try {
+      const snapshot = JSON.parse(snapshotJson) as CallAggregate;
+      assertCallInvariants(snapshot);
+      return snapshot;
+    } catch {
+      throw serviceUnavailable("Call record is corrupt");
+    }
+  }
+
   loadCallAggregate(callId: string): CallAggregate | null {
     const row = this.#db.prepare(`
       SELECT snapshot_json FROM calls WHERE call_id = ?
     `).get(callId) as { snapshot_json: string } | undefined;
     if (row === undefined) return null;
-    let snapshot: CallAggregate;
-    try {
-      snapshot = JSON.parse(row.snapshot_json) as CallAggregate;
-      assertCallInvariants(snapshot);
-    } catch {
-      throw serviceUnavailable("Call record is corrupt");
-    }
-    return snapshot;
+    return this.#mapCallAggregate(row.snapshot_json);
   }
 
   findCallIdByRoomName(roomName: string): string | null {
@@ -11208,15 +11211,22 @@ export class SqliteStore implements Store {
       WHERE chat_id = @chatId AND json_extract(snapshot_json, '$.state') != 'ended'
       ORDER BY created_at ASC, call_id ASC
     `).all({ chatId }) as Array<{ snapshot_json: string }>;
-    return rows.map((row) => {
-      try {
-        const snapshot = JSON.parse(row.snapshot_json) as CallAggregate;
-        assertCallInvariants(snapshot);
-        return snapshot;
-      } catch {
-        throw serviceUnavailable("Call record is corrupt");
-      }
-    });
+    return rows.map((row) => this.#mapCallAggregate(row.snapshot_json));
+  }
+
+  listStaleReconnectingCalls(beforeIso: string, limit: number): CallAggregate[] {
+    const rows = this.#db.prepare(`
+      SELECT snapshot_json FROM calls
+      WHERE updated_at <= @beforeIso
+        AND json_extract(snapshot_json, '$.state') IN ('active', 'reconnecting')
+        AND EXISTS (
+          SELECT 1 FROM json_each(snapshot_json, '$.participants')
+          WHERE json_extract(value, '$.status') = 'reconnecting'
+        )
+      ORDER BY updated_at ASC, call_id ASC
+      LIMIT @limit
+    `).all({ beforeIso, limit }) as Array<{ snapshot_json: string }>;
+    return rows.map((row) => this.#mapCallAggregate(row.snapshot_json));
   }
 
   findCallCommandReceipt(scope: string): CallCommandReceipt | null {

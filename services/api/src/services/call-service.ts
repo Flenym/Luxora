@@ -334,6 +334,49 @@ export class CallService {
   }
 
   /**
+   * Crash-cleanup sweeper: calls stuck with a `reconnecting` participant and
+   * no state change for longer than `timeoutMs` are ended with
+   * `network-timeout` (system media-plane actor) and finalized. Bounded per
+   * sweep; failures are counted for the caller to log. Runs on the shared
+   * 10-minute cleanup timer.
+   */
+  async sweepStaleReconnecting(now: Date, timeoutMs: number, limit = 100): Promise<{ ended: number; failures: number }> {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 60_000) {
+      throw new Error("Stale reconnecting timeout must be at least one minute");
+    }
+    const beforeIso = new Date(now.getTime() - timeoutMs).toISOString();
+    let ended = 0;
+    let failures = 0;
+    for (const known of this.#store.listStaleReconnectingCalls(beforeIso, limit)) {
+      try {
+        const latest = this.#store.loadCallAggregate(known.callId);
+        if (latest === null) continue;
+        if (
+          (latest.state !== "active" && latest.state !== "reconnecting") ||
+          !latest.participants.some((participant) => participant.status === "reconnecting")
+        ) {
+          continue;
+        }
+        const ending = await this.#executor.execute({
+          schemaVersion: CALL_CONTROL_VERSION,
+          commandId: randomUUID(),
+          actor: { kind: "system", subject: "media-plane" },
+          expectedRevision: latest.revision,
+          type: "end_call",
+          reason: "network-timeout",
+          callId: known.callId
+        });
+        await this.#finishEndingIfNeeded(ending.snapshot.callId, ending.snapshot);
+        ended += 1;
+      } catch (error) {
+        if (error instanceof CallControlError) continue;
+        failures += 1;
+      }
+    }
+    return { ended, failures };
+  }
+
+  /**
    * Membership-service reconciliation (CALLS_PLATFORM §5 rule 4): after a
    * chat member is removed, every live call in that chat revokes the
    * member's call memberships (epoch bump, media participant out). Session

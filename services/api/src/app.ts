@@ -79,6 +79,7 @@ export interface LuxoraApp extends FastifyInstance {
     outbox: RealtimeOutboxPublisher;
     storage: StorageProvider;
     uploads: UploadService;
+    calls: CallService;
   };
 }
 
@@ -472,7 +473,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const search = new SearchService(store, searchHasher);
   const admin = new AdminService(store);
   const authGuard = createAuthGuard(security, store);
-  app.luxora = { config, store, metrics, hub, outbox, storage, uploads };
+  app.luxora = { config, store, metrics, hub, outbox, storage, uploads, calls };
 
   app.addContentTypeParser("application/octet-stream", {
     parseAs: "buffer",
@@ -887,8 +888,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
       if (retentionResult.expired > 0 || retentionResult.deleted > 0 || retentionResult.failures > 0) {
         app.log.info(retentionResult, "Data export retention sweep completed");
       }
+    }).catch((error: unknown) => {      app.log.error({ err: error }, "Periodic data export retention sweep failed");
+    });
+    void calls.sweepStaleReconnecting(new Date(), 10 * 60_000).then((reconnectResult) => {
+      if (reconnectResult.ended > 0 || reconnectResult.failures > 0) {
+        app.log.info(reconnectResult, "Stale reconnecting calls swept");
+      }
     }).catch((error: unknown) => {
-      app.log.error({ err: error }, "Periodic data export retention sweep failed");
+      app.log.error({ err: error }, "Periodic stale call sweep failed");
     });
   }, 10 * 60_000);
   cleanupTimer.unref();
