@@ -111,6 +111,16 @@
 > auth-матрица 101→105 protected routes; полный API 92 файла / 706 тестов PASS,
 > protocol 17/104 PASS, оба typecheck PASS. CI: Node PASS, Security FAIL (Docker-образ
 > не копировал `@luxora/call-control`) → фикс: Dockerfile + .dockerignore + DEPLOY.md.
+>
+> **Дополнение 2026-09-19 (calls signaling slice 2, DONE, локально зелёный):**
+> групповые звонки (kind из chat kind; invitees — участники с live-сессией,
+> `unreachableMemberIds` в ответе, 409 если некого звать, 403 при блоке);
+> `POST .../ring` (host, created→inviting→ringing, повторный ring конвергентен),
+> `POST .../accept` (→connecting), `POST .../decline` (1:1 → ended с reason,
+> группа продолжает звонить остальным); protocol `CreateCallResponse.unreachableMemberIds`
+> + `DeclineCallRequestSchema`; матрица 105→108. `calls-signaling.integration` 5/5,
+> полный API 92 файла / 708 тестов PASS. Честный остаток — join-grants, webhooks,
+> push/ringing-доставка.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

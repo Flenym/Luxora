@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s) готовы и запушены. Calls signaling first slice DONE локально (uncommitted). Локально зелёный: protocol 17/104 build, API 92/706, оба typecheck; последняя миграция 038 (`038_call_control_records`). CI calls-слайса: Node PASS, Security FAIL (Docker без call-control) → фикс в рабочем дереве.
+**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s) готовы и запушены. Calls signaling first slice DONE локально (uncommitted). Локально зелёный: protocol 17/104 build, API 92/708, оба typecheck; последняя миграция 038 (`038_call_control_records`). CI calls-слайса: Node PASS, Security FAIL (Docker без call-control) → фикс в `7c4552f`; slice 2 uncommitted.
 
 ## Как продолжить без потери контекста
 
@@ -13,7 +13,7 @@
 
 ## Ближайшая очередь
 
-1. Calls signaling slice 1 DONE локально (uncommitted): create/get/cancel/hangup поверх call-control executor готовы; остаток — invite/accept/ring + grants + webhooks + push, затем search.
+1. Calls signaling slices 1–2 DONE локально (uncommitted): create/get/cancel/hangup + group + ring/accept/decline; остаток — invite_participant endpoint, join-grants, webhooks, push/ringing-доставка, затем search.
 2. Export/delete, QR-linking, contact discovery.
 3. Финальный QA.
 

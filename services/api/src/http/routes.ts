@@ -56,6 +56,7 @@ import {
   ScheduleAccountDeletionRequestSchema,
   CreateCallRequestSchema,
   CancelCallRequestSchema,
+  DeclineCallRequestSchema,
   HangupCallRequestSchema
 } from "@luxora/protocol";
 import type { AccountDeletionState, DataExportState } from "@luxora/protocol";
@@ -1035,7 +1036,7 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   }, async (request, reply) => {
     const input = CreateCallRequestSchema.parse(request.body);
     const result = await dependencies.calls.createCall(request.auth.userId, request.auth.sessionId, input);
-    return reply.code(201).send({ call: result.call, replayed: result.replayed });
+    return reply.code(201).send({ call: result.call, replayed: result.replayed, unreachableMemberIds: result.unreachableMemberIds });
   });
 
   app.get("/v1/calls/:id", { preHandler: dependencies.authGuard }, async (request) => {
@@ -1059,6 +1060,33 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { id } = IdParamSchema.parse(request.params);
     const input = HangupCallRequestSchema.parse(request.body);
     return { call: await dependencies.calls.hangupCall(request.auth.userId, request.auth.sessionId, id, input) };
+  });
+
+  app.post("/v1/calls/:id/ring", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = CancelCallRequestSchema.parse(request.body);
+    return { call: await dependencies.calls.ringCall(request.auth.userId, request.auth.sessionId, id, input.expectedRevision) };
+  });
+
+  app.post("/v1/calls/:id/accept", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = CancelCallRequestSchema.parse(request.body);
+    return { call: await dependencies.calls.acceptCall(request.auth.userId, request.auth.sessionId, id, input.expectedRevision) };
+  });
+
+  app.post("/v1/calls/:id/decline", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = DeclineCallRequestSchema.parse(request.body);
+    return { call: await dependencies.calls.declineCall(request.auth.userId, request.auth.sessionId, id, input) };
   });
 }
 

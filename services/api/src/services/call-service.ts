@@ -10,6 +10,7 @@ import {
   CallResponseSchema,
   type CallResponse as ProtocolCallResponse,
   type HangupCallRequest,
+  type DeclineCallRequest,
   type CreateCallRequest
 } from "@luxora/protocol";
 import type { Store } from "../domain/store.js";
@@ -20,6 +21,7 @@ export interface CreateCallInput extends CreateCallRequest {}
 export interface CallMutationResult {
   call: ProtocolCallResponse;
   replayed: boolean;
+  unreachableMemberIds: string[];
 }
 
 function projectCall(snapshot: CallAggregate): ProtocolCallResponse {
@@ -83,18 +85,31 @@ export class CallService {
     if (this.#store.getChatMember(input.chatId, userId) === null) {
       throw forbidden("You are not a member of this chat");
     }
-    if (chat.kind !== "direct") {
-      throw badRequest("Calls are limited to direct chats in this slice");
+    if (chat.kind !== "direct" && chat.kind !== "group") {
+      throw badRequest("Calls are limited to direct and group chats in this slice");
     }
     const peerIds = this.#store.listChatMemberIds(input.chatId).filter((memberId) => memberId !== userId);
-    const peerId = peerIds.length === 1 ? peerIds[0] as string : undefined;
-    if (peerId === undefined) throw badRequest("Direct chat must have exactly one peer");
-    if (this.#store.isBlockedBetween(userId, peerId)) {
-      throw forbidden("Call is not allowed under the current block policy");
+    if (chat.kind === "direct" && peerIds.length !== 1) {
+      throw badRequest("Direct chat must have exactly one peer");
     }
-    const peerDeviceId = this.#store.listSessions(peerId, "").at(0)?.id;
-    if (peerDeviceId === undefined) {
-      throw conflict("Peer has no active session to invite yet");
+    if (peerIds.length < 1) throw badRequest("Call requires at least one other member");
+    for (const peerId of peerIds) {
+      if (this.#store.isBlockedBetween(userId, peerId as string)) {
+        throw forbidden("Call is not allowed under the current block policy");
+      }
+    }
+    const invitees: Array<{ memberId: string; deviceId: string }> = [];
+    const unreachableMemberIds: string[] = [];
+    for (const peerId of peerIds) {
+      const deviceId = this.#store.listSessions(peerId as string, "").at(0)?.id;
+      if (deviceId === undefined) {
+        unreachableMemberIds.push(peerId as string);
+      } else {
+        invitees.push({ memberId: peerId as string, deviceId });
+      }
+    }
+    if (invitees.length < 1) {
+      throw conflict("No reachable member to invite yet");
     }
 
     try {
@@ -106,13 +121,13 @@ export class CallService {
         type: "create_call",
         clientNonce: input.clientNonce,
         conversationId: input.chatId,
-        kind: "one_to_one",
+        kind: chat.kind === "direct" ? "one_to_one" : "group",
         mediaMode: input.mediaMode,
-        invitees: [{ memberId: peerId, deviceId: peerDeviceId }],
+        invitees,
         scheduledStartAtMs: null,
         metadata: {}
       });
-      return { call: projectCall(executed.snapshot), replayed: executed.replayed };
+      return { call: projectCall(executed.snapshot), replayed: executed.replayed, unreachableMemberIds };
     } catch (error) {
       throw this.#mapError(error, null);
     }
@@ -154,6 +169,98 @@ export class CallService {
         expectedRevision: input.expectedRevision,
         type: "hangup",
         scope: input.scope,
+        callId
+      });
+      return await this.#finishEndingIfNeeded(executed.snapshot.callId, executed.snapshot);
+    } catch (error) {
+      throw this.#mapError(error, callId);
+    }
+  }
+
+  /**
+   * Host-driven advance to `ringing`. State-aware: resumes from `inviting`
+   * when a previous attempt committed only the first step.
+   */
+  async ringCall(
+    userId: string,
+    sessionId: string,
+    callId: string,
+    expectedRevision: number
+  ): Promise<ProtocolCallResponse> {
+    const current = this.#requireParticipantCall(userId, callId);
+    const actor = { kind: "participant", memberId: userId, deviceId: sessionId, sessionId } as const;
+    try {
+      let snapshot = current;
+      let revision = expectedRevision;
+      if (snapshot.state === "created") {
+        const inviting = await this.#executor.execute({
+          schemaVersion: CALL_CONTROL_VERSION,
+          commandId: randomUUID(),
+          actor,
+          expectedRevision: revision,
+          type: "start_inviting",
+          callId
+        });
+        snapshot = inviting.snapshot;
+        revision = snapshot.revision;
+      }
+      if (snapshot.state === "inviting") {
+        const ringing = await this.#executor.execute({
+          schemaVersion: CALL_CONTROL_VERSION,
+          commandId: randomUUID(),
+          actor,
+          expectedRevision: revision,
+          type: "start_ringing",
+          callId
+        });
+        snapshot = ringing.snapshot;
+      }
+      if (snapshot.state !== "ringing") {
+        throw conflict("Call is not in a ringable state", { call: projectCall(snapshot) });
+      }
+      return projectCall(snapshot);
+    } catch (error) {
+      throw this.#mapError(error, callId);
+    }
+  }
+
+  async acceptCall(
+    userId: string,
+    sessionId: string,
+    callId: string,
+    expectedRevision: number
+  ): Promise<ProtocolCallResponse> {
+    this.#requireParticipantCall(userId, callId);
+    try {
+      const executed = await this.#executor.execute({
+        schemaVersion: CALL_CONTROL_VERSION,
+        commandId: randomUUID(),
+        actor: { kind: "participant", memberId: userId, deviceId: sessionId, sessionId },
+        expectedRevision,
+        type: "accept",
+        callId
+      });
+      return projectCall(executed.snapshot);
+    } catch (error) {
+      throw this.#mapError(error, callId);
+    }
+  }
+
+  async declineCall(
+    userId: string,
+    sessionId: string,
+    callId: string,
+    input: DeclineCallRequest
+  ): Promise<ProtocolCallResponse> {
+    this.#requireParticipantCall(userId, callId);
+    try {
+      const executed = await this.#executor.execute({
+        schemaVersion: CALL_CONTROL_VERSION,
+        commandId: randomUUID(),
+        actor: { kind: "participant", memberId: userId, deviceId: sessionId, sessionId },
+        expectedRevision: input.expectedRevision,
+        type: "decline",
+        reason: input.reason,
         callId
       });
       return await this.#finishEndingIfNeeded(executed.snapshot.callId, executed.snapshot);

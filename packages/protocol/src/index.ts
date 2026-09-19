@@ -2329,7 +2329,8 @@ export const CreateCallRequestSchema = z.object({
 
 export const CreateCallResponseSchema = z.object({
   call: CallResponseSchema,
-  replayed: z.boolean()
+  replayed: z.boolean(),
+  unreachableMemberIds: z.array(IdSchema)
 });
 
 export const CallStatusResponseSchema = z.object({
@@ -2338,6 +2339,11 @@ export const CallStatusResponseSchema = z.object({
 
 export const CancelCallRequestSchema = z.object({
   expectedRevision: z.number().int().nonnegative()
+}).strict();
+
+export const DeclineCallRequestSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  reason: z.enum(["declined", "busy"])
 }).strict();
 
 export const HangupCallRequestSchema = z.object({
@@ -3311,4 +3317,5 @@ export type CreateCallRequest = z.infer<typeof CreateCallRequestSchema>;
 export type CreateCallResponse = z.infer<typeof CreateCallResponseSchema>;
 export type CallStatusResponse = z.infer<typeof CallStatusResponseSchema>;
 export type CancelCallRequest = z.infer<typeof CancelCallRequestSchema>;
+export type DeclineCallRequest = z.infer<typeof DeclineCallRequestSchema>;
 export type HangupCallRequest = z.infer<typeof HangupCallRequestSchema>;

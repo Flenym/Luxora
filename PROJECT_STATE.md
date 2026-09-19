@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Calls signaling slice 2 DONE (локально, uncommitted, 92/708): групповые звонки, `POST .../ring|accept|decline`, convergent re-ring, `unreachableMemberIds`, матрица 105→108, `calls-signaling.integration` 5/5. Остаток — join-grants, webhooks, push-доставка.
 - Calls signaling first slice DONE (локально, uncommitted): миграция `038_call_control_records`, `CallService` поверх `@luxora/call-control` executor + SQLite-адаптер, маршруты create/get/cancel/hangup, `calls-signaling.integration` 3/3, auth-матрица 101→105, остаток — invite/ring/push/grants/webhooks.
 - WAV duration verification DONE (локально, uncommitted): pure-TS `measureWavDuration` (RIFF walk, PCM/float/extensible), `complete()` для `audio`/`voice` + `audio/wav` принимает измеренный durationMs + `server_verified`, остальной audio/waveform честно `client_declared`; тесты 4/4 + 1/1 (5000ms claim → 1000ms measured), API typecheck clean.
 - Image thumbnails (`8bae86a`, CI PASS оба воркфлоу: Node/Web/Desktop 4m27s, Security 2m31s, 89/698): sharp-JPEG 320px q80 в `complete()` для image >320px (best-effort), `GET /v1/attachments/:id/thumbnail` owner-or-granted (stranger 404/anonymous 401, no-store), protocol `thumbnailPath?` + `thumbnail{sha256,sizeBytes,width,height}?`, без миграции, orphan/export покрытие, AVIF/HEIC + audio/video duration/waveform честно `client_declared`.

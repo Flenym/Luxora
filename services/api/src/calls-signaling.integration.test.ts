@@ -106,6 +106,7 @@ describe("calls signaling first slice", () => {
     expect(first.status, JSON.stringify(first.body)).toBe(201);
     const created = (first.body as { call: CallPayload; replayed: boolean }).call;
     expect((first.body as { replayed: boolean }).replayed).toBe(false);
+    expect((first.body as { unreachableMemberIds: string[] }).unreachableMemberIds).toEqual([]);
     expect(created.kind).toBe("one_to_one");
     expect(created.state).toBe("created");
     expect(created.revision).toBe(1);
@@ -214,22 +215,12 @@ describe("calls signaling first slice", () => {
       .toBe(hungUp.revision);
   });
 
-  it("rejects group chats, unknown chats, blocked peers and unreachable peers", async () => {
+  it("rejects unknown chats, foreign members, blocked peers and unreachable peers", async () => {
     await boot();
     const alice = await register("alice_call_limits");
     const bob = await register("bob_call_limits");
     const stranger = await register("mallory_call_limits");
     const chatId = await createDirectChat(alice, bob);
-
-    const group = await app!.inject({
-      method: "POST",
-      url: "/v1/chats",
-      headers: auth(alice),
-      payload: { kind: "group", title: "No calls yet", memberIds: [bob.id] }
-    });
-    expect(group.statusCode, group.body).toBe(201);
-    const groupCall = await createCall(alice, group.json().chat.id as string);
-    expect(groupCall.status).toBe(400);
 
     const unknown = await createCall(alice, randomUUID());
     expect(unknown.status).toBe(404);
@@ -265,5 +256,163 @@ describe("calls signaling first slice", () => {
     }
     const unreachable = await createCall(carol, offlineChatId);
     expect(unreachable.status).toBe(409);
+  });
+
+  it("rings a 1:1 call to ringing and converges accept and decline", async () => {
+    await boot();
+    const alice = await register("alice_ring");
+    const bob = await register("bob_ring");
+    const chatId = await createDirectChat(alice, bob);
+
+    const created = await createCall(alice, chatId);
+    expect(created.status).toBe(201);
+    const call = (created.body as { call: CallPayload }).call;
+
+    const nonHostRing = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/ring`,
+      headers: auth(bob),
+      payload: { expectedRevision: 1 }
+    });
+    expect(nonHostRing.statusCode).toBe(403);
+
+    const staleRing = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/ring`,
+      headers: auth(alice),
+      payload: { expectedRevision: 0 }
+    });
+    expect(staleRing.statusCode).toBe(409);
+    expect((staleRing.json() as { error: { details: { call: CallPayload } } }).error.details.call.revision).toBe(1);
+
+    const ring = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/ring`,
+      headers: auth(alice),
+      payload: { expectedRevision: 1 }
+    });
+    expect(ring.statusCode, ring.body).toBe(200);
+    const ringing = (ring.json() as { call: CallPayload }).call;
+    expect(ringing.state).toBe("ringing");
+    expect(ringing.revision).toBe(3);
+    expect(ringing.participants.find((p) => p.memberId === bob.id)?.status).toBe("ringing");
+
+    const ringAgain = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/ring`,
+      headers: auth(alice),
+      payload: { expectedRevision: 3 }
+    });
+    expect(ringAgain.statusCode).toBe(200);
+    expect((ringAgain.json() as { call: CallPayload }).call.revision).toBe(3);
+
+    const accept = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/accept`,
+      headers: auth(bob),
+      payload: { expectedRevision: 3 }
+    });
+    expect(accept.statusCode, accept.body).toBe(200);
+    const accepted = (accept.json() as { call: CallPayload }).call;
+    expect(accepted.state).toBe("connecting");
+    expect(accepted.participants.find((p) => p.memberId === bob.id)?.status).toBe("connecting");
+
+    const acceptAgain = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/accept`,
+      headers: auth(bob),
+      payload: { expectedRevision: accepted.revision }
+    });
+    expect(acceptAgain.statusCode).toBe(409);
+  });
+
+  it("ends a 1:1 call on decline and keeps group calls ringing for the rest", async () => {
+    await boot();
+    const alice = await register("alice_decline");
+    const bob = await register("bob_decline");
+    const chatId = await createDirectChat(alice, bob);
+
+    const created = await createCall(alice, chatId);
+    const call = (created.body as { call: CallPayload }).call;
+    await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/ring`,
+      headers: auth(alice),
+      payload: { expectedRevision: 1 }
+    });
+
+    const decline = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/decline`,
+      headers: auth(bob),
+      payload: { expectedRevision: 3, reason: "declined" }
+    });
+    expect(decline.statusCode, decline.body).toBe(200);
+    const declined = (decline.json() as { call: CallPayload }).call;
+    expect(declined.state).toBe("ended");
+    expect(declined.endReason).toBe("declined");
+
+    const host = await register("alice_group_ring");
+    const member = await register("bob_group_ring");
+    const offline = await register("carol_group_ring");
+    await establishAcceptedRelationship(app!, host, member);
+    await establishAcceptedRelationship(app!, host, offline);
+    const group = await app!.inject({
+      method: "POST",
+      url: "/v1/chats",
+      headers: auth(host),
+      payload: { kind: "group", title: "Group ring", memberIds: [member.id, offline.id] }
+    });
+    expect(group.statusCode, group.body).toBe(201);
+    const groupChatId = group.json().chat.id as string;
+
+    const offlineSessions = await app!.inject({
+      method: "GET",
+      url: "/v1/auth/sessions",
+      headers: auth(offline)
+    });
+    expect(offlineSessions.statusCode).toBe(200);
+    for (const session of offlineSessions.json().items as Array<{ id: string }>) {
+      const revoked = await app!.inject({
+        method: "DELETE",
+        url: `/v1/auth/sessions/${session.id}`,
+        headers: auth(offline)
+      });
+      expect(revoked.statusCode).toBe(204);
+    }
+
+    const groupCreated = await app!.inject({
+      method: "POST",
+      url: "/v1/calls",
+      headers: auth(host),
+      payload: { chatId: groupChatId, mediaMode: "video", clientNonce: randomUUID() }
+    });
+    expect(groupCreated.statusCode, groupCreated.body).toBe(201);
+    const groupCall = (groupCreated.json() as { call: CallPayload }).call;
+    expect(groupCall.kind).toBe("group");
+    expect(groupCall.mediaMode).toBe("video");
+    expect((groupCreated.json() as { unreachableMemberIds: string[] }).unreachableMemberIds).toEqual([offline.id]);
+    expect(groupCall.participants.map((p) => p.memberId).sort()).toEqual([host.id, member.id].sort());
+
+    const groupRing = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${groupCall.callId}/ring`,
+      headers: auth(host),
+      payload: { expectedRevision: 1 }
+    });
+    expect(groupRing.statusCode, groupRing.body).toBe(200);
+    expect((groupRing.json() as { call: CallPayload }).call.state).toBe("ringing");
+
+    const groupDecline = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${groupCall.callId}/decline`,
+      headers: auth(member),
+      payload: { expectedRevision: 3, reason: "busy" }
+    });
+    expect(groupDecline.statusCode, groupDecline.body).toBe(200);
+    const afterDecline = (groupDecline.json() as { call: CallPayload }).call;
+    expect(afterDecline.state).toBe("ringing");
+    expect(afterDecline.endReason).toBeNull();
+    expect(afterDecline.participants.find((p) => p.memberId === member.id)?.status).toBe("declined");
   });
 });
