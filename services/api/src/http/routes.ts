@@ -99,6 +99,7 @@ const MessageRequestListQuerySchema = CursorQuerySchema.extend({
 const UserSearchSchema = CursorQuerySchema.extend({ q: z.string().trim().min(1).max(80) });
 const ChatMessagesQuerySchema = CursorQuerySchema.extend({ topicId: IdSchema.optional() });
 const FileSearchQuerySchema = CursorQuerySchema.extend({ q: z.string().trim().min(1).max(200) });
+const ChatSearchQuerySchema = CursorQuerySchema.extend({ q: z.string().trim().min(1).max(80) });
 
 interface RouteDependencies {
   config: AppConfig;
@@ -920,6 +921,11 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   app.get("/v1/search/files", { preHandler: dependencies.authGuard }, async (request) => {
     const query = FileSearchQuerySchema.parse(request.query);
     return dependencies.search.attachments(request.auth.userId, query.q, query.limit, query.cursor);
+  });
+
+  app.get("/v1/search/chats", { preHandler: dependencies.authGuard }, async (request) => {
+    const query = ChatSearchQuerySchema.parse(request.query);
+    return dependencies.search.chats(request.auth.userId, query.q, query.limit, query.cursor);
   });
 
   app.get("/v1/admin/status", {

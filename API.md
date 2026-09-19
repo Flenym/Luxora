@@ -423,6 +423,7 @@ revision `2`.
 
 - `GET /v1/users/lookup?username=<exact>` performs authenticated, case-insensitive exact lookup and returns `{profile: PublicProfile|null}`. Hidden, blocked and absent accounts use the same null shape. `PublicProfile` has no presence, last-seen, session or contact-graph data.
 - `GET /v1/users/search?q=<query>&limit=<n>&cursor=<opaque>` searches only accepted relationships and returns a no-presence projection; it is not a global directory.
+- `GET /v1/search/chats?q=<query>&limit=<n>&cursor=<opaque>` substring-matches group/channel titles for current memberships only, ordered `updated_at` DESC with cursor pagination (`limit+1` pattern, garbage cursor `400`); `LIKE` wildcards are escaped so the match is literal, titles are plaintext so no blind index is involved, and matching is ASCII case-insensitive (`LIKE COLLATE NOCASE`) with full Unicode folding queued as a follow-up. Direct chats are excluded — DMs are found via people search.
 - `GET /v1/privacy` returns `{settings}`. `PATCH /v1/privacy` accepts one or both of `usernameDiscoverable` and `messageRequests: "everyone"|"nobody"`.
 
 Identity/discovery responses use `Cache-Control: no-store`. Exact/contextual lookup and abuse-sensitive request/block/report mutations have route network limits plus bounded in-process account and device-session buckets. The device-session key is the authenticated session ID, not device attestation, and these local buckets are not a shared multi-replica risk engine.

@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s), calls slices 1–4 (`5b1d2f8` + Docker fix `7c4552f` + slice 2 `2076c9b` + slice 3 `c31f644` + slice 4 `6f99edf`, CI PASS оба) готовы и запушены. Calls slices 5–7 DONE локально (uncommitted): webhooks + membership hook + stale sweeper (`calls-reconnect-sweeper.integration` 1/1, API typecheck clean, полный API 96/722). Последняя миграция 039 (`039_call_room_index`). Следом: push/ringing-доставка, затем search (grant refresh покрыт stateless re-issuance, membership hook done).
+**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s), calls slices 1–7 (`5b1d2f8` + Docker fix `7c4552f` + `2076c9b` + `c31f644` + `6f99edf` + `e3d2ef8` + `5d70e36` + `27bb510`, CI PASS оба) готовы и запушены. Search slice 1 (conversation search) DONE локально (uncommitted): `GET /v1/search/chats` (`search-chats.integration` 2/2, матрица 111→112, API typecheck clean, полный API 97/724). Последняя миграция 039 (`039_call_room_index`). Calls remainder done кроме push-доставки (blocked) — next: search follow-ups (Unicode/public catalog/offline), затем QR-linking.
 
 ## Как продолжить без потери контекста
 
@@ -13,7 +13,7 @@
 
 ## Ближайшая очередь
 
-1. Calls signaling slices 1–7 DONE локально (uncommitted): create/get/cancel/hangup + group + ring/accept/decline + invite (`POST /v1/calls/:id/invite` 7/7) + join-grant (`POST /v1/calls/:id/join-grant` 4/4) + webhooks (`POST /v1/internal/calls/livekit-webhook`, миграция 039) + membership hook (`reconcileMembership`, `calls-signaling.integration` 8/8) + stale sweeper (`sweepStaleReconnecting`, `calls-reconnect-sweeper.integration` 1/1); остаток — push-доставка, затем search (grant refresh покрыт stateless re-issuance, membership hook done).
+1. Calls remainder done кроме push-доставки (blocked — real APNs заблокирован извне; grant refresh покрыт stateless re-issuance, membership hook + sweeper done) + search slice 1 DONE локально (uncommitted: `GET /v1/search/chats`, substring+pagination/wildcards+isolation 2/2, матрица 111→112, typecheck clean, полный suite НЕ гонялся); next — search follow-ups (Unicode-folding / public catalog SPC-007 / offline-индекс), затем QR-linking.
 2. Export/delete, QR-linking, contact discovery.
 3. Финальный QA.
 

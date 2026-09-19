@@ -1248,6 +1248,7 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   listDataExportsDueForObjectDeletion(before: string, limit: number): DataExportRecord[];
 
   listExportMessages(userId: string): ExportMessageRow[];
+  searchChats(userId: string, titlePattern: string, limit: number, cursor?: string): { items: Chat[]; nextCursor: string | null };
   listExportRelationships(userId: string): ExportRelationshipRow[];
   listExportBlocks(userId: string): ExportBlockRow[];
   listExportChats(userId: string): ExportChatRow[];

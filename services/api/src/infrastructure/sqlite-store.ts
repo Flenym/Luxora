@@ -10261,8 +10261,44 @@ export class SqliteStore implements Store {
     };
   }
 
-  getSearchIndexKeyId(): string | null {
-    const row = this.#db.prepare("SELECT active_key_id FROM search_index_state WHERE scope = 'all'")
+  /**
+   * Conversation search (SRCH-003, first slice): substring match over
+   * group/channel titles, membership-scoped. Titles are plaintext, so no
+   * blind index is needed. Matching is ASCII case-insensitive substring
+   * (LIKE … COLLATE NOCASE); full Unicode case folding arrives with the
+   * token-index follow-up. Direct chats are excluded — DMs are found via
+   * people search.
+   */
+  searchChats(userId: string, titlePattern: string, limit: number, cursor?: string): { items: Chat[]; nextCursor: string | null } {
+    const decoded = decodeCursor(cursor);
+    const rows = this.#db.prepare(`
+      SELECT c.id, c.updated_at FROM chats c
+      JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = @userId
+      WHERE c.kind IN ('group', 'channel')
+        AND c.title IS NOT NULL
+        AND c.title LIKE @pattern ESCAPE '\\' COLLATE NOCASE
+        AND (@cursorValue IS NULL OR c.updated_at < @cursorValue
+          OR (c.updated_at = @cursorValue AND c.id < @cursorId))
+      ORDER BY c.updated_at DESC, c.id DESC LIMIT @take
+    `).all({
+      userId,
+      pattern: titlePattern,
+      cursorValue: decoded?.value ?? null,
+      cursorId: decoded?.id ?? null,
+      take: limit + 1
+    }) as Array<{ id: string; updated_at: string }>;
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page
+        .map((row) => this.getChatForUser(row.id, userId))
+        .filter((chat): chat is Chat => chat !== null),
+      nextCursor: hasMore && last !== undefined ? encodeCursor({ value: last.updated_at, id: last.id }) : null
+    };
+  }
+
+  getSearchIndexKeyId(): string | null {    const row = this.#db.prepare("SELECT active_key_id FROM search_index_state WHERE scope = 'all'")
       .get() as { active_key_id: string } | undefined;
     return row?.active_key_id ?? null;
   }

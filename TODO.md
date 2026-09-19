@@ -152,6 +152,10 @@
 > **Дополнение 2026-09-19 (calls signaling slice 7 stale sweeper, DONE, локально зелёный):**
 > `CallService.sweepStaleReconnecting(now, timeoutMs>=60s, limit=100)` через `end_call(network-timeout)+finish_ending` как system media-plane, стор `listStaleReconnectingCalls` (non-ended + reconnecting + `updated_at`, `json_extract/json_each`, без миграции), в существующем 10-мин `cleanupTimer` (timeout 10 мин); без routes (матрица 111), `app.luxora` для тестов, идемпотентно (re-sweep no-op), races converge by reload, domain skipped/infra counted.
 > Тесты локально: `calls-reconnect-sweeper.integration` 1/1 (stuck→ended/network-timeout, fresh untouched, resweep no-op), API typecheck clean, полный API 96 файлов / 722 теста PASS. Честный остаток: push/ringing-доставка (real APNs заблокирован извне), grant refresh покрыт stateless re-issuance, затем search.
+>
+> **Дополнение 2026-09-19 (conversation search, DONE, локально зелёный):**
+> `GET /v1/search/chats?q=&limit&cursor` — substring по titles групп/каналов только текущих memberships, `updated_at` DESC + cursor (`limit+1`, garbage cursor `400`); titles plaintext (без blind index и hasher-gate), `LIKE`-wildcards экранированы (литеральное совпадение), ASCII case-insensitive (`COLLATE NOCASE`), полный Unicode-folding честно отложен на token-index follow-up; директы исключены (DM через people search).
+> Без миграции и без protocol-изменений (локальный `CursorQuerySchema`-extend в routes, `q 1..80`), матрица 111→112. Тесты локально: новый `search-chats.integration` 2/2 (substring+pagination, wildcards+isolation), API typecheck clean, полный API 97 файлов / 724 теста PASS. Честный остаток: Unicode-folding, public-spaces catalog (SPC-007), offline-индекс, iPhone chats scope пока local-only.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

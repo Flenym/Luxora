@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-19 · calls signaling slices 1–7 done locally uncommitted (1–4 pushed CI PASS, slices 5–7 locally green uncommitted), calls-reconnect-sweeper.integration 1/1, API typecheck clean, full suite not yet run
+**Обновлено:** 2026-09-19 · search slice 1 (conversation search) + calls slices 1–7 (1–5 pushed CI PASS, 6–7 pushed CI PASS), API 97/724 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Conversation search DONE (локально, uncommitted): `GET /v1/search/chats` (substring по titles групп/каналов, только текущие memberships, `updated_at` DESC + cursor `limit+1`/garbage `400`, plaintext titles без blind index, экранированные wildcards, ASCII `NOCASE`, директы исключены), без миграции/protocol-изменений (`q 1..80`), матрица 111→112, `search-chats.integration` 2/2, typecheck clean, полный suite пока НЕ гонялся; остаток — Unicode-folding, SPC-007 public catalog, offline-индекс, iPhone scope local-only.
 - Calls signaling slice 7 stale sweeper DONE (локально, uncommitted): `sweepStaleReconnecting` (`network-timeout`, 10-мин timer, без routes/migration, матрица 111), `calls-reconnect-sweeper.integration` 1/1, typecheck clean, полный API 96/722; остаток — push-доставка, затем search (grant refresh покрыт re-issuance).
 - Calls signaling slice 6 membership hook DONE (локально, uncommitted): `onMemberRemoved`→`reconcileMembership` (`membership_removed`, epoch bump, host `ending→ended`), без routes/migration (111), `calls-signaling.integration` 8/8, typecheck clean, полный API 95/721; остаток — push-доставка, grant refresh, crash sweeper, затем search.
 - Calls signaling slice 5 webhooks DONE (локально, uncommitted): `POST /v1/internal/calls/livekit-webhook` (LiveKit JWT/raw-body, issuer==API key, 401 на подделку), миграция `039_call_room_index`, dispatch joined/left/aborted/finished, ack `200 {received:true}`, матрица 110→111, тесты 4/4 + 2/2; остаток — push-доставка, membership_removed hook, grant refresh, crash sweeper, затем search.
