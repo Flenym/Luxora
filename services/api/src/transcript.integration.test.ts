@@ -386,7 +386,8 @@ describe("voice message transcription consent", () => {
     });
     expect(completed.statusCode, completed.body).toBe(200);
     const attachment = completed.json().upload.attachment;
-    expect(attachment).toMatchObject({ kind: "voice", metadataTrust: "client_declared" });
+    expect(attachment).toMatchObject({ kind: "voice", metadataTrust: "server_verified" });
+    expect(attachment.metadata).toMatchObject({ durationMs: 512, waveform: [0, 128, 255] });
     const attachmentId = attachment.id as string;
 
     const chat = await app!.inject({

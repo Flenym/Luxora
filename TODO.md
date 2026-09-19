@@ -81,7 +81,7 @@
 > (`services/api/src/services/data-export-retention-worker.test.ts`), полный API
 > 87 файлов / 689 тестов PASS, protocol 17/104 PASS, оба typecheck PASS.
 >
-> **Дополнение 2026-09-19 (image thumbnails, DONE, локально зелёный):**
+> **Дополнение 2026-09-19 (image thumbnails, DONE, локально зелёный):** (коммит 8bae86a, CI PASS оба воркфлоу)
 > sharp-JPEG 320px по длинной стороне (q80) в `complete()` для `kind:"image"`
 > больше 320px, best-effort: недекодируемые (напр. HEIC) и мелкие без тумбы,
 > аплоад всё равно успешен; `GET /v1/attachments/:id/thumbnail`
@@ -93,6 +93,12 @@
 > API 89 файлов / 698 тестов PASS, protocol 17/104 PASS, оба typecheck PASS,
 > protocol dist пересобран. Честный остаток: размеры AVIF/HEIC и duration/waveform
 > аудио/видео по-прежнему `client_declared`.
+>
+> **Дополнение 2026-09-19 (WAV duration verification, DONE, локально зелёный):**
+> pure-TS `measureWavDuration` (RIFF walk, PCM/float/extensible, exact dataSize/byteRate);
+> upload-complete для `audio`/`voice` с `audio/wav` безусловно принимает измеренный durationMs + `server_verified`;
+> остальной audio и waveform честно остаются `client_declared`, waveform untouched;
+> тесты `wav-duration.test.ts` 4/4 + `media-wav-duration.integration.test.ts` 1/1 (ложный 5000ms → измеренный 1000ms), API typecheck clean.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

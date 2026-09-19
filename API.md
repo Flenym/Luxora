@@ -710,7 +710,7 @@ none and the upload still succeeds. Thumbnails are served at
 exposed (deterministic `thumbnails/{id}.jpg`). The attachment projection
 carries optional `thumbnailPath`, and `ImageMetadata` carries optional strict
 `thumbnail{sha256,sizeBytes,width,height}`; orphan cleanup deletes thumbnails
-with the attachment.
+with the attachment. At upload-complete the server measures WAV duration for `audio`/`voice` with `audio/wav` and marks `server_verified`; other audio containers stay `client_declared`.
 
 ### Account data export
 

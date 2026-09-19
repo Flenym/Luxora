@@ -23,6 +23,7 @@ import type { SearchHasher } from "../infrastructure/search-hasher.js";
 import type { StorageProvider } from "../infrastructure/storage.js";
 import type { EventPublisher } from "./event-publisher.js";
 import { measureImageDimensions } from "./image-dimensions.js";
+import { measureWavDuration } from "./wav-duration.js";
 import { generateImageThumbnail, type GeneratedThumbnail } from "./thumbnail-service.js";
 import { readThumbnailInfo, thumbnailObjectKey } from "../domain/attachment-thumbnail.js";
 
@@ -370,6 +371,21 @@ export class UploadService {
       const sourceBytes = Buffer.concat(sourceParts);
       if (sourceBytes.length !== upload.sizeBytes) {
         throw conflict("Upload staging failed integrity validation");
+      }
+      // Measured WAV duration replaces the client claim. Unlike image
+      // dimensions (exact integers), duration is continuous and client
+      // estimates legitimately differ by rounding, so a measured value is
+      // adopted unconditionally instead of rejecting on mismatch.
+      // Non-WAV audio (MP3/OGG/FLAC/…) honestly keeps `client_declared` trust.
+      if (
+        (upload.kind === "audio" || upload.kind === "voice") &&
+        detectedMimeType === "audio/wav"
+      ) {
+        const measuredDuration = measureWavDuration(sourceBytes);
+        if (measuredDuration !== null) {
+          attachmentMetadata = { ...upload.metadata, durationMs: measuredDuration.durationMs };
+          attachmentMetadataTrust = "server_verified";
+        }
       }
       await this.storage.put({
         objectKey,

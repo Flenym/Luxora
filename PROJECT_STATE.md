@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-19 · image thumbnails DONE (локально зелёный, uncommitted), API 89/698
+**Обновлено:** 2026-09-19 · image thumbnails `8bae86a` CI PASS (оба воркфлоу) + WAV duration DONE (локально, uncommitted), API 91/703
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,7 +35,8 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
-- Image thumbnails DONE (локально зелёный, uncommitted, 89/698): sharp-JPEG 320px q80 в `complete()` для image >320px (best-effort), `GET /v1/attachments/:id/thumbnail` owner-or-granted (stranger 404/anonymous 401, no-store), protocol `thumbnailPath?` + `thumbnail{sha256,sizeBytes,width,height}?`, без миграции, orphan/export покрытие, AVIF/HEIC + audio/video duration/waveform честно `client_declared`.
+- WAV duration verification DONE (локально, uncommitted): pure-TS `measureWavDuration` (RIFF walk, PCM/float/extensible), `complete()` для `audio`/`voice` + `audio/wav` принимает измеренный durationMs + `server_verified`, остальной audio/waveform честно `client_declared`; тесты 4/4 + 1/1 (5000ms claim → 1000ms measured), API typecheck clean.
+- Image thumbnails (`8bae86a`, CI PASS оба воркфлоу: Node/Web/Desktop 4m27s, Security 2m31s, 89/698): sharp-JPEG 320px q80 в `complete()` для image >320px (best-effort), `GET /v1/attachments/:id/thumbnail` owner-or-granted (stranger 404/anonymous 401, no-store), protocol `thumbnailPath?` + `thumbnail{sha256,sizeBytes,width,height}?`, без миграции, orphan/export покрытие, AVIF/HEIC + audio/video duration/waveform честно `client_declared`.
 - Data export retention worker (локально зелёный, 87/689): миграция `037_data_export_retention` (`data_exports.object_deleted_at`), `DataExportRetentionWorker.sweep(now)` переводит готовые с истёкшим `expires_at` в `expired` и удаляет storage-объекты истёкших с пометкой `object_deleted_at`, запуск на старте + каждые 10 минут; unit 4/4, protocol 17/104 PASS, оба typecheck PASS (спека §14.3: 7 дней после ready, удаление объекта в пределах 24ч).
 - Media binaries в экспорте (локально зелёный, 86/685): `listAllOwnedAttachments` маппится через `#mapAttachment` (camelCase + расшифровка имён), бинарники в архиве как `media/<attachmentId>/<fileName>`, per-file SHA-256 в manifest, расхождение размера объекта фейлит экспорт (503) вместо тихой потери. Экспорт-тест теперь грузит PNG и сверяет его в архиве. `omittedCategories` остался `["tokens"]`.
 - Account deletion state machine first slice (локально зелёный): migration `036` (`account_deletions` + `users.deleted_at`), protocol `AccountDeletion*` схемы, `AccountDeletionService` (schedule/status/cancel/sweep), 3 HTTP routes `POST/GET/DELETE /v1/account/deletion`, sweep по образцу passkey-свиперов, grace 7 дней. Execution: revoke всех sessions + push, tombstone profile (`deleted:{id}`, `Deleted Account`, `deleted_at`, lookup `WHERE deleted_at IS NULL`), expire export artifacts, mark owned attachments deleted. Authorization matrix 3 маршрута → 100 protected routes. Unit 7/7 + integration 3/3; полный API 86 файлов / 685 тестов PASS.
