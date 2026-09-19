@@ -44,6 +44,7 @@ import { ChatFolderService } from "./services/chat-folder-service.js";
 import { ChatDraftService } from "./services/chat-draft-service.js";
 import { ChatService } from "./services/chat-service.js";
 import { DataExportService } from "./services/data-export-service.js";
+import { DataExportRetentionWorker } from "./services/data-export-retention-worker.js";
 import { AccountDeletionService } from "./services/account-deletion-service.js";
 import { IdentityAccessService } from "./services/identity-access-service.js";
 import { NotificationService } from "./services/notification-service.js";
@@ -446,6 +447,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const uploads = await UploadService.create(store, storage, searchHasher, outbox, config);
   const attachments = new AttachmentService(store, storage);
   const dataExports = new DataExportService(store, storage);
+  const dataExportRetention = new DataExportRetentionWorker(store, storage);
   const accountDeletion = new AccountDeletionService(store);
   const profileAvatars = new ProfileAvatarService(
     store,
@@ -794,6 +796,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   } catch (error) {
     app.log.error({ err: error }, "Initial account deletion sweep failed");
   }
+  try {
+    const retentionResult = await dataExportRetention.sweep(new Date());
+    if (retentionResult.expired > 0 || retentionResult.deleted > 0 || retentionResult.failures > 0) {
+      app.log.info(retentionResult, "Data export retention sweep completed on startup");
+    }
+  } catch (error) {
+    app.log.error({ err: error }, "Initial data export retention sweep failed");
+  }
   scheduledTimer = setInterval(() => {
     try {
       const dispatched = chats.dispatchDueScheduledMessages(new Date());
@@ -851,6 +861,13 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     } catch (error) {
       app.log.error({ err: error }, "Periodic account deletion sweep failed");
     }
+    void dataExportRetention.sweep(new Date()).then((retentionResult) => {
+      if (retentionResult.expired > 0 || retentionResult.deleted > 0 || retentionResult.failures > 0) {
+        app.log.info(retentionResult, "Data export retention sweep completed");
+      }
+    }).catch((error: unknown) => {
+      app.log.error({ err: error }, "Periodic data export retention sweep failed");
+    });
   }, 10 * 60_000);
   cleanupTimer.unref();
   return app;

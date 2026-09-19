@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-16):** export (035, `5df2317`, CI PASS), account deletion state machine (036) и media binaries в экспорте готовы. Локально зелёный: protocol 17/104 build, API 86/685, оба typecheck. Deletion и media-binaries слайцы не закоммичены — работа в рабочем дереве.
+**Точка продолжения (обновлено 2026-09-16):** export (035, `5df2317`, CI PASS), account deletion state machine (036), media binaries в экспорте и export retention worker (037) готовы. Локально зелёный: protocol 17/104 build, API 87/689, оба typecheck. Deletion, media-binaries и retention слайцы не закоммичены — работа в рабочем дереве.
 
 ## Как продолжить без потери контекста
 
@@ -13,10 +13,9 @@
 
 ## Ближайшая очередь
 
-1. Retention workers (deletion ledger, TTL) — медиа-бинары в экспорте уже сделаны.
-2. Media processing остаток (thumbnails/transcode, duration/waveform) → search → calls signaling.
-3. Export/delete, QR-linking, contact discovery.
-4. Финальный QA.
+1. Media processing остаток (thumbnails/transcode, duration/waveform) → search → calls signaling.
+2. Export/delete, QR-linking, contact discovery.
+3. Финальный QA.
 
 ## Правила цикла (не нарушать)
 

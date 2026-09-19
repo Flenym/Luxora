@@ -729,6 +729,10 @@ client verify them against `media.jsonl`; missing or resized objects fail the
 export rather than silently omitting data. Only token/secret material is
 declared in the manifest under `omittedCategories`.
 
+Ready exports expire 7 days after ready (`state:"expired"`); download of an
+expired export answers `409`. A periodic worker deletes the storage object
+within 24 hours, and a new request rebuilds the archive.
+
 ### Account deletion
 
 `POST /v1/account/deletion` schedules account deletion for the current user.

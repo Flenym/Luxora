@@ -1238,6 +1238,8 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   markDataExportReady(id: string, sizeBytes: number, sha256: string, readyAt: string, expiresAt: string): boolean;
   expireDataExport(id: string, at: string): boolean;
   listExpiredDataExports(before: string, limit: number): DataExportRecord[];
+  markDataExportObjectDeleted(id: string, at: string): boolean;
+  listDataExportsDueForObjectDeletion(before: string, limit: number): DataExportRecord[];
 
   listExportMessages(userId: string): ExportMessageRow[];
   listExportRelationships(userId: string): ExportRelationshipRow[];

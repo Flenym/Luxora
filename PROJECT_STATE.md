@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-16 · `main` — export 035 + deletion 036 + media binaries, API 86/685 зелёный локально
+**Обновлено:** 2026-09-16 · `main` — export 035 + deletion 036 + media binaries + retention worker done локально, API 87/689 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Data export retention worker (локально зелёный, 87/689): миграция `037_data_export_retention` (`data_exports.object_deleted_at`), `DataExportRetentionWorker.sweep(now)` переводит готовые с истёкшим `expires_at` в `expired` и удаляет storage-объекты истёкших с пометкой `object_deleted_at`, запуск на старте + каждые 10 минут; unit 4/4, protocol 17/104 PASS, оба typecheck PASS (спека §14.3: 7 дней после ready, удаление объекта в пределах 24ч).
 - Media binaries в экспорте (локально зелёный, 86/685): `listAllOwnedAttachments` маппится через `#mapAttachment` (camelCase + расшифровка имён), бинарники в архиве как `media/<attachmentId>/<fileName>`, per-file SHA-256 в manifest, расхождение размера объекта фейлит экспорт (503) вместо тихой потери. Экспорт-тест теперь грузит PNG и сверяет его в архиве. `omittedCategories` остался `["tokens"]`.
 - Account deletion state machine first slice (локально зелёный): migration `036` (`account_deletions` + `users.deleted_at`), protocol `AccountDeletion*` схемы, `AccountDeletionService` (schedule/status/cancel/sweep), 3 HTTP routes `POST/GET/DELETE /v1/account/deletion`, sweep по образцу passkey-свиперов, grace 7 дней. Execution: revoke всех sessions + push, tombstone profile (`deleted:{id}`, `Deleted Account`, `deleted_at`, lookup `WHERE deleted_at IS NULL`), expire export artifacts, mark owned attachments deleted. Authorization matrix 3 маршрута → 100 protected routes. Unit 7/7 + integration 3/3; полный API 86 файлов / 685 тестов PASS.
 - Account export first slice (DONE, CI PASS): `POST /v1/data-exports` (идемпотентный, 201), async tar.gz сборка, `manifest.json` с per-file SHA-256 + `omittedCategories:["tokens"]`, NDJSON profile/settings/sessions/relationships/blocks/chats/messages/media, 7-day TTL, `GET .../:id` polling, `GET .../:id/download` Range+no-store+ETag (по спеке §14), stranger `404`. Коммит `5df2317`, push на main, оба CI workflow success.

@@ -4162,5 +4162,11 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_account_deletions_deadline
         ON account_deletions(state, grace_deadline_at);
     `
+  },
+  {
+    id: "037_data_export_retention",
+    sql: `
+      ALTER TABLE data_exports ADD COLUMN object_deleted_at TEXT;
+    `
   }
 ];

@@ -10894,6 +10894,7 @@ export class SqliteStore implements Store {
       readyAt: row.ready_at,
       expiresAt: row.expires_at,
       deletedAt: row.deleted_at,
+      objectDeletedAt: row.object_deleted_at,
     };
   }
 
@@ -10941,6 +10942,27 @@ export class SqliteStore implements Store {
       WHERE id = @id AND state = 'ready'
     `).run({ id, at });
     return result.changes === 1;
+  }
+
+  markDataExportObjectDeleted(id: string, at: string): boolean {
+    const result = this.#db.prepare(`
+      UPDATE data_exports SET object_deleted_at = @at
+      WHERE id = @id AND object_deleted_at IS NULL
+    `).run({ id, at });
+    return result.changes === 1;
+  }
+
+  listDataExportsDueForObjectDeletion(before: string, limit: number): DataExportRecord[] {
+    const rows = this.#db.prepare(`
+      SELECT * FROM data_exports
+      WHERE state = 'expired'
+        AND expires_at IS NOT NULL
+        AND expires_at <= @before
+        AND object_deleted_at IS NULL
+      ORDER BY expires_at ASC, id ASC
+      LIMIT @limit
+    `).all({ before, limit }) as DataExportRow[];
+    return rows.map((row) => this.#mapDataExport(row));
   }
 
   listExpiredDataExports(before: string, limit: number): DataExportRecord[] {

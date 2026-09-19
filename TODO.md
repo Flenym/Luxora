@@ -71,6 +71,15 @@
 > расхождение размера объекта фейлит экспорт (503) вместо тихой потери. Export-тест
 > грузит PNG и сверяет его в архиве. API 86 файлов / 685 тестов PASS, оба typecheck PASS.
 > `omittedCategories` остался `["tokens"]`. Осталось: retention workers.
+>
+> **Дополнение 2026-09-16 (export retention worker, DONE, локально зелёный):**
+> миграция `037_data_export_retention` добавляет `data_exports.object_deleted_at`
+> (спека §14.3: артефакт 7 дней после ready, объект удаляется в пределах 24ч);
+> `DataExportRetentionWorker.sweep(now)` переводит готовые с истёкшим `expires_at`
+> в `expired` и удаляет storage-объекты истёкших с пометкой `object_deleted_at`,
+> запуск на старте + каждые 10 минут. Юнит-тесты 4/4
+> (`services/api/src/services/data-export-retention-worker.test.ts`), полный API
+> 87 файлов / 689 тестов PASS, protocol 17/104 PASS, оба typecheck PASS.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

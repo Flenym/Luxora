@@ -558,6 +558,7 @@ export interface DataExportRecord {
   readyAt: string | null;
   expiresAt: string | null;
   deletedAt: string | null;
+  objectDeletedAt: string | null;
 }
 
 export interface DataExportRow {
@@ -571,6 +572,7 @@ export interface DataExportRow {
   ready_at: string | null;
   expires_at: string | null;
   deleted_at: string | null;
+  object_deleted_at: string | null;
 }
 
 export interface ExportMessageRow {
