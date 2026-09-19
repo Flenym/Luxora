@@ -144,6 +144,11 @@
 > Неизвестные rooms/participants/events и неприменимые состояния — `200 {received:true}` (без oracle, без poison retries); webhook только подтверждает media-факты, авторизацию выдавать НЕ может; матрица 110→111.
 > Тесты локально: `call-webhook.test` 4/4, `calls-webhook.integration` 2/2, matrix green, API typecheck clean, инвентаризации миграций зелёные (039 в chain+identity+passkey-authenticator); полный API 95 файлов / 720 тестов PASS. Честный остаток: push/ringing-доставка (real APNs заблокирован извне), membership_removed hook, grant refresh, crash-cleanup sweeper, затем search.
 
+> **Дополнение 2026-09-19 (calls signaling slice 6 membership hook, DONE, локально зелёный):**
+> `ChatService.removeMember` → `onMemberRemoved(chatId, memberId)` после коммита (replay исключён), `app.ts` → `CallService.reconcileMembership` (fire-and-forget с error log): `membership_removed` от `membership-service` для всех non-terminal memberships удалённого во всех live (non-ended) звонках чата (`listLiveCallsForChat` через `json_extract`), epoch bump, revoked, host-removal финализирует `ending→ended`, terminal skipped, failures counted.
+> Без новых routes (матрица 111) и без миграции (чтение snapshots); session revoke без хука (перепроверка liveness при выдаче, in-flight ≤120s), block — не removal (deny через block policy).
+> Тесты: `calls-signaling.integration` 8/8 (новый reconcile: revoke+epoch 2, removed grant `403`, survivor `200`), API typecheck clean, полный API 95 файлов / 721 тест PASS. Честный остаток: push/ringing-доставка (real APNs заблокирован извне), grant refresh, crash-cleanup sweeper, затем search.
+
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
 `- [ ]` не сделано · `- [~]` в процессе · `- [x]` сделано. Статус — в

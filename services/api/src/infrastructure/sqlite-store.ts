@@ -11202,6 +11202,23 @@ export class SqliteStore implements Store {
     return row?.call_id ?? null;
   }
 
+  listLiveCallsForChat(chatId: string): CallAggregate[] {
+    const rows = this.#db.prepare(`
+      SELECT snapshot_json FROM calls
+      WHERE chat_id = @chatId AND json_extract(snapshot_json, '$.state') != 'ended'
+      ORDER BY created_at ASC, call_id ASC
+    `).all({ chatId }) as Array<{ snapshot_json: string }>;
+    return rows.map((row) => {
+      try {
+        const snapshot = JSON.parse(row.snapshot_json) as CallAggregate;
+        assertCallInvariants(snapshot);
+        return snapshot;
+      } catch {
+        throw serviceUnavailable("Call record is corrupt");
+      }
+    });
+  }
+
   findCallCommandReceipt(scope: string): CallCommandReceipt | null {
     const row = this.#db.prepare(`
       SELECT fingerprint, result_json, created_at_ms FROM call_command_receipts WHERE scope = ?

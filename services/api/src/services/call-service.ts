@@ -334,6 +334,57 @@ export class CallService {
   }
 
   /**
+   * Membership-service reconciliation (CALLS_PLATFORM §5 rule 4): after a
+   * chat member is removed, every live call in that chat revokes the
+   * member's call memberships (epoch bump, media participant out). Session
+   * revokes need no hook: grant issuance rechecks session liveness, so only
+   * future grants are affected and in-flight tokens expire within 120s.
+   * Idempotent: already-terminal memberships are skipped; failures are
+   * counted for the caller to log and retry on the next removal.
+   */
+  async reconcileMembership(chatId: string, memberId: string): Promise<{ revoked: number; failures: number }> {
+    const terminal = new Set(["declined", "left", "kicked", "revoked"]);
+    let revoked = 0;
+    let failures = 0;
+    for (const known of this.#store.listLiveCallsForChat(chatId)) {
+      const targets = known.participants.filter(
+        (participant) => participant.memberId === memberId && !terminal.has(participant.status)
+      );
+      for (const target of targets) {
+        try {
+          const latest = this.#store.loadCallAggregate(known.callId);
+          if (latest === null) continue;
+          const current = latest.participants.find((p) => p.membershipId === target.membershipId);
+          if (current === undefined || terminal.has(current.status)) continue;
+          const executed = await this.#executor.execute({
+            schemaVersion: CALL_CONTROL_VERSION,
+            commandId: randomUUID(),
+            actor: { kind: "system", subject: "membership-service" },
+            expectedRevision: latest.revision,
+            type: "membership_removed",
+            membershipId: target.membershipId,
+            callId: known.callId
+          });
+          revoked += 1;
+          await this.#finishEndingIfNeeded(executed.snapshot.callId, executed.snapshot);
+        } catch (error) {
+          if (
+            error instanceof CallControlError &&
+            (error.code === "MEMBERSHIP_REVOKED" ||
+              error.code === "TERMINAL_CALL" ||
+              error.code === "COMMAND_NOT_ALLOWED" ||
+              error.code === "MEMBERSHIP_NOT_FOUND")
+          ) {
+            continue;
+          }
+          failures += 1;
+        }
+      }
+    }
+    return { revoked, failures };
+  }
+
+  /**
    * LiveKit webhook ingest (CALLS_PLATFORM §5 rule 5): authenticated by the
    * media-plane signature, deduplicated by webhook event id, and limited to
    * confirming media-plane facts — it can never grant Luxora authorization.

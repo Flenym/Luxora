@@ -8,6 +8,10 @@ import { buildApp } from "./app.js";
 import { establishAcceptedRelationship, testConfig } from "./test-helpers.js";
 
 const DATA_KEY = Buffer.alloc(32, 62).toString("base64url");
+const LIVEKIT_KEY = "test-livekit-api-key";
+const LIVEKIT_SECRET = "test-livekit-api-secret-with-32-bytes!!";
+const TURN_SECRET = "test-turn-shared-secret-with-32-bytes!";
+const TURN_URLS = ["turn:calls.luxora.local:3478?transport=udp"];
 
 interface Identity {
   id: string;
@@ -50,7 +54,14 @@ describe("calls signaling first slice", () => {
         dataEncryptionKeys: { test: DATA_KEY },
         activeDataEncryptionKeyId: "test",
         storageLocalPath: join(storageRoot, "blobs"),
-        uploadStagingPath: join(storageRoot, "uploads")
+        uploadStagingPath: join(storageRoot, "uploads"),
+        callsMediaPlane: {
+          livekitUrl: "wss://calls.luxora.local",
+          livekitApiKey: LIVEKIT_KEY,
+          livekitApiSecret: LIVEKIT_SECRET,
+          turnSharedSecret: TURN_SECRET,
+          turnUrls: TURN_URLS
+        }
       }),
       logger: false
     });
@@ -533,8 +544,7 @@ describe("calls signaling first slice", () => {
     expect(offlineInvite.statusCode).toBe(409);
   });
 
-  it("rejects invites on fixed 1:1 membership and offline invitees", async () => {
-    await boot();
+  it("rejects invites on fixed 1:1 membership and offline invitees", async () => {    await boot();
     const alice = await register("alice_invite_121");
     const bob = await register("bob_invite_121");
     const chatId = await createDirectChat(alice, bob);
@@ -550,5 +560,99 @@ describe("calls signaling first slice", () => {
       payload: { expectedRevision: 1, inviteeMemberId: bob.id }
     });
     expect(fixed.statusCode).toBe(409);
+  });
+
+  it("revokes call membership when a chat member is removed and blocks their grants", async () => {
+    await boot();
+    const host = await register("alice_reconcile");
+    const member = await register("bob_reconcile");
+    const removed = await register("carol_reconcile");
+    await establishAcceptedRelationship(app!, host, member);
+    await establishAcceptedRelationship(app!, host, removed);
+    const group = await app!.inject({
+      method: "POST",
+      url: "/v1/chats",
+      headers: auth(host),
+      payload: { kind: "group", title: "Reconcile", memberIds: [member.id, removed.id] }
+    });
+    expect(group.statusCode, group.body).toBe(201);
+    const groupChatId = group.json().chat.id as string;
+
+    const created = await app!.inject({
+      method: "POST",
+      url: "/v1/calls",
+      headers: auth(host),
+      payload: { chatId: groupChatId, mediaMode: "audio", clientNonce: randomUUID() }
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const callId = (created.json() as { call: CallPayload }).call.callId;
+    const ring = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/ring`,
+      headers: auth(host),
+      payload: { expectedRevision: 1 }
+    });
+    expect(ring.statusCode, ring.body).toBe(200);
+    const accept = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/accept`,
+      headers: auth(member),
+      payload: { expectedRevision: 3 }
+    });
+    expect(accept.statusCode, accept.body).toBe(200);
+
+    const members = await app!.inject({
+      method: "GET",
+      url: `/v1/chats/${groupChatId}/members`,
+      headers: auth(host)
+    });
+    expect(members.statusCode).toBe(200);
+    const removedRevision = (members.json() as { items: Array<{ membership: { userId: string; revision: number } }> })
+      .items.find((m) => m.membership.userId === removed.id)?.membership.revision;
+    expect(typeof removedRevision).toBe("number");
+
+    const removal = await app!.inject({
+      method: "DELETE",
+      url: `/v1/chats/${groupChatId}/members/${removed.id}`,
+      headers: auth(host),
+      payload: { expectedRevision: removedRevision, clientNonce: randomUUID() }
+    });
+    expect(removal.statusCode, removal.body).toBe(200);
+    let snapshot: CallPayload | null = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const probe = await app!.inject({
+        method: "GET",
+        url: `/v1/calls/${callId}`,
+        headers: auth(host)
+      });
+      expect(probe.statusCode).toBe(200);
+      const candidate = (probe.json() as { call: CallPayload }).call;
+      if (candidate.epoch === 2) {
+        snapshot = candidate;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(snapshot, "call membership was not reconciled after chat removal").not.toBeNull();
+    expect(snapshot, "call membership was not reconciled after chat removal").not.toBeNull();
+    expect(snapshot!.epoch).toBe(2);
+    expect(snapshot!.participants.find((p) => p.memberId === removed.id)?.status).toBe("revoked");
+    expect(snapshot!.participants.find((p) => p.memberId === member.id)?.status).toBe("connecting");
+
+    const revokedGrant = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/join-grant`,
+      headers: auth(removed),
+      payload: { requestedSources: ["microphone"] }
+    });
+    expect(revokedGrant.statusCode).toBe(403);
+
+    const survivorGrant = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/join-grant`,
+      headers: auth(member),
+      payload: { requestedSources: ["microphone"] }
+    });
+    expect(survivorGrant.statusCode, survivorGrant.body).toBe(200);
   });
 });

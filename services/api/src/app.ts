@@ -440,7 +440,18 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const reindexedItems = rebuildSearchIndexes(store, searchHasher);
   if (reindexedItems > 0) app.log.info({ indexedItems: reindexedItems }, "Search indexes rebuilt");
   const storage = await createStorageProvider(config);
-  const chats = new ChatService(store, outbox, searchHasher);
+  const calls = new CallService(store, config.callsMediaPlane);
+  const chats = new ChatService(store, outbox, searchHasher, {
+    onMemberRemoved: (chatId, memberId) => {
+      void calls.reconcileMembership(chatId, memberId).then((result) => {
+        if (result.revoked > 0 || result.failures > 0) {
+          app.log.info(result, "Call memberships reconciled after chat member removal");
+        }
+      }).catch((error: unknown) => {
+        app.log.error({ err: error }, "Call membership reconciliation failed");
+      });
+    }
+  });
   const chatFolders = new ChatFolderService(store, outbox);
   const chatDrafts = new ChatDraftService(store, outbox);
   const identity = new IdentityAccessService(store, outbox, searchHasher);
@@ -449,7 +460,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const attachments = new AttachmentService(store, storage);
   const dataExports = new DataExportService(store, storage);
   const dataExportRetention = new DataExportRetentionWorker(store, storage);
-  const calls = new CallService(store, config.callsMediaPlane);
   const accountDeletion = new AccountDeletionService(store);
   const profileAvatars = new ProfileAvatarService(
     store,

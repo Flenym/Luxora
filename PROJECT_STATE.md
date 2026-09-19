@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-19 · calls signaling slices 1–5 (1–4 запушены с CI PASS, slice 5 локально uncommitted), API 95/720 зелёный локально
+**Обновлено:** 2026-09-19 · calls signaling slices 1–6 done locally uncommitted (1–4 pushed CI PASS, slices 5–6 locally green uncommitted), calls-signaling.integration 8/8, API typecheck clean, full suite not yet run
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Calls signaling slice 6 membership hook DONE (локально, uncommitted): `onMemberRemoved`→`reconcileMembership` (`membership_removed`, epoch bump, host `ending→ended`), без routes/migration (111), `calls-signaling.integration` 8/8, typecheck clean, полный API 95/721; остаток — push-доставка, grant refresh, crash sweeper, затем search.
 - Calls signaling slice 5 webhooks DONE (локально, uncommitted): `POST /v1/internal/calls/livekit-webhook` (LiveKit JWT/raw-body, issuer==API key, 401 на подделку), миграция `039_call_room_index`, dispatch joined/left/aborted/finished, ack `200 {received:true}`, матрица 110→111, тесты 4/4 + 2/2; остаток — push-доставка, membership_removed hook, grant refresh, crash sweeper, затем search.
 - Calls signaling slice 4 join-grants DONE (локально, uncommitted, 93/714): `POST /v1/calls/:id/join-grant` LiveKit HS256 JWT 120s + coturn REST 300s, rechecks membership/relationship/block/session/epoch, 503-gate до полного LiveKit+TURN конфига, секреты вне responses/logs, `calls:false`, матрица 109→110, `calls-join-grant.integration` 4/4, typechecks clean; остаток — webhooks, push/ringing, membership_removed hook, grant refresh.
 - Calls signaling slice 3 DONE (локально, uncommitted, 92/710): `POST /v1/calls/:id/invite` host-only/group-only, member/block/session guards, `InviteCallParticipantRequestSchema`, матрица 108→109; остаток — join-grants, webhooks, push-доставка, membership_removed hook, затем search.

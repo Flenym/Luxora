@@ -183,7 +183,10 @@ export class ChatService {
   constructor(
     private readonly store: Store,
     private readonly publisher: EventPublisher,
-    private readonly search: SearchHasher
+    private readonly search: SearchHasher,
+    private readonly hooks?: {
+      onMemberRemoved?: (chatId: string, memberId: string) => void;
+    }
   ) {}
 
   createChat(actorUserId: string, input: CreateChatRequest): Chat {
@@ -496,6 +499,7 @@ export class ChatService {
     input: RemoveChatMemberRequest
   ): ChatMembershipMutationResponse {
     const fingerprint = membershipRequestFingerprint("remove", chatId, targetUserId, input);
+    let removed = false;
     const result = this.store.immediateTransaction(() => {
       const replay = this.#membershipReplay(actorUserId, input.clientNonce, fingerprint);
       if (replay !== null) return { response: replay, events: [] as StoredEvent[] };
@@ -533,6 +537,7 @@ export class ChatService {
         now
       );
       if (membership === null) throw conflict("Chat membership revision is stale");
+      removed = true;
       this.#storeMembershipReceipt({
         actorUserId,
         clientNonce: input.clientNonce,
@@ -591,6 +596,10 @@ export class ChatService {
       return { response: { membership: this.#membershipView(membership), replayed: false }, events };
     });
     this.publisher.publish(result.events);
+    // Call control reconciliation rides outside the membership transaction:
+    // chat state is already committed; call revocation is idempotent and
+    // retried on the next removal if it fails here.
+    if (removed) this.hooks?.onMemberRemoved?.(chatId, targetUserId);
     return result.response;
   }
 
