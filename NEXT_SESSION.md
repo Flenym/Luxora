@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS оба воркфлоу: Node/Web/Desktop 4m27s, Security 2m31s) готовы и запушены; WAV duration DONE (локально зелёный, uncommitted). Локально зелёный: protocol 17/104 build, API 91/703, оба typecheck; последняя миграция по-прежнему 037.
+**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s) готовы и запушены. Локально зелёный: protocol 17/104 build, API 91/703, оба typecheck; последняя миграция 037.
 
 ## Как продолжить без потери контекста
 
@@ -13,7 +13,7 @@
 
 ## Ближайшая очередь
 
-1. WAV duration verification DONE (локально, uncommitted); остаток — audio/video non-WAV duration + waveform честно `client_declared`, then search → calls signaling.
+1. Calls signaling first slice (create/get/end поверх call-control executor); остаток — invite/ring/push/grants/webhooks, затем search.
 2. Export/delete, QR-linking, contact discovery.
 3. Финальный QA.
 
