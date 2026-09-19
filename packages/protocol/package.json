@@ -29,7 +29,7 @@
   },
   "devDependencies": {
     "typescript": "^5.8.2",
-    "vitest": "^3.0.8"
+    "vitest": "^5.0.1"
   },
   "engines": {
     "node": ">=22.0.0"
