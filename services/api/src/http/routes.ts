@@ -53,6 +53,8 @@ import {
   UpsertPushRegistrationSchema,
   VerifyPhoneChallengeSchema,
   CreateDataExportRequestSchema,
+  CreateDeviceLinkChallengeRequestSchema,
+  DeviceLinkChallengeSecretSchema,
   ScheduleAccountDeletionRequestSchema,
   CreateCallRequestSchema,
   CancelCallRequestSchema,
@@ -82,6 +84,7 @@ import type { ProfileAvatarService } from "../services/profile-avatar-service.js
 import type { SearchService } from "../services/search-service.js";
 import type { UploadService } from "../services/upload-service.js";
 import type { DataExportService } from "../services/data-export-service.js";
+import type { DeviceLinkService } from "../services/device-link-service.js";
 import type { CallService } from "../services/call-service.js";
 import { createIdentityRateLimitGuards } from "./identity-rate-limit.js";
 
@@ -119,6 +122,7 @@ interface RouteDependencies {
   storage: StorageProvider;
   metrics: Metrics;
   dataExports: DataExportService;
+  deviceLinks: DeviceLinkService;
   accountDeletion: AccountDeletionService;
   calls: CallService;
   serverSearchConfigured: boolean;
@@ -1125,6 +1129,34 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const raw = request.body as unknown;
     if (!Buffer.isBuffer(raw)) throw badRequest("LiveKit webhook body must be raw bytes");
     return reply.send(await dependencies.calls.handleLivekitWebhook(raw, request.headers.authorization));
+  });
+
+  // Authenticated QR device linking, first slice (IDENTITY_ACCESS §10):
+  // challenge lifecycle only. Creation is bearer-free (the target device is
+  // not logged in yet) with a strict bucket; poll/close authenticate with
+  // the link secret from the body (never a bearer session, never a query).
+  app.post("/v1/device-links/challenges", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const input = CreateDeviceLinkChallengeRequestSchema.parse(request.body ?? {});
+    const result = dependencies.deviceLinks.createChallenge(input, new Date());
+    return reply.code(201).send(result);
+  });
+
+  app.post("/v1/device-links/challenges/:id/poll", {
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = DeviceLinkChallengeSecretSchema.parse(request.body ?? {});
+    return dependencies.deviceLinks.pollChallenge(id, input.linkSecret, new Date());
+  });
+
+  app.post("/v1/device-links/challenges/:id/close", {
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = DeviceLinkChallengeSecretSchema.parse(request.body ?? {});
+    return dependencies.deviceLinks.closeChallenge(id, input.linkSecret, new Date());
   });
 }
 

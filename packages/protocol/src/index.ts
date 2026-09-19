@@ -2380,6 +2380,48 @@ export const HangupCallRequestSchema = z.object({
   scope: z.enum(["self", "everyone"])
 }).strict();
 
+// Authenticated QR device linking, first slice (IDENTITY_ACCESS §10):
+// challenge lifecycle only (create/poll/close/expire). Approval, grant
+// redemption and session issuance arrive in later slices. The link secret is
+// a 256-bit server random returned once at creation; the server stores only
+// its SHA-256 digest. Polling never reveals account data.
+export const DeviceLinkChallengeStateSchema = z.enum([
+  "pending",
+  "approved",
+  "denied",
+  "expired",
+  "consumed",
+  "closed"
+]);
+
+export const DeviceLinkSecretSchema = z.string().regex(/^[a-f0-9]{64}$/);
+
+export const CreateDeviceLinkChallengeRequestSchema = z.object({
+  targetLabel: z.string().trim().min(1).max(64).optional()
+}).strict();
+
+export const CreateDeviceLinkChallengeResponseSchema = z.object({
+  linkId: IdSchema,
+  linkSecret: DeviceLinkSecretSchema,
+  expiresAt: TimestampSchema,
+  pollIntervalMs: z.number().int().positive()
+});
+
+export const DeviceLinkChallengeSchema = z.object({
+  linkId: IdSchema,
+  state: DeviceLinkChallengeStateSchema,
+  expiresAt: TimestampSchema,
+  retryAfterMs: z.number().int().nonnegative()
+});
+
+export const DeviceLinkChallengeSecretSchema = z.object({
+  linkSecret: DeviceLinkSecretSchema.optional()
+}).strict();
+
+export const DeviceLinkChallengeResponseSchema = z.object({
+  challenge: DeviceLinkChallengeSchema
+});
+
 export const MessageRequestStateSchema = z.enum([
   "pending",
   "accepted",
@@ -3352,3 +3394,8 @@ export type CallTrackSource = z.infer<typeof CallTrackSourceSchema>;
 export type JoinGrantRequest = z.infer<typeof JoinGrantRequestSchema>;
 export type JoinGrantResponse = z.infer<typeof JoinGrantResponseSchema>;
 export type HangupCallRequest = z.infer<typeof HangupCallRequestSchema>;
+export type DeviceLinkChallengeState = z.infer<typeof DeviceLinkChallengeStateSchema>;
+export type CreateDeviceLinkChallengeRequest = z.infer<typeof CreateDeviceLinkChallengeRequestSchema>;
+export type CreateDeviceLinkChallengeResponse = z.infer<typeof CreateDeviceLinkChallengeResponseSchema>;
+export type DeviceLinkChallenge = z.infer<typeof DeviceLinkChallengeSchema>;
+export type DeviceLinkChallengeResponse = z.infer<typeof DeviceLinkChallengeResponseSchema>;

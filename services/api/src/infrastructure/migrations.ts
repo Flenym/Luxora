@@ -4219,5 +4219,25 @@ export const migrations: Migration[] = [
       INSERT INTO call_rooms (room_name, call_id)
         SELECT json_extract(snapshot_json, '$.roomName'), call_id FROM calls;
     `
+  },
+  {
+    id: "040_device_link_challenges",
+    sql: `
+      CREATE TABLE device_link_challenges (
+        link_id TEXT PRIMARY KEY,
+        link_secret_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+          status IN ('pending', 'approved', 'denied', 'expired', 'consumed', 'closed')
+        ),
+        target_label TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        decided_at TEXT,
+        last_polled_at TEXT,
+        poll_count INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      CREATE INDEX idx_device_link_expiry
+        ON device_link_challenges(status, expires_at);
+    `
   }
 ];

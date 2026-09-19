@@ -42,7 +42,8 @@ const PUBLIC_HTTP_POLICIES = [
   "POST /v1/auth/phone/recovery/complete",
   "POST /v1/auth/phone/registrations",
   "POST /v1/auth/phone/usernames/check",
-  "GET /openapi.json"
+  "GET /openapi.json",
+  "POST /v1/device-links/challenges"
 ] as const;
 
 // Every explicitly registered protected HTTP route must appear here. The
@@ -507,6 +508,18 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
     payload: { event: "room_finished" },
     headers: { "content-type": "application/webhook+json" }
   },
+  // Device-link poll/close authenticate with the link secret from the body,
+  // never a bearer session: a secretless probe must 401 without side effects.
+  {
+    key: "POST /v1/device-links/challenges/:id/poll",
+    method: "POST",
+    url: `/v1/device-links/challenges/${RESOURCE_ID_CANARY}/poll`
+  },
+  {
+    key: "POST /v1/device-links/challenges/:id/close",
+    method: "POST",
+    url: `/v1/device-links/challenges/${RESOURCE_ID_CANARY}/close`
+  },
   {
     key: "GET /v1/search/messages",
     method: "GET",
@@ -706,7 +719,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(112);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(114);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

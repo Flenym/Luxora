@@ -156,6 +156,12 @@
 > **Дополнение 2026-09-19 (conversation search, DONE, локально зелёный):**
 > `GET /v1/search/chats?q=&limit&cursor` — substring по titles групп/каналов только текущих memberships, `updated_at` DESC + cursor (`limit+1`, garbage cursor `400`); titles plaintext (без blind index и hasher-gate), `LIKE`-wildcards экранированы (литеральное совпадение), ASCII case-insensitive (`COLLATE NOCASE`), полный Unicode-folding честно отложен на token-index follow-up; директы исключены (DM через people search).
 > Без миграции и без protocol-изменений (локальный `CursorQuerySchema`-extend в routes, `q 1..80`), матрица 111→112. Тесты локально: новый `search-chats.integration` 2/2 (substring+pagination, wildcards+isolation), API typecheck clean, полный API 97 файлов / 724 теста PASS. Честный остаток: Unicode-folding, public-spaces catalog (SPC-007), offline-индекс, iPhone chats scope пока local-only.
+>
+> **Дополнение 2026-09-19 (QR device linking slice 1, DONE, локально зелёный):**
+> миграция `040_device_link_challenges` (`device_link_challenges` + `idx_device_link_expiry`); `DeviceLinkService`: `POST /v1/device-links/challenges` PUBLIC bearer-free 10/min (`linkId` + 256-bit `linkSecret` once + `expiresAt` +120s + `pollIntervalMs` 2000), `POST .../:id/poll {linkSecret?}` secret-first (unknown id / wrong-missing secret → identical 401 без oracle, lazy pending→expired, 2s min → 429 retry-after через AppError details, terminal skip throttle), `POST .../:id/close` pending→closed convergent.
+> сервер хранит только SHA-256 digest (`luxora-device-link-v1` domain), secret не логируется/не хранится; polling не раскрывает account data; sweeper на старте + 10-мин timer (expire pending + purge terminal старше 24h); approval/grant/session issuance явно НЕ в этом слайсе.
+> матрица: create → PUBLIC list, poll+close → PROTECTED (secretless probes 401 без side effects), 112→114 protected. Тесты локально: `device-links.integration` 3/3, matrix green, API typecheck clean, protocol typecheck+build clean, инвентаризации миграций обновлены (040 в chain+identity+passkey-authenticator).
+> полный API 98 файлов / 727 тестов PASS. Честный остаток: approval (step-up+SAS) slice 2, grant redemption + session issuance slice 3, New-device-linked notifications, затем QR-linking done → contact discovery (spec-LATER, upload НЕ делать) → final QA.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

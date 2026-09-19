@@ -46,6 +46,7 @@ import { ChatDraftService } from "./services/chat-draft-service.js";
 import { ChatService } from "./services/chat-service.js";
 import { DataExportService } from "./services/data-export-service.js";
 import { DataExportRetentionWorker } from "./services/data-export-retention-worker.js";
+import { DeviceLinkService } from "./services/device-link-service.js";
 import { AccountDeletionService } from "./services/account-deletion-service.js";
 import { IdentityAccessService } from "./services/identity-access-service.js";
 import { NotificationService } from "./services/notification-service.js";
@@ -461,6 +462,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const attachments = new AttachmentService(store, storage);
   const dataExports = new DataExportService(store, storage);
   const dataExportRetention = new DataExportRetentionWorker(store, storage);
+  const deviceLinks = new DeviceLinkService(store);
   const accountDeletion = new AccountDeletionService(store);
   const profileAvatars = new ProfileAvatarService(
     store,
@@ -666,6 +668,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     dataExports,
     accountDeletion,
     calls,
+    deviceLinks,
     serverSearchConfigured: searchHasher.available,
     authGuard
   });
@@ -827,6 +830,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   } catch (error) {
     app.log.error({ err: error }, "Initial data export retention sweep failed");
   }
+  try {
+    const linkResult = deviceLinks.sweep(new Date());
+    if (linkResult.expired > 0 || linkResult.purged > 0) {
+      app.log.info(linkResult, "Device link challenges swept on startup");
+    }
+  } catch (error) {
+    app.log.error({ err: error }, "Initial device link sweep failed");
+  }
   scheduledTimer = setInterval(() => {
     try {
       const dispatched = chats.dispatchDueScheduledMessages(new Date());
@@ -897,6 +908,14 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     }).catch((error: unknown) => {
       app.log.error({ err: error }, "Periodic stale call sweep failed");
     });
+    try {
+      const linkResult = deviceLinks.sweep(new Date());
+      if (linkResult.expired > 0 || linkResult.purged > 0) {
+        app.log.info(linkResult, "Device link challenges swept");
+      }
+    } catch (error) {
+      app.log.error({ err: error }, "Periodic device link sweep failed");
+    }
   }, 10 * 60_000);
   cleanupTimer.unref();
   return app;

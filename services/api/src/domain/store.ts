@@ -97,7 +97,9 @@ import type {
   ExportChatRow,
   ExportAttachmentRow,
   AccountDeletionRecord,
-  AccountDeletionState
+  AccountDeletionState,
+  DeviceLinkChallengeRecord,
+  DeviceLinkChallengeStatus
 } from "./types.js";
 
 export interface NewUser {
@@ -1289,4 +1291,23 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   findCallCommandReceipt(scope: string): CommandReceipt | null;
   findCallCreationReceipt(scope: string): CreationReceipt | null;
   commitCallMutation(input: PersistCallMutation): void;
+
+  // Device link challenges (IDENTITY_ACCESS §10, first slice: lifecycle)
+  createDeviceLinkChallenge(input: {
+    linkId: string;
+    linkSecretHash: string;
+    targetLabel: string | null;
+    createdAt: string;
+    expiresAt: string;
+  }): void;
+  findDeviceLinkChallenge(linkId: string): DeviceLinkChallengeRecord | null;
+  touchDeviceLinkChallenge(linkId: string, at: string): void;
+  transitionDeviceLinkChallenge(
+    linkId: string,
+    fromStatus: DeviceLinkChallengeStatus,
+    toStatus: DeviceLinkChallengeStatus,
+    at: string
+  ): boolean;
+  expireDeviceLinkChallenges(now: string, limit: number): number;
+  purgeDeviceLinkChallenges(before: string, limit: number): number;
 }

@@ -177,7 +177,9 @@ import type {
   ExportChatRow,
   ExportAttachmentRow,
   AccountDeletionRecord,
-  AccountDeletionState
+  AccountDeletionState,
+  DeviceLinkChallengeRecord,
+  DeviceLinkChallengeStatus
 } from "../domain/types.js";
 import type { ContentCipher } from "./content-cipher.js";
 import { PlaintextContentCipher } from "./content-cipher.js";
@@ -219,6 +221,18 @@ interface AccountDeletionRow {
   completed_at: string | null;
   failed_at: string | null;
   last_error: string | null;
+}
+
+interface DeviceLinkChallengeRow {
+  link_id: string;
+  link_secret_hash: string;
+  status: DeviceLinkChallengeStatus;
+  target_label: string | null;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  last_polled_at: string | null;
+  poll_count: number;
 }
 
 interface SessionRow {
@@ -11211,6 +11225,88 @@ export class SqliteStore implements Store {
       SET state = 'expired', deleted_at = COALESCE(deleted_at, @at)
       WHERE account_id = @accountId AND state != 'expired'
     `).run({ accountId, at });
+  }
+
+  // Device link challenges (IDENTITY_ACCESS §10, first slice: lifecycle).
+  createDeviceLinkChallenge(input: {
+    linkId: string;
+    linkSecretHash: string;
+    targetLabel: string | null;
+    createdAt: string;
+    expiresAt: string;
+  }): void {
+    this.#db.prepare(`
+      INSERT INTO device_link_challenges (link_id, link_secret_hash, status, target_label, created_at, expires_at)
+      VALUES (@linkId, @linkSecretHash, 'pending', @targetLabel, @createdAt, @expiresAt)
+    `).run(input);
+  }
+
+  findDeviceLinkChallenge(linkId: string): DeviceLinkChallengeRecord | null {
+    const row = this.#db.prepare(`
+      SELECT * FROM device_link_challenges WHERE link_id = ?
+    `).get(linkId) as DeviceLinkChallengeRow | undefined;
+    if (row === undefined) return null;
+    return {
+      linkId: row.link_id,
+      linkSecretHash: row.link_secret_hash,
+      status: row.status,
+      targetLabel: row.target_label,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      decidedAt: row.decided_at,
+      lastPolledAt: row.last_polled_at,
+      pollCount: row.poll_count
+    };
+  }
+
+  touchDeviceLinkChallenge(linkId: string, at: string): void {
+    this.#db.prepare(`
+      UPDATE device_link_challenges
+      SET last_polled_at = @at, poll_count = poll_count + 1
+      WHERE link_id = @linkId
+    `).run({ linkId, at });
+  }
+
+  transitionDeviceLinkChallenge(
+    linkId: string,
+    fromStatus: DeviceLinkChallengeStatus,
+    toStatus: DeviceLinkChallengeStatus,
+    at: string
+  ): boolean {
+    const result = this.#db.prepare(`
+      UPDATE device_link_challenges
+      SET status = @toStatus, decided_at = @at
+      WHERE link_id = @linkId AND status = @fromStatus
+    `).run({ linkId, fromStatus, toStatus, at });
+    return result.changes === 1;
+  }
+
+  expireDeviceLinkChallenges(now: string, limit: number): number {
+    const result = this.#db.prepare(`
+      UPDATE device_link_challenges
+      SET status = 'expired', decided_at = @now
+      WHERE rowid IN (
+        SELECT rowid FROM device_link_challenges
+        WHERE status = 'pending' AND expires_at <= @now
+        ORDER BY expires_at, link_id
+        LIMIT @limit
+      )
+    `).run({ now, limit });
+    return Number(result.changes);
+  }
+
+  purgeDeviceLinkChallenges(before: string, limit: number): number {
+    const result = this.#db.prepare(`
+      DELETE FROM device_link_challenges
+      WHERE rowid IN (
+        SELECT rowid FROM device_link_challenges
+        WHERE status IN ('expired', 'denied', 'consumed', 'closed')
+          AND COALESCE(decided_at, created_at) <= @before
+        ORDER BY COALESCE(decided_at, created_at), link_id
+        LIMIT @limit
+      )
+    `).run({ before, limit });
+    return Number(result.changes);
   }
 
   // Call control records (CALLS_PLATFORM §7). Snapshots, events, outbox

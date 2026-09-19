@@ -575,6 +575,26 @@ export interface DataExportRow {
   object_deleted_at: string | null;
 }
 
+export type DeviceLinkChallengeStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "consumed"
+  | "closed";
+
+export interface DeviceLinkChallengeRecord {
+  linkId: string;
+  linkSecretHash: string;
+  status: DeviceLinkChallengeStatus;
+  targetLabel: string | null;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+  lastPolledAt: string | null;
+  pollCount: number;
+}
+
 export interface ExportMessageRow {
   id: string;
   chatId: string;
