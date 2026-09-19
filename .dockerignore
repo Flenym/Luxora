@@ -27,6 +27,13 @@
 !packages/passkey-domain/src/
 !packages/passkey-domain/src/**
 
+!packages/call-control/
+!packages/call-control/package.json
+!packages/call-control/package-lock.json
+!packages/call-control/tsconfig.json
+!packages/call-control/src/
+!packages/call-control/src/**
+
 !services/api/Dockerfile
 
 !tools/

@@ -109,7 +109,8 @@
 > на сервере, `roomName`/device/session наружу нет, `calls:false`; честный остаток —
 > invite/ring/push/grants/webhooks. API typecheck clean, `calls-signaling.integration` 3/3,
 > auth-матрица 101→105 protected routes; полный API 92 файла / 706 тестов PASS,
-> protocol 17/104 PASS, оба typecheck PASS.
+> protocol 17/104 PASS, оба typecheck PASS. CI: Node PASS, Security FAIL (Docker-образ
+> не копировал `@luxora/call-control`) → фикс: Dockerfile + .dockerignore + DEPLOY.md.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

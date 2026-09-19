@@ -14,6 +14,12 @@ RUN npm ci --no-audit --no-fund
 COPY packages/passkey-domain/src ./src
 RUN npm run build && npm prune --omit=dev
 
+WORKDIR /app/packages/call-control
+COPY packages/call-control/package*.json packages/call-control/tsconfig.json ./
+RUN npm ci --no-audit --no-fund
+COPY packages/call-control/src ./src
+RUN npm run build && npm prune --omit=dev
+
 WORKDIR /app/services/api
 COPY services/api/package*.json services/api/tsconfig.json ./
 RUN npm ci --no-audit --no-fund
@@ -38,6 +44,9 @@ COPY --from=build --chown=65532:65532 /app/packages/protocol/dist /app/packages/
 COPY --from=build --chown=65532:65532 /app/packages/passkey-domain/package.json /app/packages/passkey-domain/package.json
 COPY --from=build --chown=65532:65532 /app/packages/passkey-domain/node_modules /app/packages/passkey-domain/node_modules
 COPY --from=build --chown=65532:65532 /app/packages/passkey-domain/dist /app/packages/passkey-domain/dist
+COPY --from=build --chown=65532:65532 /app/packages/call-control/package.json /app/packages/call-control/package.json
+COPY --from=build --chown=65532:65532 /app/packages/call-control/node_modules /app/packages/call-control/node_modules
+COPY --from=build --chown=65532:65532 /app/packages/call-control/dist /app/packages/call-control/dist
 COPY --from=build --chown=65532:65532 /app/services/api/package.json ./package.json
 COPY --from=build --chown=65532:65532 /app/services/api/node_modules ./node_modules
 COPY --from=build --chown=65532:65532 /app/services/api/dist ./dist

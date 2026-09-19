@@ -53,7 +53,7 @@ curl --fail http://127.0.0.1:8080/openapi.json >/dev/null
 
 ## 4. Docker build and Compose
 
-The Dockerfile copies both protocol and API, so build context must be repository root:
+The Dockerfile copies the protocol, passkey-domain and call-control packages plus the API, so build context must be repository root:
 
 ```bash
 docker build -f services/api/Dockerfile -t luxora-api:beta-0.1 .

@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s) готовы и запушены. Calls signaling first slice DONE локально (uncommitted). Локально зелёный: protocol 17/104 build, API 92/706, оба typecheck; последняя миграция 038 (`038_call_control_records`).
+**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s) готовы и запушены. Calls signaling first slice DONE локально (uncommitted). Локально зелёный: protocol 17/104 build, API 92/706, оба typecheck; последняя миграция 038 (`038_call_control_records`). CI calls-слайса: Node PASS, Security FAIL (Docker без call-control) → фикс в рабочем дереве.
 
 ## Как продолжить без потери контекста
 
