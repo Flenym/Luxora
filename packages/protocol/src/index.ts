@@ -2251,6 +2251,100 @@ export const CancelAccountDeletionResponseSchema = z.object({
 
 export const ScheduleAccountDeletionRequestSchema = z.object({}).strict();
 
+// Calls signaling first slice (CALLS_PLATFORM §7): lifecycle records only —
+// create/get/cancel/hangup for direct chats. No invite/ring/push, no
+// join-grants, no webhooks yet. Internal media identifiers (roomName) and
+// device/session internals never leave the server in this slice.
+export const CallKindSchema = z.enum(["one_to_one", "group", "scheduled"]);
+export const CallMediaModeSchema = z.enum(["audio", "video"]);
+export const CallStateSchema = z.enum([
+  "created",
+  "inviting",
+  "ringing",
+  "connecting",
+  "active",
+  "reconnecting",
+  "ending",
+  "ended"
+]);
+export const CallEndReasonSchema = z.enum([
+  "declined",
+  "cancelled",
+  "no-answer",
+  "busy",
+  "membership-revoked",
+  "kicked",
+  "network-timeout",
+  "server-failure",
+  "completed"
+]);
+export const CallParticipantRoleSchema = z.enum(["host", "member"]);
+export const CallParticipantStatusSchema = z.enum([
+  "invited",
+  "ringing",
+  "accepted",
+  "connecting",
+  "active",
+  "reconnecting",
+  "declined",
+  "left",
+  "kicked",
+  "revoked"
+]);
+
+export const CallParticipantSchema = z.object({
+  membershipId: IdSchema,
+  memberId: IdSchema,
+  role: CallParticipantRoleSchema,
+  status: CallParticipantStatusSchema,
+  membershipEpoch: z.number().int().min(1),
+  invitedAtMs: z.number().int().nonnegative(),
+  acceptedAtMs: z.number().int().nonnegative().nullable(),
+  activeAtMs: z.number().int().nonnegative().nullable(),
+  removedAtMs: z.number().int().nonnegative().nullable()
+});
+
+export const CallResponseSchema = z.object({
+  callId: IdSchema,
+  chatId: IdSchema,
+  kind: CallKindSchema,
+  mediaMode: CallMediaModeSchema,
+  state: CallStateSchema,
+  revision: z.number().int().min(1),
+  epoch: z.number().int().min(1),
+  creatorMemberId: IdSchema,
+  participants: z.array(CallParticipantSchema).max(256),
+  createdAtMs: z.number().int().nonnegative(),
+  updatedAtMs: z.number().int().nonnegative(),
+  pendingEndReason: CallEndReasonSchema.nullable(),
+  endReason: CallEndReasonSchema.nullable(),
+  endedAtMs: z.number().int().nonnegative().nullable()
+});
+
+export const CreateCallRequestSchema = z.object({
+  chatId: IdSchema,
+  mediaMode: CallMediaModeSchema,
+  clientNonce: IdSchema
+}).strict();
+
+export const CreateCallResponseSchema = z.object({
+  call: CallResponseSchema,
+  replayed: z.boolean()
+});
+
+export const CallStatusResponseSchema = z.object({
+  call: CallResponseSchema
+});
+
+export const CancelCallRequestSchema = z.object({
+  expectedRevision: z.number().int().nonnegative()
+}).strict();
+
+export const HangupCallRequestSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  scope: z.enum(["self", "everyone"])
+}).strict();
+
 export const MessageRequestStateSchema = z.enum([
   "pending",
   "accepted",
@@ -3205,3 +3299,16 @@ export type AccountDeletionStatusResponse = z.infer<typeof AccountDeletionStatus
 export type ScheduleAccountDeletionResponse = z.infer<typeof ScheduleAccountDeletionResponseSchema>;
 export type CancelAccountDeletionResponse = z.infer<typeof CancelAccountDeletionResponseSchema>;
 export type ScheduleAccountDeletionRequest = z.infer<typeof ScheduleAccountDeletionRequestSchema>;
+export type CallKind = z.infer<typeof CallKindSchema>;
+export type CallMediaMode = z.infer<typeof CallMediaModeSchema>;
+export type CallState = z.infer<typeof CallStateSchema>;
+export type CallEndReason = z.infer<typeof CallEndReasonSchema>;
+export type CallParticipantRole = z.infer<typeof CallParticipantRoleSchema>;
+export type CallParticipantStatus = z.infer<typeof CallParticipantStatusSchema>;
+export type CallParticipant = z.infer<typeof CallParticipantSchema>;
+export type CallResponse = z.infer<typeof CallResponseSchema>;
+export type CreateCallRequest = z.infer<typeof CreateCallRequestSchema>;
+export type CreateCallResponse = z.infer<typeof CreateCallResponseSchema>;
+export type CallStatusResponse = z.infer<typeof CallStatusResponseSchema>;
+export type CancelCallRequest = z.infer<typeof CancelCallRequestSchema>;
+export type HangupCallRequest = z.infer<typeof HangupCallRequestSchema>;

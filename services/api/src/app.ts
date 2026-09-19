@@ -40,6 +40,7 @@ import { StepUpTokenSecurity } from "./passkeys/step-up-token.js";
 import { StorePasskeyCredentialRepository } from "./passkeys/store-passkey-repository.js";
 import { AttachmentService } from "./services/attachment-service.js";
 import { AuthService } from "./services/auth-service.js";
+import { CallService } from "./services/call-service.js";
 import { ChatFolderService } from "./services/chat-folder-service.js";
 import { ChatDraftService } from "./services/chat-draft-service.js";
 import { ChatService } from "./services/chat-service.js";
@@ -448,6 +449,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const attachments = new AttachmentService(store, storage);
   const dataExports = new DataExportService(store, storage);
   const dataExportRetention = new DataExportRetentionWorker(store, storage);
+  const calls = new CallService(store);
   const accountDeletion = new AccountDeletionService(store);
   const profileAvatars = new ProfileAvatarService(
     store,
@@ -643,6 +645,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     metrics,
     dataExports,
     accountDeletion,
+    calls,
     serverSearchConfigured: searchHasher.available,
     authGuard
   });

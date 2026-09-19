@@ -4168,5 +4168,45 @@ export const migrations: Migration[] = [
     sql: `
       ALTER TABLE data_exports ADD COLUMN object_deleted_at TEXT;
     `
+  },
+  {
+    id: "038_call_control_records",
+    sql: `
+      CREATE TABLE calls (
+        call_id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+        snapshot_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX idx_calls_chat ON calls(chat_id, created_at);
+      CREATE TABLE call_events (
+        event_id TEXT PRIMARY KEY,
+        call_id TEXT NOT NULL REFERENCES calls(call_id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        occurred_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX idx_call_events_call ON call_events(call_id, revision);
+      CREATE TABLE call_outbox (
+        outbox_id TEXT PRIMARY KEY,
+        call_id TEXT NOT NULL REFERENCES calls(call_id) ON DELETE CASCADE,
+        payload_json TEXT NOT NULL,
+        available_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE call_command_receipts (
+        scope TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE call_creation_receipts (
+        scope TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL
+      ) STRICT;
+    `
   }
 ];

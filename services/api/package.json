@@ -23,6 +23,7 @@
     "@fastify/websocket": "^11.0.1",
     "@luxora/passkey-domain": "file:../../packages/passkey-domain",
     "@luxora/protocol": "file:../../packages/protocol",
+    "@luxora/call-control": "file:../../packages/call-control",
     "@simplewebauthn/server": "13.3.2",
     "argon2": "^0.41.1",
     "better-sqlite3": "^11.8.1",

@@ -766,6 +766,10 @@ next sweep. `GET /v1/account/deletion` returns the current record (or
 to the current bearer session; a different account cannot read or cancel it
 (`404` on cancel when none is scheduled).
 
+### Calls (first slice)
+
+First-slice call signaling persists in migration `038_call_control_records` (`calls`, `call_events`, `call_outbox`, `call_command_receipts`, `call_creation_receipts`) through a new `CallService` wrapping the audited `@luxora/call-control` `CallControlExecutor` with a SQLite adapter (atomic commit, CAS plus idempotency receipts). `POST /v1/calls` creates a call in direct chats only (`201`), `GET /v1/calls/:id` is participant-only (stranger `404`), `POST /v1/calls/:id/cancel` is host-only and `POST /v1/calls/:id/hangup` ends for self/everyone, with the participant actor device always taken from the current session. Retrying the same `clientNonce` returns the same `callId` with `replayed:true` instead of creating a second call. `409` covers an offline peer (invitee device is the peer's latest live session) and a stale `expectedRevision` (the response carries the current snapshot). Calls reaching `ending` are finalized to `ended` server-side immediately, while media-plane confirmation arrives later with webhooks. Projections never expose `roomName`/device/session internals and `GET /v1/capabilities` keeps `calls:false`. Invite/ring/push/grants/webhooks are explicitly not yet implemented and come next.
+
 ## 8. Core response shapes
 
 `User`: `id`, `username`, `displayName`, `bio`, legacy nullable `avatarUrl`, authenticated nullable `avatarPath`, `createdAt`, optional presence/lastSeen.

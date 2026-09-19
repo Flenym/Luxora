@@ -99,6 +99,17 @@
 > upload-complete для `audio`/`voice` с `audio/wav` безусловно принимает измеренный durationMs + `server_verified`;
 > остальной audio и waveform честно остаются `client_declared`, waveform untouched;
 > тесты `wav-duration.test.ts` 4/4 + `media-wav-duration.integration.test.ts` 1/1 (ложный 5000ms → измеренный 1000ms), API typecheck clean.
+>
+> **Дополнение 2026-09-19 (calls signaling first slice, DONE, локально зелёный):**
+> миграция `038_call_control_records` (`calls`, `call_events`, `call_outbox`,
+> `call_command_receipts`, `call_creation_receipts`); `CallService` поверх аудированного
+> `@luxora/call-control` executor + SQLite-адаптер (atomic commit, CAS + idempotency receipts).
+> Маршруты `POST /v1/calls` (только direct, 201), `GET /v1/calls/:id` (stranger 404),
+> `POST .../cancel` (host only), `POST .../hangup` (self/everyone); `ending → ended` сразу
+> на сервере, `roomName`/device/session наружу нет, `calls:false`; честный остаток —
+> invite/ring/push/grants/webhooks. API typecheck clean, `calls-signaling.integration` 3/3,
+> auth-матрица 101→105 protected routes; полный API 92 файла / 706 тестов PASS,
+> protocol 17/104 PASS, оба typecheck PASS.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

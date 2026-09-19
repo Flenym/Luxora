@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-19 · image thumbnails `8bae86a` CI PASS (оба воркфлоу) + WAV duration DONE (локально, uncommitted), API 91/703
+**Обновлено:** 2026-09-19 · calls signaling first slice DONE (локально, uncommitted) + image thumbnails `8bae86a` CI PASS (оба воркфлоу) + WAV duration DONE (локально, uncommitted), API 92/706
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Calls signaling first slice DONE (локально, uncommitted): миграция `038_call_control_records`, `CallService` поверх `@luxora/call-control` executor + SQLite-адаптер, маршруты create/get/cancel/hangup, `calls-signaling.integration` 3/3, auth-матрица 101→105, остаток — invite/ring/push/grants/webhooks.
 - WAV duration verification DONE (локально, uncommitted): pure-TS `measureWavDuration` (RIFF walk, PCM/float/extensible), `complete()` для `audio`/`voice` + `audio/wav` принимает измеренный durationMs + `server_verified`, остальной audio/waveform честно `client_declared`; тесты 4/4 + 1/1 (5000ms claim → 1000ms measured), API typecheck clean.
 - Image thumbnails (`8bae86a`, CI PASS оба воркфлоу: Node/Web/Desktop 4m27s, Security 2m31s, 89/698): sharp-JPEG 320px q80 в `complete()` для image >320px (best-effort), `GET /v1/attachments/:id/thumbnail` owner-or-granted (stranger 404/anonymous 401, no-store), protocol `thumbnailPath?` + `thumbnail{sha256,sizeBytes,width,height}?`, без миграции, orphan/export покрытие, AVIF/HEIC + audio/video duration/waveform честно `client_declared`.
 - Data export retention worker (локально зелёный, 87/689): миграция `037_data_export_retention` (`data_exports.object_deleted_at`), `DataExportRetentionWorker.sweep(now)` переводит готовые с истёкшим `expires_at` в `expired` и удаляет storage-объекты истёкших с пометкой `object_deleted_at`, запуск на старте + каждые 10 минут; unit 4/4, protocol 17/104 PASS, оба typecheck PASS (спека §14.3: 7 дней после ready, удаление объекта в пределах 24ч).

@@ -22,6 +22,17 @@ import {
   type IssuedChallenge,
   type PersistCeremonyMutation
 } from "@luxora/passkey-domain";
+import {
+  assertCallInvariants,
+  StoreDuplicateCommandError as CallStoreDuplicateCommandError,
+  StoreDuplicateCreationError as CallStoreDuplicateCreationError,
+  StoreRevisionConflictError as CallStoreRevisionConflictError,
+  type CallAggregate,
+  type CommandReceipt as CallCommandReceipt,
+  type CreationReceipt as CallCreationReceipt,
+  type PersistCallMutation,
+  type StoredCommandResult
+} from "@luxora/call-control";
 import type {
   Attachment,
   Chat,
@@ -47,7 +58,7 @@ import {
   DurableRealtimeEventSchema,
   IdSchema
 } from "@luxora/protocol";
-import { badRequest, conflict } from "../errors.js";
+import { badRequest, conflict, serviceUnavailable } from "../errors.js";
 import { readThumbnailInfo, thumbnailPathFor } from "../domain/attachment-thumbnail.js";
 import type {
   AttachMessageTranscript,
@@ -11164,6 +11175,125 @@ export class SqliteStore implements Store {
       SET state = 'expired', deleted_at = COALESCE(deleted_at, @at)
       WHERE account_id = @accountId AND state != 'expired'
     `).run({ accountId, at });
+  }
+
+  // Call control records (CALLS_PLATFORM §7). Snapshots, events, outbox
+  // payloads and receipts are written atomically; the executor reconciles
+  // CAS-before-receipt and receipt-before-CAS orderings on conflict.
+  loadCallAggregate(callId: string): CallAggregate | null {
+    const row = this.#db.prepare(`
+      SELECT snapshot_json FROM calls WHERE call_id = ?
+    `).get(callId) as { snapshot_json: string } | undefined;
+    if (row === undefined) return null;
+    let snapshot: CallAggregate;
+    try {
+      snapshot = JSON.parse(row.snapshot_json) as CallAggregate;
+      assertCallInvariants(snapshot);
+    } catch {
+      throw serviceUnavailable("Call record is corrupt");
+    }
+    return snapshot;
+  }
+
+  findCallCommandReceipt(scope: string): CallCommandReceipt | null {
+    const row = this.#db.prepare(`
+      SELECT fingerprint, result_json, created_at_ms FROM call_command_receipts WHERE scope = ?
+    `).get(scope) as { fingerprint: string; result_json: string; created_at_ms: number } | undefined;
+    if (row === undefined) return null;
+    return {
+      scope,
+      fingerprint: row.fingerprint,
+      result: JSON.parse(row.result_json) as StoredCommandResult,
+      createdAtMs: row.created_at_ms
+    };
+  }
+
+  findCallCreationReceipt(scope: string): CallCreationReceipt | null {
+    const row = this.#db.prepare(`
+      SELECT fingerprint, result_json, created_at_ms FROM call_creation_receipts WHERE scope = ?
+    `).get(scope) as { fingerprint: string; result_json: string; created_at_ms: number } | undefined;
+    if (row === undefined) return null;
+    return {
+      scope,
+      fingerprint: row.fingerprint,
+      result: JSON.parse(row.result_json) as StoredCommandResult,
+      createdAtMs: row.created_at_ms
+    };
+  }
+
+  commitCallMutation(input: PersistCallMutation): void {
+    const snapshot = input.mutation.snapshot;
+    const now = new Date(input.mutation.event.occurredAtMs).toISOString();
+    this.transaction(() => {
+      if (input.expectedRevision !== null) {
+        const current = this.#db.prepare(`
+          SELECT snapshot_json FROM calls WHERE call_id = ?
+        `).get(snapshot.callId) as { snapshot_json: string } | undefined;
+        if (current === undefined) throw new CallStoreRevisionConflictError();
+        const currentRevision = (JSON.parse(current.snapshot_json) as CallAggregate).revision;
+        if (currentRevision !== input.expectedRevision) throw new CallStoreRevisionConflictError();
+        this.#db.prepare(`
+          UPDATE calls SET snapshot_json = @snapshot, updated_at = @now WHERE call_id = @callId
+        `).run({ snapshot: JSON.stringify(snapshot), now, callId: snapshot.callId });
+      } else {
+        try {
+          this.#db.prepare(`
+            INSERT INTO calls (call_id, chat_id, snapshot_json, created_at, updated_at)
+            VALUES (@callId, @chatId, @snapshot, @now, @now)
+          `).run({
+            callId: snapshot.callId,
+            chatId: snapshot.conversationId,
+            snapshot: JSON.stringify(snapshot),
+            now
+          });
+        } catch {
+          throw new CallStoreRevisionConflictError();
+        }
+      }
+      const insertReceipt = (
+        table: "call_command_receipts" | "call_creation_receipts",
+        receipt: CallCommandReceipt | CallCreationReceipt,
+        duplicate: new () => Error
+      ): void => {
+        try {
+          this.#db.prepare(`
+            INSERT INTO ${table} (scope, fingerprint, result_json, created_at_ms)
+            VALUES (@scope, @fingerprint, @result, @createdAtMs)
+          `).run({
+            scope: receipt.scope,
+            fingerprint: receipt.fingerprint,
+            result: JSON.stringify(receipt.result),
+            createdAtMs: receipt.createdAtMs
+          });
+        } catch {
+          throw new duplicate();
+        }
+      };
+      insertReceipt("call_command_receipts", input.commandReceipt, CallStoreDuplicateCommandError);
+      if (input.creationReceipt !== null) {
+        insertReceipt("call_creation_receipts", input.creationReceipt, CallStoreDuplicateCreationError);
+      }
+      this.#db.prepare(`
+        INSERT INTO call_events (event_id, call_id, type, revision, payload_json, occurred_at_ms)
+        VALUES (@eventId, @callId, @type, @revision, @payload, @occurredAtMs)
+      `).run({
+        eventId: input.mutation.event.eventId,
+        callId: snapshot.callId,
+        type: input.mutation.event.type,
+        revision: snapshot.revision,
+        payload: JSON.stringify(input.mutation.event),
+        occurredAtMs: input.mutation.event.occurredAtMs
+      });
+      this.#db.prepare(`
+        INSERT INTO call_outbox (outbox_id, call_id, payload_json, available_at_ms)
+        VALUES (@outboxId, @callId, @payload, @availableAtMs)
+      `).run({
+        outboxId: input.mutation.outbox.outboxId,
+        callId: snapshot.callId,
+        payload: JSON.stringify(input.mutation.outbox),
+        availableAtMs: input.mutation.outbox.availableAtMs
+      });
+    });
   }
 
   #mapAccountDeletion(accountId: string): AccountDeletionRecord | null {

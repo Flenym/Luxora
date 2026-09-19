@@ -53,7 +53,10 @@ import {
   UpsertPushRegistrationSchema,
   VerifyPhoneChallengeSchema,
   CreateDataExportRequestSchema,
-  ScheduleAccountDeletionRequestSchema
+  ScheduleAccountDeletionRequestSchema,
+  CreateCallRequestSchema,
+  CancelCallRequestSchema,
+  HangupCallRequestSchema
 } from "@luxora/protocol";
 import type { AccountDeletionState, DataExportState } from "@luxora/protocol";
 import type { AccountDeletionService } from "../services/account-deletion-service.js";
@@ -76,6 +79,7 @@ import type { ProfileAvatarService } from "../services/profile-avatar-service.js
 import type { SearchService } from "../services/search-service.js";
 import type { UploadService } from "../services/upload-service.js";
 import type { DataExportService } from "../services/data-export-service.js";
+import type { CallService } from "../services/call-service.js";
 import { createIdentityRateLimitGuards } from "./identity-rate-limit.js";
 
 const IdParamSchema = z.object({ id: IdSchema });
@@ -112,6 +116,7 @@ interface RouteDependencies {
   metrics: Metrics;
   dataExports: DataExportService;
   accountDeletion: AccountDeletionService;
+  calls: CallService;
   serverSearchConfigured: boolean;
   authGuard: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
 }
@@ -1022,6 +1027,38 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   app.delete("/v1/account/deletion", { preHandler: dependencies.authGuard }, async (request, reply) => {
     const record = dependencies.accountDeletion.cancelAccountDeletion(request.auth.userId, new Date());
     return reply.code(200).send({ deletion: mapAccountDeletionRecord(record) });
+  });
+
+  app.post("/v1/calls", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const input = CreateCallRequestSchema.parse(request.body);
+    const result = await dependencies.calls.createCall(request.auth.userId, request.auth.sessionId, input);
+    return reply.code(201).send({ call: result.call, replayed: result.replayed });
+  });
+
+  app.get("/v1/calls/:id", { preHandler: dependencies.authGuard }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    return { call: dependencies.calls.getCall(request.auth.userId, id) };
+  });
+
+  app.post("/v1/calls/:id/cancel", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = CancelCallRequestSchema.parse(request.body);
+    return { call: await dependencies.calls.cancelCall(request.auth.userId, request.auth.sessionId, id, input.expectedRevision) };
+  });
+
+  app.post("/v1/calls/:id/hangup", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = HangupCallRequestSchema.parse(request.body);
+    return { call: await dependencies.calls.hangupCall(request.auth.userId, request.auth.sessionId, id, input) };
   });
 }
 

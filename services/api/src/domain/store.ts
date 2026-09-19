@@ -22,6 +22,12 @@ import type {
   PersistCeremonyMutation
 } from "@luxora/passkey-domain";
 import type {
+  CallAggregate,
+  CommandReceipt,
+  CreationReceipt,
+  PersistCallMutation
+} from "@luxora/call-control";
+import type {
   AdminChatRecord,
   AdminStatusRecord,
   AdminUserRecord,
@@ -1273,4 +1279,10 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   deletePushRegistrationsForAccount(accountId: string, at: string): void;
   markOwnedAttachmentsDeletedForAccount(accountId: string, at: string): void;
   expireDataExportsForAccount(accountId: string, at: string): void;
+
+  // Call control records (CALLS_PLATFORM §7, first slice: create/get/cancel/hangup)
+  loadCallAggregate(callId: string): CallAggregate | null;
+  findCallCommandReceipt(scope: string): CommandReceipt | null;
+  findCallCreationReceipt(scope: string): CreationReceipt | null;
+  commitCallMutation(input: PersistCallMutation): void;
 }
