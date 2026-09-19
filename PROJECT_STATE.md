@@ -1,14 +1,14 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-16 · `main` — export 035 + deletion 036 + media binaries + retention worker done локально, API 87/689 зелёный локально
+**Обновлено:** 2026-09-19 · `main` — export 035 + deletion 036 + media binaries + retention worker 037 (`8b0b665`, CI PASS), API 87/689
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
 
-- **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `036_account_deletion_state_machine`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
+- **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `037_data_export_retention`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
 - **Protocol:** `@luxora/protocol` — строгие zod-контракты (17 файлов / 104 теста).
 - **iPhone:** Swift 6 `LuxoraKit` + `LuxoraMobile`, Keychain-сессии, серверные stores, DEBUG-фикстуры только для геометрии.
-- **Проверено:** API 86 файлов / 685 тестов PASS (локально Windows), protocol 17/104, оба typecheck PASS. CI: по пушу после export (обоих воркфлоу PASS).
+- **Проверено:** API 87 файлов / 689 тестов PASS (локально Windows), protocol 17/104, оба typecheck PASS. CI: по пушу `8b0b665` оба воркфлоу PASS (Node/Web/Desktop 4m9s, Security 3m27s).
 
 ## Что работает (end-to-end, с тестами)
 

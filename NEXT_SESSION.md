@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-16):** export (035, `5df2317`, CI PASS), account deletion state machine (036), media binaries в экспорте и export retention worker (037) готовы. Локально зелёный: protocol 17/104 build, API 87/689, оба typecheck. Deletion, media-binaries и retention слайцы не закоммичены — работа в рабочем дереве.
+**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS) готовы и запушены. Локально зелёный: protocol 17/104 build, API 87/689, оба typecheck.
 
 ## Как продолжить без потери контекста
 
@@ -8,7 +8,7 @@
 2. Проверь состояние: `git status --short --branch`, `git log --oneline -5`,
    `gh run list --repo Flenym/Luxora --limit 4`.
 3. Канонические контракты: `packages/protocol/src/index.ts`,
-   `services/api/src/infrastructure/migrations.ts` (последняя `036`),
+    `services/api/src/infrastructure/migrations.ts` (последняя `037`),
    `docs/specs/IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md` (частично устарела).
 
 ## Ближайшая очередь
