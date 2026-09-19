@@ -121,6 +121,16 @@
 > + `DeclineCallRequestSchema`; матрица 105→108. `calls-signaling.integration` 5/5,
 > полный API 92 файла / 708 тестов PASS. Честный остаток — join-grants, webhooks,
 > push/ringing-доставка.
+>
+> **Дополнение 2026-09-19 (calls signaling slice 3, DONE, локально зелёный):**
+> `POST /v1/calls/:id/invite` (`{expectedRevision, inviteeMemberId}` → `201`,
+> host-only через domain; group-only, 1:1 fixed membership → `409`); invitee —
+> текущий участник чата (`404`) и без блока с inviter (`403`), device = latest live
+> session (`409` без сессии / при дубликате device); protocol
+> `InviteCallParticipantRequestSchema`, матрица 108→109. `calls-signaling.integration`
+> 7/7, matrix green, API typecheck clean, protocol typecheck+build clean; полный API
+> 92 файла / 710 тестов PASS. Честный остаток — join-grants, webhooks, push/ringing-доставка,
+> membership_removed hook, затем search.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

@@ -2346,6 +2346,11 @@ export const DeclineCallRequestSchema = z.object({
   reason: z.enum(["declined", "busy"])
 }).strict();
 
+export const InviteCallParticipantRequestSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  inviteeMemberId: IdSchema
+}).strict();
+
 export const HangupCallRequestSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   scope: z.enum(["self", "everyone"])
@@ -3318,4 +3323,5 @@ export type CreateCallResponse = z.infer<typeof CreateCallResponseSchema>;
 export type CallStatusResponse = z.infer<typeof CallStatusResponseSchema>;
 export type CancelCallRequest = z.infer<typeof CancelCallRequestSchema>;
 export type DeclineCallRequest = z.infer<typeof DeclineCallRequestSchema>;
+export type InviteCallParticipantRequest = z.infer<typeof InviteCallParticipantRequestSchema>;
 export type HangupCallRequest = z.infer<typeof HangupCallRequestSchema>;

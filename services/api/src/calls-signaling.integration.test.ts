@@ -415,4 +415,140 @@ describe("calls signaling first slice", () => {
     expect(afterDecline.endReason).toBeNull();
     expect(afterDecline.participants.find((p) => p.memberId === member.id)?.status).toBe("declined");
   });
+
+  it("invites chat members mid-call with host-only, reachability and fixed-1:1 guards", async () => {
+    await boot();
+    const host = await register("alice_invite");
+    const member = await register("bob_invite");
+    const latecomer = await register("carol_invite");
+    const stranger = await register("mallory_invite");
+    await establishAcceptedRelationship(app!, host, member);
+    await establishAcceptedRelationship(app!, host, latecomer);
+    const group = await app!.inject({
+      method: "POST",
+      url: "/v1/chats",
+      headers: auth(host),
+      payload: { kind: "group", title: "Invite flow", memberIds: [member.id] }
+    });
+    expect(group.statusCode, group.body).toBe(201);
+    const groupChatId = group.json().chat.id as string;
+
+    const created = await app!.inject({
+      method: "POST",
+      url: "/v1/calls",
+      headers: auth(host),
+      payload: { chatId: groupChatId, mediaMode: "audio", clientNonce: randomUUID() }
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const callId = (created.json() as { call: CallPayload }).call.callId;
+
+    const added = await app!.inject({
+      method: "POST",
+      url: `/v1/chats/${groupChatId}/members`,
+      headers: auth(host),
+      payload: { userId: latecomer.id, clientNonce: randomUUID() }
+    });
+    expect(added.statusCode, added.body).toBe(201);
+
+    const ring = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/ring`,
+      headers: auth(host),
+      payload: { expectedRevision: 1 }
+    });
+    expect(ring.statusCode, ring.body).toBe(200);
+
+    const invite = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/invite`,
+      headers: auth(host),
+      payload: { expectedRevision: 3, inviteeMemberId: latecomer.id }
+    });
+    expect(invite.statusCode, invite.body).toBe(201);
+    const invited = (invite.json() as { call: CallPayload }).call;
+    expect(invited.revision).toBe(4);
+    expect(invited.participants.find((p) => p.memberId === latecomer.id)?.status).toBe("invited");
+
+    const duplicate = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/invite`,
+      headers: auth(host),
+      payload: { expectedRevision: 4, inviteeMemberId: latecomer.id }
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    const nonHostInvite = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/invite`,
+      headers: auth(member),
+      payload: { expectedRevision: 4, inviteeMemberId: latecomer.id }
+    });
+    expect(nonHostInvite.statusCode).toBe(403);
+
+    const foreignInvite = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/invite`,
+      headers: auth(host),
+      payload: { expectedRevision: 4, inviteeMemberId: stranger.id }
+    });
+    expect(foreignInvite.statusCode).toBe(404);
+
+    const strangerInvite = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/invite`,
+      headers: auth(stranger),
+      payload: { expectedRevision: 4, inviteeMemberId: latecomer.id }
+    });
+    expect(strangerInvite.statusCode).toBe(404);
+
+    const offline = await register("dave_invite_offline");
+    await establishAcceptedRelationship(app!, host, offline);
+    const addedOffline = await app!.inject({
+      method: "POST",
+      url: `/v1/chats/${groupChatId}/members`,
+      headers: auth(host),
+      payload: { userId: offline.id, clientNonce: randomUUID() }
+    });
+    expect(addedOffline.statusCode, addedOffline.body).toBe(201);
+    const offlineSessions = await app!.inject({
+      method: "GET",
+      url: "/v1/auth/sessions",
+      headers: auth(offline)
+    });
+    expect(offlineSessions.statusCode).toBe(200);
+    for (const session of offlineSessions.json().items as Array<{ id: string }>) {
+      const revoked = await app!.inject({
+        method: "DELETE",
+        url: `/v1/auth/sessions/${session.id}`,
+        headers: auth(offline)
+      });
+      expect(revoked.statusCode).toBe(204);
+    }
+    const offlineInvite = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${callId}/invite`,
+      headers: auth(host),
+      payload: { expectedRevision: 4, inviteeMemberId: offline.id }
+    });
+    expect(offlineInvite.statusCode).toBe(409);
+  });
+
+  it("rejects invites on fixed 1:1 membership and offline invitees", async () => {
+    await boot();
+    const alice = await register("alice_invite_121");
+    const bob = await register("bob_invite_121");
+    const chatId = await createDirectChat(alice, bob);
+
+    const created = await createCall(alice, chatId);
+    expect(created.status).toBe(201);
+    const call = (created.body as { call: CallPayload }).call;
+
+    const fixed = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${call.callId}/invite`,
+      headers: auth(alice),
+      payload: { expectedRevision: 1, inviteeMemberId: bob.id }
+    });
+    expect(fixed.statusCode).toBe(409);
+  });
 });

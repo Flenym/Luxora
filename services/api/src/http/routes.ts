@@ -57,6 +57,7 @@ import {
   CreateCallRequestSchema,
   CancelCallRequestSchema,
   DeclineCallRequestSchema,
+  InviteCallParticipantRequestSchema,
   HangupCallRequestSchema
 } from "@luxora/protocol";
 import type { AccountDeletionState, DataExportState } from "@luxora/protocol";
@@ -1087,6 +1088,16 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { id } = IdParamSchema.parse(request.params);
     const input = DeclineCallRequestSchema.parse(request.body);
     return { call: await dependencies.calls.declineCall(request.auth.userId, request.auth.sessionId, id, input) };
+  });
+
+  app.post("/v1/calls/:id/invite", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = InviteCallParticipantRequestSchema.parse(request.body);
+    const call = await dependencies.calls.inviteParticipant(request.auth.userId, request.auth.sessionId, id, input);
+    return reply.code(201).send({ call });
   });
 }
 

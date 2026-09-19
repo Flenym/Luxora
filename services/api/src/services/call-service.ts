@@ -11,6 +11,7 @@ import {
   type CallResponse as ProtocolCallResponse,
   type HangupCallRequest,
   type DeclineCallRequest,
+  type InviteCallParticipantRequest,
   type CreateCallRequest
 } from "@luxora/protocol";
 import type { Store } from "../domain/store.js";
@@ -264,6 +265,43 @@ export class CallService {
         callId
       });
       return await this.#finishEndingIfNeeded(executed.snapshot.callId, executed.snapshot);
+    } catch (error) {
+      throw this.#mapError(error, callId);
+    }
+  }
+
+  /**
+   * Host-driven mid-call invite. The invitee must be a current chat member
+   * with a live session; one_to_one membership stays fixed by the domain.
+   */
+  async inviteParticipant(
+    userId: string,
+    sessionId: string,
+    callId: string,
+    input: InviteCallParticipantRequest
+  ): Promise<ProtocolCallResponse> {
+    const snapshot = this.#requireParticipantCall(userId, callId);
+    if (this.#store.getChatMember(snapshot.conversationId, input.inviteeMemberId) === null) {
+      throw notFound("Invitee is not a member of this chat");
+    }
+    if (this.#store.isBlockedBetween(userId, input.inviteeMemberId)) {
+      throw forbidden("Invite is not allowed under the current block policy");
+    }
+    const deviceId = this.#store.listSessions(input.inviteeMemberId, "").at(0)?.id;
+    if (deviceId === undefined) {
+      throw conflict("Invitee has no active session to invite yet");
+    }
+    try {
+      const executed = await this.#executor.execute({
+        schemaVersion: CALL_CONTROL_VERSION,
+        commandId: randomUUID(),
+        actor: { kind: "participant", memberId: userId, deviceId: sessionId, sessionId },
+        expectedRevision: input.expectedRevision,
+        type: "invite_participant",
+        invitee: { memberId: input.inviteeMemberId, deviceId },
+        callId
+      });
+      return projectCall(executed.snapshot);
     } catch (error) {
       throw this.#mapError(error, callId);
     }
