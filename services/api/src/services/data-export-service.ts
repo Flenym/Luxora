@@ -8,6 +8,7 @@ import type { Store } from "../domain/store.js";
 import type { StorageProvider, ByteRange, StorageReadResult } from "../infrastructure/storage.js";
 import { notFound, conflict, serviceUnavailable } from "../errors.js";
 import { buildManifest, buildTarGzip, readableToBuffer } from "./export-archive.js";
+import { readThumbnailInfo } from "../domain/attachment-thumbnail.js";
 import type { DataExportRecord } from "../domain/types.js";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -117,9 +118,15 @@ export class DataExportService {
         id: m.id, chatId: m.chatId, body: m.body, createdAt: m.createdAt, updatedAt: m.updatedAt, deletedAt: m.deletedAt
       }))), "application/x-ndjson");
 
-      await addEntry("media.jsonl", toNdjson(attachments.map((a) => ({
-        id: a.id, kind: a.kind, fileName: a.fileName, detectedMimeType: a.detectedMimeType, sizeBytes: a.sizeBytes, sha256: a.sha256, createdAt: a.createdAt, deletedAt: a.deletedAt
-      }))), "application/x-ndjson");
+      await addEntry("media.jsonl", toNdjson(attachments.map((a) => {
+        const thumbnail = readThumbnailInfo(a.id, a.metadata);
+        return {
+          id: a.id, kind: a.kind, fileName: a.fileName, detectedMimeType: a.detectedMimeType, sizeBytes: a.sizeBytes, sha256: a.sha256, createdAt: a.createdAt, deletedAt: a.deletedAt,
+          thumbnail: thumbnail === null
+            ? null
+            : { sha256: thumbnail.sha256, sizeBytes: thumbnail.sizeBytes, width: thumbnail.width, height: thumbnail.height }
+        };
+      })), "application/x-ndjson");
 
       for (const attachment of attachments) {
         const read = await this.storage.read(attachment.storageKey, attachment.sizeBytes, attachment.sha256);
@@ -132,6 +139,19 @@ export class DataExportService {
           bytes,
           attachment.detectedMimeType
         );
+        const thumbnail = readThumbnailInfo(attachment.id, attachment.metadata);
+        if (thumbnail !== null) {
+          const thumbnailRead = await this.storage.read(thumbnail.storageKey, thumbnail.sizeBytes, thumbnail.sha256);
+          const thumbnailBytes = await readableToBuffer(thumbnailRead.stream);
+          if (thumbnailBytes.length !== thumbnail.sizeBytes) {
+            throw serviceUnavailable(`Thumbnail size mismatch for attachment ${attachment.id}`);
+          }
+          await addEntry(
+            `media/${attachment.id}/thumbnail.jpg`,
+            thumbnailBytes,
+            "image/jpeg"
+          );
+        }
       }
 
       const includedCategories = ["profile", "settings", "sessions", "relationships", "blocks", "chats", "messages", "mediaMetadata", "mediaBinaries"];

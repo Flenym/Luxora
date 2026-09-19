@@ -881,6 +881,23 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     return reply.send(download.content.stream);
   });
 
+  app.get("/v1/attachments/:id/thumbnail", {
+    onRequest: [async (_request, reply) => {
+      reply
+        .header("cache-control", "private, no-store")
+        .header("x-content-type-options", "nosniff");
+    }, dependencies.authGuard]
+  }, async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const thumbnail = await dependencies.attachments.thumbnail(request.auth.userId, id);
+    reply
+      .header("content-length", thumbnail.content.contentLength)
+      .header("content-type", "image/jpeg")
+      .header("etag", `"${thumbnail.sha256}"`)
+      .header("x-content-safety-status", "unscanned");
+    return reply.send(thumbnail.content.stream);
+  });
+
   app.get("/v1/search/messages", { preHandler: dependencies.authGuard }, async (request) => {
     const query = SearchQuerySchema.parse(request.query);
     return dependencies.search.messages(

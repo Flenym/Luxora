@@ -1198,10 +1198,18 @@ export const PasskeyPrimaryAuthenticationRejectionSchema = z.object({
 export const ChatKindSchema = z.enum(["direct", "group", "channel"]);
 export const ChatRoleSchema = z.enum(["owner", "admin", "member"]);
 
+const ImageThumbnailSchema = z.object({
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  sizeBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  width: z.number().int().positive().max(32_768),
+  height: z.number().int().positive().max(32_768)
+}).strict();
+
 const ImageMetadataSchema = z.object({
   width: z.number().int().positive().max(32_768).optional(),
   height: z.number().int().positive().max(32_768).optional(),
-  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/).optional()
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  thumbnail: ImageThumbnailSchema.optional()
 }).strict();
 
 const TimedMediaMetadataSchema = z.object({
@@ -1222,6 +1230,7 @@ const AttachmentBaseSchema = z.object({
   sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   downloadPath: z.string().startsWith("/v1/attachments/"),
+  thumbnailPath: z.string().startsWith("/v1/attachments/").endsWith("/thumbnail").optional(),
   safetyStatus: z.enum(["unscanned", "reencoded"]),
   metadataTrust: z.enum(["client_declared", "server_verified"]),
   createdAt: TimestampSchema

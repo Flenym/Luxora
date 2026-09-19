@@ -48,6 +48,7 @@ import {
   IdSchema
 } from "@luxora/protocol";
 import { badRequest, conflict } from "../errors.js";
+import { readThumbnailInfo, thumbnailPathFor } from "../domain/attachment-thumbnail.js";
 import type {
   AttachMessageTranscript,
   NewAttachment,
@@ -9951,6 +9952,7 @@ export class SqliteStore implements Store {
   getAttachment(id: string): Attachment | null {
     const record = this.findAttachmentRecord(id);
     if (record === null) return null;
+    const thumbnail = readThumbnailInfo(record.id, record.metadata);
     return AttachmentSchema.parse({
       id: record.id,
       kind: record.kind,
@@ -9960,6 +9962,7 @@ export class SqliteStore implements Store {
       sha256: record.sha256,
       metadata: record.metadata,
       downloadPath: `/v1/attachments/${record.id}/content`,
+      ...(thumbnail === null ? {} : { thumbnailPath: thumbnailPathFor(record.id) }),
       safetyStatus: record.safetyStatus,
       metadataTrust: record.metadataTrust,
       createdAt: record.createdAt

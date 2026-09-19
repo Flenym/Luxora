@@ -1,10 +1,18 @@
 import type { AttachmentRecord } from "../domain/types.js";
 import type { Store } from "../domain/store.js";
+import { readThumbnailInfo } from "../domain/attachment-thumbnail.js";
 import { notFound, serviceUnavailable } from "../errors.js";
 import type { ByteRange, StorageProvider, StorageReadResult } from "../infrastructure/storage.js";
 
 export interface AttachmentDownload {
   attachment: AttachmentRecord;
+  content: StorageReadResult;
+}
+
+export interface AttachmentThumbnail {
+  attachment: AttachmentRecord;
+  sha256: string;
+  sizeBytes: number;
   content: StorageReadResult;
 }
 
@@ -29,6 +37,18 @@ export class AttachmentService {
     return {
       attachment,
       content: await this.storage.read(attachment.storageKey, attachment.sizeBytes, attachment.sha256, range)
+    };
+  }
+
+  async thumbnail(userId: string, attachmentId: string): Promise<AttachmentThumbnail> {
+    const attachment = this.authorize(userId, attachmentId);
+    const info = readThumbnailInfo(attachment.id, attachment.metadata);
+    if (info === null) throw notFound("Attachment thumbnail not found");
+    return {
+      attachment,
+      sha256: info.sha256,
+      sizeBytes: info.sizeBytes,
+      content: await this.storage.read(info.storageKey, info.sizeBytes, info.sha256)
     };
   }
 }

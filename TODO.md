@@ -80,6 +80,19 @@
 > запуск на старте + каждые 10 минут. Юнит-тесты 4/4
 > (`services/api/src/services/data-export-retention-worker.test.ts`), полный API
 > 87 файлов / 689 тестов PASS, protocol 17/104 PASS, оба typecheck PASS.
+>
+> **Дополнение 2026-09-19 (image thumbnails, DONE, локально зелёный):**
+> sharp-JPEG 320px по длинной стороне (q80) в `complete()` для `kind:"image"`
+> больше 320px, best-effort: недекодируемые (напр. HEIC) и мелкие без тумбы,
+> аплоад всё равно успешен; `GET /v1/attachments/:id/thumbnail`
+> (owner-or-granted, stranger `404`, anonymous `401`, `no-store`, ключи
+> `thumbnails/{id}.jpg` наружу не выходят). Protocol: `AttachmentSchema.thumbnailPath?`
+> + строгий `ImageMetadata.thumbnail{sha256,sizeBytes,width,height}?`; без миграции
+> (только metadata JSON); orphan-cleanup удаляет тумбы; экспорт кладёт
+> `media/<id>/thumbnail.jpg` с SHA в manifest; матрица 100→101 protected routes.
+> API 89 файлов / 698 тестов PASS, protocol 17/104 PASS, оба typecheck PASS,
+> protocol dist пересобран. Честный остаток: размеры AVIF/HEIC и duration/waveform
+> аудио/видео по-прежнему `client_declared`.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

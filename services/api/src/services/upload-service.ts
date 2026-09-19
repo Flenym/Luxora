@@ -23,6 +23,8 @@ import type { SearchHasher } from "../infrastructure/search-hasher.js";
 import type { StorageProvider } from "../infrastructure/storage.js";
 import type { EventPublisher } from "./event-publisher.js";
 import { measureImageDimensions } from "./image-dimensions.js";
+import { generateImageThumbnail, type GeneratedThumbnail } from "./thumbnail-service.js";
+import { readThumbnailInfo, thumbnailObjectKey } from "../domain/attachment-thumbnail.js";
 
 const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
@@ -314,6 +316,7 @@ export class UploadService {
     }
 
     let objectKey: string | null = null;
+    let thumbnailKey: string | null = null;
     try {
       let inspection: UploadInspection;
       try {
@@ -362,13 +365,41 @@ export class UploadService {
       }
       const attachmentId = randomUUID();
       objectKey = this.#objectKey(upload);
+      const sourceParts: Buffer[] = [];
+      for await (const part of this.#plainChunks(upload, chunks)) sourceParts.push(part);
+      const sourceBytes = Buffer.concat(sourceParts);
+      if (sourceBytes.length !== upload.sizeBytes) {
+        throw conflict("Upload staging failed integrity validation");
+      }
       await this.storage.put({
         objectKey,
-        sourceFactory: () => Readable.from(this.#plainChunks(upload, chunks)),
+        sourceFactory: () => Readable.from([sourceBytes]),
         sizeBytes: upload.sizeBytes,
         mimeType: detectedMimeType,
         sha256: upload.sha256
       });
+
+      const stored = await this.#storeImageThumbnail(
+        attachmentId,
+        upload.kind,
+        attachmentMetadata,
+        sourceBytes,
+        detectedMimeType
+      );
+      const thumbnail = stored?.generated ?? null;
+      thumbnailKey = stored?.objectKey ?? null;
+      const { thumbnail: _clientThumbnail, ...restMetadata } = attachmentMetadata as Record<string, unknown>;
+      const finalMetadata: Record<string, unknown> = thumbnail === null
+        ? restMetadata
+        : {
+            ...restMetadata,
+            thumbnail: {
+              sha256: thumbnail.sha256,
+              sizeBytes: thumbnail.sizeBytes,
+              width: thumbnail.width,
+              height: thumbnail.height
+            }
+          };
 
       const completedAt = new Date().toISOString();
       const result = this.store.transaction(() => {
@@ -381,7 +412,7 @@ export class UploadService {
           detectedMimeType,
           sizeBytes: upload.sizeBytes,
           sha256: upload.sha256,
-          metadata: attachmentMetadata,
+          metadata: finalMetadata,
           ...(attachmentMetadataTrust === undefined
             ? {}
             : { metadataTrust: attachmentMetadataTrust }),
@@ -398,11 +429,13 @@ export class UploadService {
         return { attachment, event };
       });
       objectKey = null;
+      thumbnailKey = null;
       this.publisher.publish([result.event]);
       await this.#removeTerminalStaging(upload.id);
       return this.store.toUploadSession(this.store.findUploadSession(upload.id, userId) as UploadSessionRecord);
     } catch (error) {
       if (objectKey !== null) await this.storage.delete(objectKey).catch(() => undefined);
+      if (thumbnailKey !== null) await this.storage.delete(thumbnailKey).catch(() => undefined);
       const current = this.store.findUploadSession(upload.id, userId);
       if (current?.status === "completing") this.store.releaseUploadCompletion(upload.id, new Date().toISOString());
       if (current?.status === "failed") await this.#removeTerminalStaging(upload.id);
@@ -466,6 +499,10 @@ export class UploadService {
     for (const attachment of orphanClaim.attachments) {
       try {
         await this.storage.delete(attachment.storageKey);
+        const thumbnail = readThumbnailInfo(attachment.id, attachment.metadata);
+        if (thumbnail !== null) {
+          await this.storage.delete(thumbnail.storageKey).catch(() => undefined);
+        }
         this.publisher.publish(this.store.deleteAttachmentRecord(attachment.id, now.toISOString()));
         deletedOrphans += 1;
       } catch {
@@ -641,6 +678,42 @@ export class UploadService {
 
   async *#plainChunks(upload: UploadSessionRecord, chunks: UploadChunkRecord[]): AsyncGenerator<Buffer> {
     for (const chunk of chunks) yield await this.#readValidatedChunk(upload, chunk);
+  }
+
+  /**
+   * Best-effort server-side thumbnail for image uploads. Returns the stored
+   * derivative or null when generation is skipped or fails — the original
+   * remains authoritative and the upload still succeeds.
+   */
+  async #storeImageThumbnail(
+    attachmentId: string,
+    kind: Attachment["kind"],
+    metadata: Record<string, unknown>,
+    sourceBytes: Buffer,
+    detectedMimeType: string
+  ): Promise<{ generated: GeneratedThumbnail; objectKey: string } | null> {
+    if (kind !== "image" || !detectedMimeType.startsWith("image/")) return null;
+    const width = metadata["width"];
+    const height = metadata["height"];
+    const measured = typeof width === "number" && typeof height === "number"
+      ? { width, height }
+      : null;
+    const generated = await generateImageThumbnail(sourceBytes, measured);
+    if (generated === null) return null;
+    const objectKey = thumbnailObjectKey(attachmentId);
+    try {
+      await this.storage.put({
+        objectKey,
+        sourceFactory: () => Readable.from([generated.bytes]),
+        sizeBytes: generated.sizeBytes,
+        mimeType: "image/jpeg",
+        sha256: generated.sha256
+      });
+      return { generated, objectKey };
+    } catch {
+      await this.storage.delete(objectKey).catch(() => undefined);
+      return null;
+    }
   }
 
   #objectKey(upload: Pick<UploadSessionRecord, "id" | "userId">): string {

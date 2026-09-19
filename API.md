@@ -701,7 +701,16 @@ items merely because the requester can access a message-derived download.
 Completed image uploads carry server-measured `width`/`height` with
 `metadataTrust:"server_verified"` (PNG/GIF/WebP/JPEG; a declared size that
 disagrees with the bytes is rejected with `400`); unmeasurable formats
-honestly keep `client_declared`.
+honestly keep `client_declared`. At upload-complete the server best-effort
+generates a bounded JPEG thumbnail (320px long edge, quality 80, sharp) for
+`kind:"image"` larger than 320px; undecodable (e.g. HEIC) or tiny images get
+none and the upload still succeeds. Thumbnails are served at
+`GET /v1/attachments/:id/thumbnail` under owner-or-granted authorization
+(stranger `404`, anonymous `401`) with `no-store`, and storage keys are never
+exposed (deterministic `thumbnails/{id}.jpg`). The attachment projection
+carries optional `thumbnailPath`, and `ImageMetadata` carries optional strict
+`thumbnail{sha256,sizeBytes,width,height}`; orphan cleanup deletes thumbnails
+with the attachment.
 
 ### Account data export
 
@@ -726,7 +735,8 @@ and line-delimited JSON entries: `profile.jsonl`, `settings.jsonl`,
 (encrypted-at-rest) payloads. Owned attachment binaries are included as
 `media/<attachmentId>/<fileName>` entries whose per-file SHA-256 lets the
 client verify them against `media.jsonl`; missing or resized objects fail the
-export rather than silently omitting data. Only token/secret material is
+export rather than silently omitting data. JPEG thumbnails ship as
+`media/<attachmentId>/thumbnail.jpg` entries with manifest SHA. Only token/secret material is
 declared in the manifest under `omittedCategories`.
 
 Ready exports expire 7 days after ready (`state:"expired"`); download of an
