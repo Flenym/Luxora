@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   CALL_CONTROL_VERSION,
   CallControlError,
@@ -20,8 +20,9 @@ import {
   type CreateCallRequest
 } from "@luxora/protocol";
 import type { Store } from "../domain/store.js";
-import { badRequest, conflict, forbidden, notFound, serviceUnavailable } from "../errors.js";
+import { badRequest, conflict, forbidden, notFound, serviceUnavailable, unauthenticated } from "../errors.js";
 import { createSfuSigner, createTurnSigner } from "./call-grant-signers.js";
+import { verifyLivekitWebhook } from "./call-webhook.js";
 
 export interface CallMediaPlaneConfig {
   livekitUrl: string;
@@ -330,6 +331,140 @@ export class CallService {
       throw notFound("Call not found");
     }
     return snapshot;
+  }
+
+  /**
+   * LiveKit webhook ingest (CALLS_PLATFORM §5 rule 5): authenticated by the
+   * media-plane signature, deduplicated by webhook event id, and limited to
+   * confirming media-plane facts — it can never grant Luxora authorization.
+   * Unknown rooms/participants/events and inapplicable states are
+   * acknowledged without effect so the SFU does not retry poison deliveries.
+   * Always answers 200 with `{received: true}`: no oracle distinguishes
+   * unknown rooms from handled events.
+   */
+  async handleLivekitWebhook(rawBody: Buffer, authHeader: string | string[] | undefined): Promise<{ received: true; callId: string | null }> {
+    const mediaPlane = this.#mediaPlane;
+    // Authentication first: without configured secrets no delivery can be
+    // verified, so an unconfigured plane rejects everything with 401 rather
+    // than attempting verification against empty key material.
+    if (mediaPlane === undefined) throw unauthenticated("LiveKit webhook signature is invalid");
+    const event = await verifyLivekitWebhook(rawBody, authHeader, {
+      apiKey: mediaPlane.livekitApiKey,
+      apiSecret: mediaPlane.livekitApiSecret
+    });
+    const callId = this.#store.findCallIdByRoomName(event.roomName);
+    if (callId === null) return { received: true, callId: null };
+    const snapshot = this.#store.loadCallAggregate(callId);
+    if (snapshot === null) return { received: true, callId: null };
+
+    const commandId = (command: string): string => {
+      const raw = `livekit-webhook:${event.id}:${command}`;
+      if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(raw)) return raw;
+      return `livekit-webhook:${createHash("sha256").update(event.id, "utf8").digest("hex")}:${command}`;
+    };
+    const systemActor = { kind: "system", subject: "media-plane" } as const;
+    const runOnce = async (command: Parameters<CallControlExecutor["execute"]>[0]): Promise<CallAggregate | null> => {
+      try {
+        const executed = await this.#executor.execute(command);
+        return executed.snapshot;
+      } catch (error) {
+        if (!(error instanceof CallControlError)) throw error;
+        if (error.code === "REVISION_CONFLICT") {
+          const latest = this.#store.loadCallAggregate(callId);
+          if (latest === null) return null;
+          try {
+            const retried = await this.#executor.execute({ ...command, expectedRevision: latest.revision } as typeof command);
+            return retried.snapshot;
+          } catch (retryError) {
+            if (retryError instanceof CallControlError) return latest;
+            throw retryError;
+          }
+        }
+        return this.#store.loadCallAggregate(callId);
+      }
+    };
+
+    switch (event.event) {
+      case "participant_joined": {
+        if (event.participantIdentity === null) return { received: true, callId };
+        const membership = snapshot.participants.find(
+          (participant) => participant.participantIdentity === event.participantIdentity
+        );
+        if (membership === undefined) return { received: true, callId };
+        if (membership.status === "active" && snapshot.state === "active") {
+          return { received: true, callId };
+        }
+        await runOnce({
+          schemaVersion: CALL_CONTROL_VERSION,
+          commandId: commandId("mark_active"),
+          actor: systemActor,
+          expectedRevision: snapshot.revision,
+          type: "mark_active",
+          membershipId: membership.membershipId,
+          callId
+        });
+        return { received: true, callId };
+      }
+      case "participant_left":
+      case "participant_connection_aborted": {
+        if (event.participantIdentity === null) return { received: true, callId };
+        const membership = snapshot.participants.find(
+          (participant) => participant.participantIdentity === event.participantIdentity
+        );
+        if (membership === undefined) return { received: true, callId };
+        if (membership.status !== "active" || (snapshot.state !== "active" && snapshot.state !== "reconnecting")) {
+          return { received: true, callId };
+        }
+        await runOnce({
+          schemaVersion: CALL_CONTROL_VERSION,
+          commandId: commandId("connection_lost"),
+          actor: systemActor,
+          expectedRevision: snapshot.revision,
+          type: "connection_lost",
+          membershipId: membership.membershipId,
+          callId
+        });
+        return { received: true, callId };
+      }
+      case "room_finished": {
+        if (snapshot.state === "ended") return { received: true, callId };
+        if (snapshot.state !== "ending") {
+          const ending = await runOnce({
+            schemaVersion: CALL_CONTROL_VERSION,
+            commandId: commandId("end_call"),
+            actor: systemActor,
+            expectedRevision: snapshot.revision,
+            type: "end_call",
+            reason: "completed",
+            callId
+          });
+          if (ending === null || ending.state !== "ending") return { received: true, callId };
+          await runOnce({
+            schemaVersion: CALL_CONTROL_VERSION,
+            commandId: commandId("finish_ending"),
+            actor: systemActor,
+            expectedRevision: ending.revision,
+            type: "finish_ending",
+            callId
+          });
+          return { received: true, callId };
+        }
+        const latest = this.#store.loadCallAggregate(callId);
+        if (latest !== null && latest.state === "ending") {
+          await runOnce({
+            schemaVersion: CALL_CONTROL_VERSION,
+            commandId: commandId("finish_ending"),
+            actor: systemActor,
+            expectedRevision: latest.revision,
+            type: "finish_ending",
+            callId
+          });
+        }
+        return { received: true, callId };
+      }
+      default:
+        return { received: true, callId };
+    }
   }
 
   /**

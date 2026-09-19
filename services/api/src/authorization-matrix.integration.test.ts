@@ -501,6 +501,13 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
     payload: { requestedSources: ["microphone"] }
   },
   {
+    key: "POST /v1/internal/calls/livekit-webhook",
+    method: "POST",
+    url: "/v1/internal/calls/livekit-webhook",
+    payload: { event: "room_finished" },
+    headers: { "content-type": "application/webhook+json" }
+  },
+  {
     key: "GET /v1/search/messages",
     method: "GET",
     url: `/v1/search/messages?q=${CONTENT_CANARY}`
@@ -698,7 +705,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(110);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(111);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

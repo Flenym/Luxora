@@ -11195,6 +11195,13 @@ export class SqliteStore implements Store {
     return snapshot;
   }
 
+  findCallIdByRoomName(roomName: string): string | null {
+    const row = this.#db.prepare(`
+      SELECT call_id FROM call_rooms WHERE room_name = ?
+    `).get(roomName) as { call_id: string } | undefined;
+    return row?.call_id ?? null;
+  }
+
   findCallCommandReceipt(scope: string): CallCommandReceipt | null {
     const row = this.#db.prepare(`
       SELECT fingerprint, result_json, created_at_ms FROM call_command_receipts WHERE scope = ?
@@ -11293,6 +11300,10 @@ export class SqliteStore implements Store {
         payload: JSON.stringify(input.mutation.outbox),
         availableAtMs: input.mutation.outbox.availableAtMs
       });
+      this.#db.prepare(`
+        INSERT INTO call_rooms (room_name, call_id) VALUES (@roomName, @callId)
+        ON CONFLICT(room_name) DO NOTHING
+      `).run({ roomName: snapshot.roomName, callId: snapshot.callId });
     });
   }
 

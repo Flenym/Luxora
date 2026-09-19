@@ -4208,5 +4208,16 @@ export const migrations: Migration[] = [
         created_at_ms INTEGER NOT NULL
       ) STRICT;
     `
+  },
+  {
+    id: "039_call_room_index",
+    sql: `
+      CREATE TABLE call_rooms (
+        room_name TEXT PRIMARY KEY,
+        call_id TEXT NOT NULL REFERENCES calls(call_id) ON DELETE CASCADE
+      ) STRICT;
+      INSERT INTO call_rooms (room_name, call_id)
+        SELECT json_extract(snapshot_json, '$.roomName'), call_id FROM calls;
+    `
   }
 ];

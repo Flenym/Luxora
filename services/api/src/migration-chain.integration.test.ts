@@ -46,7 +46,8 @@ const MIGRATION_IDS = [
   "035_account_data_exports",
   "036_account_deletion_state_machine",
   "037_data_export_retention",
-  "038_call_control_records"
+  "038_call_control_records",
+  "039_call_room_index"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";

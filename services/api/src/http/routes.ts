@@ -1109,6 +1109,17 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const input = JoinGrantRequestSchema.parse(request.body);
     return dependencies.calls.issueJoinGrant(request.auth.userId, request.auth.sessionId, id, input);
   });
+
+  // LiveKit media-plane webhook (CALLS_PLATFORM §5 rule 5): signature
+  // authentication only, no bearer session. Bursts plus SFU retries justify
+  // a wider bound than interactive routes.
+  app.post("/v1/internal/calls/livekit-webhook", {
+    config: { rateLimit: { max: 120, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const raw = request.body as unknown;
+    if (!Buffer.isBuffer(raw)) throw badRequest("LiveKit webhook body must be raw bytes");
+    return reply.send(await dependencies.calls.handleLivekitWebhook(raw, request.headers.authorization));
+  });
 }
 
 function mapDataExportRecord(record: {

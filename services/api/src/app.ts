@@ -471,6 +471,15 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     done(null, body);
   });
 
+  // LiveKit webhooks require the raw body for signature verification, so this
+  // parser preserves bytes and the route parses JSON only after verification.
+  app.addContentTypeParser("application/webhook+json", {
+    parseAs: "buffer",
+    bodyLimit: 65_536
+  }, (_request, body, done) => {
+    done(null, body);
+  });
+
   await app.register(helmet, {
     contentSecurityPolicy: false,
     crossOriginResourcePolicy: { policy: "same-site" }

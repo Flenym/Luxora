@@ -137,6 +137,12 @@
 > Выдача каждый раз перепроверяет membership/relationship/block/session/epoch; участник — accepted/connecting+, звонок — connecting+ (stranger `404`, ended/pre-accept → `403`, audio+camera → `403`).
 > `503` пока не заданы все `CALLS_LIVEKIT_URL/API_KEY/API_SECRET` + `CALLS_TURN_SHARED_SECRET/URLS` (независимый key material enforced); секреты никогда в responses/logs, capabilities `calls:false`.
 > `calls-join-grant.integration` 4/4, матрица 109→110, API typecheck clean, protocol typecheck+build clean; полный API 93 файла / 714 тестов PASS. Честный остаток — webhooks, push/ringing-доставка, membership_removed hook, grant refresh, затем search.
+>
+> **Дополнение 2026-09-19 (calls signaling slice 5 webhooks, DONE, локально зелёный):**
+> `POST /v1/internal/calls/livekit-webhook` без bearer: LiveKit JWT-подпись по raw-body (`application/webhook+json`, sha256-of-raw-body claim, допуск 5 мин, issuer == API key; подделка/expired/malformed → `401`); миграция `039_call_room_index` (`call_rooms` + backfill из snapshots).
+> Диспатч как системный media-plane actor: `participant_joined` → `mark_active` (convergent skip если уже active), `participant_left`/`connection_aborted` → `connection_lost` когда применимо, `room_finished` → `end_call(completed)` + `finish_ending`; один retry при revision conflict, replay сходится через детерминированные command id.
+> Неизвестные rooms/participants/events и неприменимые состояния — `200 {received:true}` (без oracle, без poison retries); webhook только подтверждает media-факты, авторизацию выдавать НЕ может; матрица 110→111.
+> Тесты локально: `call-webhook.test` 4/4, `calls-webhook.integration` 2/2, matrix green, API typecheck clean, инвентаризации миграций зелёные (039 в chain+identity+passkey-authenticator); полный API 95 файлов / 720 тестов PASS. Честный остаток: push/ringing-доставка (real APNs заблокирован извне), membership_removed hook, grant refresh, crash-cleanup sweeper, затем search.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
