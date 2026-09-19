@@ -131,6 +131,12 @@
 > 7/7, matrix green, API typecheck clean, protocol typecheck+build clean; полный API
 > 92 файла / 710 тестов PASS. Честный остаток — join-grants, webhooks, push/ringing-доставка,
 > membership_removed hook, затем search.
+>
+> **Дополнение 2026-09-19 (calls signaling slice 4 join-grants, DONE, локально зелёный):**
+> `POST /v1/calls/:id/join-grant` (`{requestedSources}` → SFU LiveKit HS256 JWT 120s roomJoin-only, publish requested∩allowed∩consented, audio — microphone-only + coturn REST 300s `expiry:identity.tokenId`/base64 HMAC-SHA1 + `serverUrl`).
+> Выдача каждый раз перепроверяет membership/relationship/block/session/epoch; участник — accepted/connecting+, звонок — connecting+ (stranger `404`, ended/pre-accept → `403`, audio+camera → `403`).
+> `503` пока не заданы все `CALLS_LIVEKIT_URL/API_KEY/API_SECRET` + `CALLS_TURN_SHARED_SECRET/URLS` (независимый key material enforced); секреты никогда в responses/logs, capabilities `calls:false`.
+> `calls-join-grant.integration` 4/4, матрица 109→110, API typecheck clean, protocol typecheck+build clean; полный API 93 файла / 714 тестов PASS. Честный остаток — webhooks, push/ringing-доставка, membership_removed hook, grant refresh, затем search.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

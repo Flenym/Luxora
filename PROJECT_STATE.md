@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-19 · calls signaling slices 1–3 DONE (локально, uncommitted) + image thumbnails `8bae86a` CI PASS (оба воркфлоу) + WAV duration DONE (локально, uncommitted), API 92/706
+**Обновлено:** 2026-09-19 · calls signaling slices 1–4 DONE (локально, uncommitted) + image thumbnails `8bae86a` CI PASS (оба воркфлоу) + WAV duration DONE (локально, uncommitted), API 92/706
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- Calls signaling slice 4 join-grants DONE (локально, uncommitted, 93/714): `POST /v1/calls/:id/join-grant` LiveKit HS256 JWT 120s + coturn REST 300s, rechecks membership/relationship/block/session/epoch, 503-gate до полного LiveKit+TURN конфига, секреты вне responses/logs, `calls:false`, матрица 109→110, `calls-join-grant.integration` 4/4, typechecks clean; остаток — webhooks, push/ringing, membership_removed hook, grant refresh.
 - Calls signaling slice 3 DONE (локально, uncommitted, 92/710): `POST /v1/calls/:id/invite` host-only/group-only, member/block/session guards, `InviteCallParticipantRequestSchema`, матрица 108→109; остаток — join-grants, webhooks, push-доставка, membership_removed hook, затем search.
 - Calls signaling slice 2 DONE (локально, uncommitted, 92/708): групповые звонки, `POST .../ring|accept|decline`, convergent re-ring, `unreachableMemberIds`, матрица 105→108, `calls-signaling.integration` 5/5. Остаток — join-grants, webhooks, push-доставка.
 - Calls signaling first slice DONE (локально, uncommitted): миграция `038_call_control_records`, `CallService` поверх `@luxora/call-control` executor + SQLite-адаптер, маршруты create/get/cancel/hangup, `calls-signaling.integration` 3/3, auth-матрица 101→105, остаток — invite/ring/push/grants/webhooks.

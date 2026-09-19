@@ -2351,6 +2351,30 @@ export const InviteCallParticipantRequestSchema = z.object({
   inviteeMemberId: IdSchema
 }).strict();
 
+export const CallTrackSourceSchema = z.enum(["microphone", "camera", "screen_share", "screen_share_audio"]);
+
+export const JoinGrantRequestSchema = z.object({
+  requestedSources: z.array(CallTrackSourceSchema).max(4)
+}).strict();
+
+export const JoinGrantResponseSchema = z.object({
+  serverUrl: z.string().min(1).max(256),
+  token: z.string().min(1).max(8192),
+  tokenExpiresAtMs: z.number().int().nonnegative(),
+  participantIdentity: z.string().min(1).max(128),
+  turn: z.object({
+    urls: z.array(z.string().min(1).max(256)).min(1).max(4),
+    username: z.string().min(1).max(512),
+    credential: z.string().min(1).max(128),
+    expiresAtMs: z.number().int().nonnegative()
+  }),
+  call: z.object({
+    callId: IdSchema,
+    revision: z.number().int().min(1),
+    epoch: z.number().int().min(1)
+  })
+});
+
 export const HangupCallRequestSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   scope: z.enum(["self", "everyone"])
@@ -3324,4 +3348,7 @@ export type CallStatusResponse = z.infer<typeof CallStatusResponseSchema>;
 export type CancelCallRequest = z.infer<typeof CancelCallRequestSchema>;
 export type DeclineCallRequest = z.infer<typeof DeclineCallRequestSchema>;
 export type InviteCallParticipantRequest = z.infer<typeof InviteCallParticipantRequestSchema>;
+export type CallTrackSource = z.infer<typeof CallTrackSourceSchema>;
+export type JoinGrantRequest = z.infer<typeof JoinGrantRequestSchema>;
+export type JoinGrantResponse = z.infer<typeof JoinGrantResponseSchema>;
 export type HangupCallRequest = z.infer<typeof HangupCallRequestSchema>;

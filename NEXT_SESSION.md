@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s), calls slices 1–2 (`5b1d2f8` + Docker fix `7c4552f` + slice 2 `2076c9b`, CI PASS оба) готовы и запушены. Calls slice 3 DONE локально (uncommitted): `POST /v1/calls/:id/invite` 7/7, матрица 108→109, API/protocol typecheck + protocol build clean; полный API 92/710. Последняя миграция 038 (`038_call_control_records`). Следом: join-grants, webhooks, push-доставка, membership_removed hook, затем search.
+**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s), calls slices 1–2 (`5b1d2f8` + Docker fix `7c4552f` + slice 2 `2076c9b`, CI PASS оба) готовы и запушены. Calls slice 3 DONE локально (uncommitted): `POST /v1/calls/:id/invite` 7/7, матрица 108→109, API/protocol typecheck + protocol build clean; полный API 92/710. Calls slice 4 join-grants DONE локально (uncommitted): `POST /v1/calls/:id/join-grant` 4/4, матрица 109→110, API/protocol typecheck + protocol build clean; полный API 93/714. Последняя миграция 038 (`038_call_control_records`). Следом: webhooks, push/ringing-доставка, membership_removed hook, grant refresh, затем search.
 
 ## Как продолжить без потери контекста
 
@@ -13,7 +13,7 @@
 
 ## Ближайшая очередь
 
-1. Calls signaling slices 1–3 DONE локально (uncommitted): create/get/cancel/hangup + group + ring/accept/decline + invite (`POST /v1/calls/:id/invite` 7/7); остаток — join-grants, webhooks, push-доставка, membership_removed hook, затем search.
+1. Calls signaling slices 1–4 DONE локально (uncommitted): create/get/cancel/hangup + group + ring/accept/decline + invite (`POST /v1/calls/:id/invite` 7/7) + join-grant (`POST /v1/calls/:id/join-grant` 4/4); остаток — webhooks, push/ringing-доставка, membership_removed hook, grant refresh, затем search.
 2. Export/delete, QR-linking, contact discovery.
 3. Финальный QA.
 

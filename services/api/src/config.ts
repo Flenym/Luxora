@@ -60,7 +60,12 @@ const ConfigSchema = z.object({
   PHONE_AUTH_RECOVERY_DELAY_SECONDS: z.coerce.number().int().min(0).max(604_800).default(300),
   PHONE_AUTH_RECOVERY_TTL_SECONDS: z.coerce.number().int().min(600).max(1_209_600).default(86_400),
   ADMIN_TOKEN: z.string().min(32).optional(),
-  SYNC_INVALIDATION_ENABLED: strictDefaultOnFeatureFlag
+  SYNC_INVALIDATION_ENABLED: strictDefaultOnFeatureFlag,
+  CALLS_LIVEKIT_URL: z.string().min(1).optional(),
+  CALLS_LIVEKIT_API_KEY: z.string().min(1).max(128).optional(),
+  CALLS_LIVEKIT_API_SECRET: z.string().min(32).optional(),
+  CALLS_TURN_SHARED_SECRET: z.string().min(32).optional(),
+  CALLS_TURN_URLS: z.string().min(1).optional()
 });
 
 export interface AppConfig {
@@ -123,6 +128,18 @@ export interface AppConfig {
   adminToken?: string;
   /** Emergency rollback seam; false suppresses only sync.invalidated emission and delivery. */
   syncInvalidationEnabled: boolean;
+  /**
+   * Call media-plane issuance material (CALLS_PLATFORM §6). Absent by default;
+   * the join-grant endpoint answers 503 until the complete set is configured.
+   * Secrets must use independent key material (never JWT/auth key reuse).
+   */
+  callsMediaPlane?: {
+    livekitUrl: string;
+    livekitApiKey: string;
+    livekitApiSecret: string;
+    turnSharedSecret: string;
+    turnUrls: string[];
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -366,6 +383,46 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (parsed.USER_STORAGE_QUOTA_BYTES < parsed.MAX_ATTACHMENT_BYTES) {
     throw new Error("USER_STORAGE_QUOTA_BYTES must be at least MAX_ATTACHMENT_BYTES");
   }
+  const callsMediaPlaneSecrets = [
+    parsed.CALLS_LIVEKIT_URL,
+    parsed.CALLS_LIVEKIT_API_KEY,
+    parsed.CALLS_LIVEKIT_API_SECRET,
+    parsed.CALLS_TURN_SHARED_SECRET,
+    parsed.CALLS_TURN_URLS
+  ];
+  const callsMediaPlaneProvided = callsMediaPlaneSecrets.filter((value) => value !== undefined);
+  let callsMediaPlane: AppConfig["callsMediaPlane"];
+  if (callsMediaPlaneProvided.length > 0) {
+    if (callsMediaPlaneProvided.length !== callsMediaPlaneSecrets.length) {
+      throw new Error("Calls media plane requires CALLS_LIVEKIT_URL, CALLS_LIVEKIT_API_KEY, CALLS_LIVEKIT_API_SECRET, CALLS_TURN_SHARED_SECRET and CALLS_TURN_URLS together");
+    }
+    const livekitUrl = parsed.CALLS_LIVEKIT_URL as string;
+    if (!/^wss:\/\//u.test(livekitUrl)) {
+      throw new Error("CALLS_LIVEKIT_URL must be a wss:// URL");
+    }
+    const turnUrls = (parsed.CALLS_TURN_URLS as string).split(",").map((url) => url.trim()).filter(Boolean);
+    if (turnUrls.length < 1 || turnUrls.length > 4) {
+      throw new Error("CALLS_TURN_URLS must contain between one and four URLs");
+    }
+    const livekitApiSecret = parsed.CALLS_LIVEKIT_API_SECRET as string;
+    const turnSharedSecret = parsed.CALLS_TURN_SHARED_SECRET as string;
+    if (
+      livekitApiSecret === parsed.JWT_SECRET ||
+      turnSharedSecret === parsed.JWT_SECRET ||
+      livekitApiSecret === turnSharedSecret ||
+      dataEncryptionMaterials.includes(livekitApiSecret) ||
+      dataEncryptionMaterials.includes(turnSharedSecret)
+    ) {
+      throw new Error("Calls media-plane secrets must use independent key material");
+    }
+    callsMediaPlane = {
+      livekitUrl,
+      livekitApiKey: parsed.CALLS_LIVEKIT_API_KEY as string,
+      livekitApiSecret,
+      turnSharedSecret,
+      turnUrls
+    };
+  }
   if (parsed.STORAGE_DRIVER === "s3") {
     if (parsed.S3_BUCKET === undefined) throw new Error("S3_BUCKET is required for STORAGE_DRIVER=s3");
     if (parsed.S3_SERVER_SIDE_ENCRYPTION === "aws:kms" && parsed.S3_KMS_KEY_ID === undefined) {
@@ -450,6 +507,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     phoneAuthRecoveryDelaySeconds: parsed.PHONE_AUTH_RECOVERY_DELAY_SECONDS,
     phoneAuthRecoveryTtlSeconds: parsed.PHONE_AUTH_RECOVERY_TTL_SECONDS,
     ...(parsed.ADMIN_TOKEN === undefined ? {} : { adminToken: parsed.ADMIN_TOKEN }),
-    syncInvalidationEnabled: parsed.SYNC_INVALIDATION_ENABLED
+    syncInvalidationEnabled: parsed.SYNC_INVALIDATION_ENABLED,
+    ...(callsMediaPlane === undefined ? {} : { callsMediaPlane })
   };
 }

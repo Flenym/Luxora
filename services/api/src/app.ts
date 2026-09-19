@@ -449,7 +449,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const attachments = new AttachmentService(store, storage);
   const dataExports = new DataExportService(store, storage);
   const dataExportRetention = new DataExportRetentionWorker(store, storage);
-  const calls = new CallService(store);
+  const calls = new CallService(store, config.callsMediaPlane);
   const accountDeletion = new AccountDeletionService(store);
   const profileAvatars = new ProfileAvatarService(
     store,

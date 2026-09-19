@@ -58,6 +58,7 @@ import {
   CancelCallRequestSchema,
   DeclineCallRequestSchema,
   InviteCallParticipantRequestSchema,
+  JoinGrantRequestSchema,
   HangupCallRequestSchema
 } from "@luxora/protocol";
 import type { AccountDeletionState, DataExportState } from "@luxora/protocol";
@@ -1098,6 +1099,15 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const input = InviteCallParticipantRequestSchema.parse(request.body);
     const call = await dependencies.calls.inviteParticipant(request.auth.userId, request.auth.sessionId, id, input);
     return reply.code(201).send({ call });
+  });
+
+  app.post("/v1/calls/:id/join-grant", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = JoinGrantRequestSchema.parse(request.body);
+    return dependencies.calls.issueJoinGrant(request.auth.userId, request.auth.sessionId, id, input);
   });
 }
 

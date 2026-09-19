@@ -495,6 +495,12 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
     payload: { expectedRevision: 1, inviteeMemberId: SECOND_RESOURCE_ID }
   },
   {
+    key: "POST /v1/calls/:id/join-grant",
+    method: "POST",
+    url: `/v1/calls/${RESOURCE_ID_CANARY}/join-grant`,
+    payload: { requestedSources: ["microphone"] }
+  },
+  {
     key: "GET /v1/search/messages",
     method: "GET",
     url: `/v1/search/messages?q=${CONTENT_CANARY}`
@@ -692,7 +698,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(109);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(110);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

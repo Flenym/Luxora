@@ -3,19 +3,33 @@ import {
   CALL_CONTROL_VERSION,
   CallControlError,
   CallControlExecutor,
+  issueJoinGrant,
   type CallAggregate,
-  type CallControlStore
+  type CallControlStore,
+  type LiveKitTrackSource
 } from "@luxora/call-control";
 import {
   CallResponseSchema,
+  JoinGrantResponseSchema,
   type CallResponse as ProtocolCallResponse,
   type HangupCallRequest,
   type DeclineCallRequest,
   type InviteCallParticipantRequest,
+  type JoinGrantRequest,
+  type JoinGrantResponse,
   type CreateCallRequest
 } from "@luxora/protocol";
 import type { Store } from "../domain/store.js";
-import { badRequest, conflict, forbidden, notFound } from "../errors.js";
+import { badRequest, conflict, forbidden, notFound, serviceUnavailable } from "../errors.js";
+import { createSfuSigner, createTurnSigner } from "./call-grant-signers.js";
+
+export interface CallMediaPlaneConfig {
+  livekitUrl: string;
+  livekitApiKey: string;
+  livekitApiSecret: string;
+  turnSharedSecret: string;
+  turnUrls: string[];
+}
 
 export interface CreateCallInput extends CreateCallRequest {}
 
@@ -68,9 +82,11 @@ function projectCall(snapshot: CallAggregate): ProtocolCallResponse {
 export class CallService {
   readonly #store: Store;
   readonly #executor: CallControlExecutor;
+  readonly #mediaPlane: CallMediaPlaneConfig | undefined;
 
-  constructor(store: Store) {
+  constructor(store: Store, mediaPlane?: CallMediaPlaneConfig) {
     this.#store = store;
+    this.#mediaPlane = mediaPlane;
     const adapter: CallControlStore = {
       loadCall: async (callId) => this.#store.loadCallAggregate(callId),
       findCommandReceipt: async (scope) => this.#store.findCallCommandReceipt(scope),
@@ -314,6 +330,94 @@ export class CallService {
       throw notFound("Call not found");
     }
     return snapshot;
+  }
+
+  /**
+   * Issues SFU + TURN transport credentials (CALLS_PLATFORM §6). The grant is
+   * bound to the current call/participant epoch and the caller's live
+   * session; membership, relationship, block and media-mode policy are
+   * rechecked on every issuance. Per-request rate limiting is the bounded
+   * abuse control in this slice. Answers 503 until the media plane is
+   * configured; the capabilities `calls` flag stays `false`.
+   */
+  async issueJoinGrant(
+    userId: string,
+    sessionId: string,
+    callId: string,
+    input: JoinGrantRequest
+  ): Promise<JoinGrantResponse> {
+    const mediaPlane = this.#mediaPlane;
+    if (mediaPlane === undefined) throw serviceUnavailable("Call media plane is not configured");
+    const snapshot = this.#requireParticipantCall(userId, callId);
+    const membership = snapshot.participants.find(
+      (participant) => participant.memberId === userId && participant.deviceId === sessionId
+    );
+    if (membership === undefined) throw notFound("Call membership was not found for this session");
+
+    const chat = this.#store.findChatRecord(snapshot.conversationId);
+    const conversationMember = chat !== null && this.#store.getChatMember(chat.id, userId) !== null;
+    let messageRequestAccepted: boolean;
+    let relationshipBlocked: boolean;
+    if (chat !== null && chat.kind === "direct") {
+      const peerId = snapshot.participants.map((p) => p.memberId).find((memberId) => memberId !== userId);
+      messageRequestAccepted = peerId !== undefined && this.#store.hasAcceptedRelationship(userId, peerId);
+      relationshipBlocked = peerId !== undefined && this.#store.isBlockedBetween(userId, peerId);
+    } else {
+      messageRequestAccepted = conversationMember;
+      relationshipBlocked = snapshot.participants.some(
+        (participant) => participant.memberId !== userId && this.#store.isBlockedBetween(userId, participant.memberId)
+      );
+    }
+    const deviceSessionAllowed = this.#store.isSessionActive(sessionId, userId, new Date().toISOString());
+    const requestedSources = input.requestedSources as LiveKitTrackSource[];
+
+    try {
+      const granted = await issueJoinGrant(
+        snapshot,
+        membership,
+        {
+          subjectMembershipId: membership.membershipId,
+          subjectMemberId: userId,
+          subjectDeviceId: sessionId,
+          conversationMember,
+          messageRequestAccepted,
+          relationshipBlocked,
+          deviceSessionAllowed,
+          abusePolicyAllowed: true,
+          callEpoch: snapshot.epoch,
+          membershipEpoch: membership.membershipEpoch
+        },
+        {
+          requestedSources,
+          allowedSources: snapshot.mediaMode === "video"
+            ? ["microphone", "camera", "screen_share", "screen_share_audio"]
+            : ["microphone"],
+          consentedSources: requestedSources,
+          turnUrls: mediaPlane.turnUrls
+        },
+        {
+          clock: { nowMs: () => Date.now() },
+          ids: { next: () => randomUUID() },
+          sfuSigner: createSfuSigner(mediaPlane.livekitApiKey, mediaPlane.livekitApiSecret),
+          turnSigner: createTurnSigner(mediaPlane.turnSharedSecret)
+        }
+      );
+      return JoinGrantResponseSchema.parse({
+        serverUrl: mediaPlane.livekitUrl,
+        token: granted.sfu.token,
+        tokenExpiresAtMs: granted.sfu.descriptor.expiresAtMs,
+        participantIdentity: granted.sfu.descriptor.participantIdentity,
+        turn: {
+          urls: [...granted.turn.urls],
+          username: granted.turn.username,
+          credential: granted.turn.credential,
+          expiresAtMs: granted.turn.expiresAtMs
+        },
+        call: { callId: granted.callId, revision: granted.revision, epoch: granted.epoch }
+      });
+    } catch (error) {
+      throw this.#mapError(error, callId);
+    }
   }
 
   async #finishEndingIfNeeded(callId: string, snapshot: CallAggregate): Promise<ProtocolCallResponse> {
