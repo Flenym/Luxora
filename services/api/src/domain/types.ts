@@ -598,6 +598,27 @@ export interface DeviceLinkChallengeRecord {
   pollCount: number;
 }
 
+export interface DeviceLinkStepUpIntentRecord {
+  ceremonyId: string;
+  linkId: string;
+  accountId: string;
+  sessionId: string;
+  targetDigest: string;
+  createdAt: string;
+}
+
+export interface DeviceLinkStepUpGrantRecord {
+  ceremonyId: string;
+  linkId: string;
+  accountId: string;
+  sessionId: string;
+  deviceId: string;
+  targetDigest: string;
+  authTimeSec: number;
+  issuedAtSec: number;
+  expiresAtSec: number;
+}
+
 export interface ExportMessageRow {
   id: string;
   chatId: string;

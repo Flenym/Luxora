@@ -179,7 +179,9 @@ import type {
   AccountDeletionRecord,
   AccountDeletionState,
   DeviceLinkChallengeRecord,
-  DeviceLinkChallengeStatus
+  DeviceLinkChallengeStatus,
+  DeviceLinkStepUpGrantRecord,
+  DeviceLinkStepUpIntentRecord
 } from "../domain/types.js";
 import type { ContentCipher } from "./content-cipher.js";
 import { PlaintextContentCipher } from "./content-cipher.js";
@@ -5361,6 +5363,24 @@ export class SqliteStore implements Store {
 
   #createPasskeyStepUpGrant(input: PersistCeremonyMutation): void {
     const { snapshot, event, secureCredentialEffect } = input.mutation;
+    const linkIntentRow = this.#db.prepare(`
+      SELECT ceremony_id, link_id, account_id, session_id, target_digest, created_at
+      FROM device_link_step_up_intents WHERE ceremony_id = ?
+    `).get(snapshot.ceremonyId) as {
+      ceremony_id: string; link_id: string; account_id: string;
+      session_id: string; target_digest: string; created_at: string;
+    } | undefined;
+    if (linkIntentRow !== undefined) {
+      this.#createDeviceLinkStepUpGrant(input, {
+        ceremonyId: linkIntentRow.ceremony_id,
+        linkId: linkIntentRow.link_id,
+        accountId: linkIntentRow.account_id,
+        sessionId: linkIntentRow.session_id,
+        targetDigest: linkIntentRow.target_digest,
+        createdAt: linkIntentRow.created_at
+      });
+      return;
+    }
     if (
       snapshot.kind !== "authentication"
       || snapshot.purpose.type !== "session.step_up"
@@ -5412,8 +5432,75 @@ export class SqliteStore implements Store {
     );
   }
 
-  #createPasskeyAuthenticatorRevokeGrant(
+  #createDeviceLinkStepUpGrant(
     input: PersistCeremonyMutation,
+    intent: {
+      ceremonyId: string;
+      linkId: string;
+      accountId: string;
+      sessionId: string;
+      targetDigest: string;
+      createdAt: string;
+    }
+  ): void {
+    const { snapshot, event, secureCredentialEffect } = input.mutation;
+    if (
+      snapshot.kind !== "authentication"
+      || snapshot.purpose.type !== "session.step_up"
+      || snapshot.state !== "consumed"
+      || snapshot.terminalReason !== "verified"
+      || event.type !== "passkey.ceremony.consumed"
+      || secureCredentialEffect?.type !== "update_authentication_credential"
+      || secureCredentialEffect.ceremonyId !== snapshot.ceremonyId
+      || intent.ceremonyId !== snapshot.ceremonyId
+      || intent.accountId !== snapshot.actor.accountId
+      || intent.sessionId !== snapshot.actor.sessionId
+      || intent.targetDigest !== snapshot.purpose.targetDigest
+    ) {
+      passkeyIntegrityFailure();
+    }
+    const issuedAtSec = Math.floor(snapshot.updatedAtMs / 1_000);
+    const expiresAtSec = issuedAtSec + PASSKEY_STEP_UP_GRANT_TTL_SECONDS;
+    const commitNowMs = this.passkeyNowMs();
+    if (
+      !isPasskeySafeInteger(issuedAtSec)
+      || !isPasskeySafeInteger(expiresAtSec)
+      || !isPasskeySafeInteger(commitNowMs)
+    ) {
+      passkeyIntegrityFailure();
+    }
+    if (
+      commitNowMs < snapshot.updatedAtMs
+      || Math.floor(commitNowMs / 1_000) >= expiresAtSec
+      || !this.#isActivePasskeySession(
+        snapshot.actor.accountId,
+        snapshot.actor.sessionId,
+        snapshot.actor.deviceId,
+        commitNowMs
+      )
+    ) {
+      throw new StoreCredentialStateConflictError();
+    }
+    this.#db.prepare(`
+      INSERT INTO device_link_step_up_grants (
+        ceremony_id, link_id, account_id, session_id, device_id, target_digest,
+        auth_time_sec, issued_at_sec, expires_at_sec
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      snapshot.ceremonyId,
+      intent.linkId,
+      snapshot.actor.accountId,
+      snapshot.actor.sessionId,
+      snapshot.actor.deviceId,
+      snapshot.purpose.targetDigest,
+      issuedAtSec,
+      issuedAtSec,
+      expiresAtSec
+    );
+  }
+
+  #createPasskeyAuthenticatorRevokeGrant(    input: PersistCeremonyMutation,
     intent: PasskeyAuthenticatorRevokeIntentRecord
   ): void {
     const { snapshot, event, secureCredentialEffect } = input.mutation;
@@ -11309,6 +11396,83 @@ export class SqliteStore implements Store {
       WHERE link_id = @linkId AND status = 'approved'
     `).run({ linkId, sessionId, at });
     return result.changes === 1;
+  }
+
+  createDeviceLinkStepUpIntent(input: {
+    ceremonyId: string;
+    linkId: string;
+    accountId: string;
+    sessionId: string;
+    targetDigest: string;
+    createdAt: string;
+  }): void {
+    this.#db.prepare(`
+      INSERT INTO device_link_step_up_intents (ceremony_id, link_id, account_id, session_id, target_digest, created_at)
+      VALUES (@ceremonyId, @linkId, @accountId, @sessionId, @targetDigest, @createdAt)
+    `).run(input);
+  }
+
+  findDeviceLinkStepUpIntent(ceremonyId: string): DeviceLinkStepUpIntentRecord | null {
+    const row = this.#db.prepare(`
+      SELECT ceremony_id, link_id, account_id, session_id, target_digest, created_at
+      FROM device_link_step_up_intents WHERE ceremony_id = ?
+    `).get(ceremonyId) as {
+      ceremony_id: string; link_id: string; account_id: string;
+      session_id: string; target_digest: string; created_at: string;
+    } | undefined;
+    if (row === undefined) return null;
+    return {
+      ceremonyId: row.ceremony_id,
+      linkId: row.link_id,
+      accountId: row.account_id,
+      sessionId: row.session_id,
+      targetDigest: row.target_digest,
+      createdAt: row.created_at
+    };
+  }
+
+  createDeviceLinkStepUpGrant(input: {
+    ceremonyId: string;
+    linkId: string;
+    accountId: string;
+    sessionId: string;
+    deviceId: string;
+    targetDigest: string;
+    authTimeSec: number;
+    issuedAtSec: number;
+    expiresAtSec: number;
+  }): void {
+    this.#db.prepare(`
+      INSERT INTO device_link_step_up_grants (
+        ceremony_id, link_id, account_id, session_id, device_id, target_digest,
+        auth_time_sec, issued_at_sec, expires_at_sec
+      )
+      VALUES (@ceremonyId, @linkId, @accountId, @sessionId, @deviceId, @targetDigest, @authTimeSec, @issuedAtSec, @expiresAtSec)
+    `).run(input);
+  }
+
+  findDeviceLinkStepUpGrant(ceremonyId: string): DeviceLinkStepUpGrantRecord | null {
+    const row = this.#db.prepare(`
+      SELECT ceremony_id, link_id, account_id, session_id, device_id, target_digest,
+        auth_time_sec, issued_at_sec, expires_at_sec
+      FROM device_link_step_up_grants WHERE ceremony_id = ?
+    `).get(ceremonyId) as {
+      ceremony_id: string; link_id: string; account_id: string;
+      session_id: string; device_id: string; target_digest: string;
+      auth_time_sec: number; issued_at_sec: number; expires_at_sec: number;
+    } | undefined;
+    if (row === undefined) return null;
+    return {
+      ceremonyId: row.ceremony_id,
+      linkId: row.link_id,
+      accountId: row.account_id,
+      sessionId: row.session_id,
+      deviceId: row.device_id,
+      targetDigest: row.target_digest,
+      authTimeSec: row.auth_time_sec,
+      issuedAtSec: row.issued_at_sec,
+      expiresAtSec: row.expires_at_sec
+    };
   }
 
   expireDeviceLinkChallenges(now: string, limit: number): number {

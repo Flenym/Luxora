@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import { createPublicKey, generateKeyPairSync, sign } from "node:crypto";
+import { createPublicKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { StepUpTokenSecurity } from "./passkeys/step-up-token.js";
+import { canonicalTargetDigest } from "./services/passkey-service.js";
 import type { LuxoraApp } from "./app.js";
 import { buildApp } from "./app.js";
 import { testConfig } from "./test-helpers.js";
@@ -432,5 +434,122 @@ describe("device link challenges", () => {
       payload: { linkSecret: pending.body.linkSecret }
     });
     expect(missingProof.statusCode).toBe(409);
+  });
+
+  it("approves with a ceremony-bound step-up token instead of a password", async () => {
+    await boot();
+    const registerResponse = await app!.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { username: "ceremony_approver", displayName: "ceremony_approver", password: "correct horse battery staple" }
+    });
+    expect(registerResponse.statusCode).toBe(201);
+    const approverId = registerResponse.json().user.id as string;
+    const approverToken = registerResponse.json().tokens.accessToken as string;
+    const sessions = await app!.inject({
+      method: "GET",
+      url: "/v1/auth/sessions",
+      headers: { authorization: `Bearer ${approverToken}` }
+    });
+    const approverSessionId = (sessions.json().items as Array<{ id: string }>)[0]!.id;
+
+    const created = await create();
+    expect(created.status).toBe(201);
+
+    // White-box seam: the ceremony→grant linkage is proven by
+    // device-link-stepup.test.ts; here a directly-minted token exercises the
+    // consumption contract (signature, binding, grant row, single-use CAS).
+    const authority = new StepUpTokenSecurity("test-only-secret-with-at-least-thirty-two-bytes");
+    const ceremonyId = randomUUID();
+    const targetDigest = canonicalTargetDigest({
+      accountId: approverId,
+      operation: "device-link.approve",
+      sessionId: approverSessionId,
+      linkId: created.body.linkId
+    });
+    const issuedAt = Math.floor(Date.now() / 1000);
+    app!.luxora.store.createDeviceLinkStepUpIntent({
+      ceremonyId,
+      linkId: created.body.linkId,
+      accountId: approverId,
+      sessionId: approverSessionId,
+      targetDigest,
+      createdAt: new Date().toISOString()
+    });
+    app!.luxora.store.createDeviceLinkStepUpGrant({
+      ceremonyId,
+      linkId: created.body.linkId,
+      accountId: approverId,
+      sessionId: approverSessionId,
+      deviceId: approverSessionId,
+      targetDigest,
+      authTimeSec: issuedAt,
+      issuedAtSec: issuedAt,
+      expiresAtSec: issuedAt + 300
+    });
+    const stepUpToken = await authority.issue({
+      accountId: approverId,
+      sessionId: approverSessionId,
+      ceremonyId,
+      purpose: "device-link.approve",
+      targetDigest,
+      issuedAt,
+      expiresAt: issuedAt + 300
+    });
+
+    const approve = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: created.body.linkSecret, stepUpCeremonyId: ceremonyId, stepUpToken }
+    });
+    expect(approve.statusCode, approve.body).toBe(200);
+    expect((approve.json() as { challenge: ChallengeBody }).challenge.state).toBe("approved");
+
+    const replay = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: created.body.linkSecret, stepUpCeremonyId: ceremonyId, stepUpToken }
+    });
+    expect(replay.statusCode).toBe(409);
+
+    const second = await create();
+    const wrongPurposeToken = await authority.issue({
+      accountId: approverId,
+      sessionId: approverSessionId,
+      ceremonyId: randomUUID(),
+      purpose: "authenticator.add",
+      targetDigest,
+      issuedAt,
+      expiresAt: issuedAt + 300
+    });
+    const wrongPurpose = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${second.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: second.body.linkSecret, stepUpCeremonyId: randomUUID(), stepUpToken: wrongPurposeToken }
+    });
+    expect(wrongPurpose.statusCode).toBe(403);
+
+    const noGrant = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${second.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: {
+        linkSecret: second.body.linkSecret,
+        stepUpCeremonyId: randomUUID(),
+        stepUpToken: await authority.issue({
+          accountId: approverId,
+          sessionId: approverSessionId,
+          ceremonyId: randomUUID(),
+          purpose: "device-link.approve",
+          targetDigest,
+          issuedAt,
+          expiresAt: issuedAt + 300
+        })
+      }
+    });
+    expect(noGrant.statusCode).toBe(403);
   });
 });

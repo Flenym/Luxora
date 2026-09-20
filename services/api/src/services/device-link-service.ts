@@ -9,8 +9,11 @@ import type { DeviceLinkChallengeRecord } from "../domain/types.js";
 import type { Store } from "../domain/store.js";
 import { conflict, forbidden, rateLimited, unauthenticated, badRequest, serviceUnavailable } from "../errors.js";
 import type { TokenSecurity } from "../security.js";
+import type { StepUpTokenSecurity } from "../passkeys/step-up-token.js";
+import { InvalidStepUpTokenError } from "../passkeys/step-up-token.js";
 import type { EventPublisher } from "./event-publisher.js";
 import { appendSyncInvalidations } from "./sync-invalidation.js";
+import { canonicalTargetDigest } from "./passkey-service.js";
 import { hashPassword, verifyPassword } from "./password-auth.js";
 import { DEVICE_LINK_SAS_WORDS } from "./device-link-wordlist.js";
 
@@ -102,6 +105,7 @@ export class DeviceLinkService {
     refreshTokenTtlDays?: number;
     accessTokenTtlSeconds?: number;
     syncInvalidationEnabled?: boolean;
+    stepUpTokens?: StepUpTokenSecurity;
   };
 
   constructor(
@@ -112,6 +116,7 @@ export class DeviceLinkService {
       refreshTokenTtlDays?: number;
       accessTokenTtlSeconds?: number;
       syncInvalidationEnabled?: boolean;
+      stepUpTokens?: StepUpTokenSecurity;
     } = {}
   ) {
     this.#store = store;
@@ -207,14 +212,19 @@ export class DeviceLinkService {
     approverUserId: string,
     approverSessionId: string,
     linkId: string,
-    input: { linkSecret: string | undefined; password: string },
+    input: { linkSecret: string | undefined; password: string | undefined; stepUpCeremonyId: string | undefined; stepUpToken: string | undefined },
     now: Date
   ): Promise<DeviceLinkChallengeResponse> {
     return this.#decideChallenge(
       approverUserId,
       approverSessionId,
       linkId,
-      { linkSecret: input.linkSecret, password: input.password },
+      {
+        linkSecret: input.linkSecret,
+        password: input.password,
+        stepUpCeremonyId: input.stepUpCeremonyId,
+        stepUpToken: input.stepUpToken
+      },
       "approved",
       now
     );
@@ -226,14 +236,14 @@ export class DeviceLinkService {
     linkSecret: string | undefined,
     now: Date
   ): Promise<DeviceLinkChallengeResponse> {
-    return this.#decideChallenge(approverUserId, null, linkId, { linkSecret, password: undefined }, "denied", now);
+    return this.#decideChallenge(approverUserId, null, linkId, { linkSecret, password: undefined, stepUpCeremonyId: undefined, stepUpToken: undefined }, "denied", now);
   }
 
   async #decideChallenge(
     approverUserId: string,
     approverSessionId: string | null,
     linkId: string,
-    input: { linkSecret: string | undefined; password: string | undefined },
+    input: { linkSecret: string | undefined; password: string | undefined; stepUpCeremonyId: string | undefined; stepUpToken: string | undefined },
     toStatus: "approved" | "denied",
     now: Date
   ): Promise<DeviceLinkChallengeResponse> {
@@ -256,7 +266,16 @@ export class DeviceLinkService {
       throw conflict("Device link challenge is already decided", { challenge: current.challenge });
     }
     if (toStatus === "approved") {
-      if (input.password === undefined) throw badRequest("Device link approval requires a password");
+      if (input.password === undefined) {
+        return this.#approveWithCeremony(
+          approverUserId,
+          approverSessionId as string,
+          linkId,
+          input.stepUpCeremonyId,
+          input.stepUpToken,
+          observed
+        );
+      }
       return this.#approvePending(approverUserId, approverSessionId as string, linkId, input.password, observed);
     }
     const decided = this.#store.decideDeviceLinkChallenge(linkId, "denied", null, observed);
@@ -274,8 +293,7 @@ export class DeviceLinkService {
     linkId: string,
     password: string,
     observed: string
-  ): Promise<DeviceLinkChallengeResponse> {
-    const user = this.#store.findUserById(approverUserId);
+  ): Promise<DeviceLinkChallengeResponse> {    const user = this.#store.findUserById(approverUserId);
     const candidateHash = user?.passwordHash ?? await TIMING_DUMMY_PASSWORD_HASH;
     let valid = false;
     try {
@@ -287,6 +305,78 @@ export class DeviceLinkService {
       throw forbidden("Device link approval authentication failed");
     }
     if (!this.#store.isSessionActive(approverSessionId, approverUserId, observed)) {
+      throw forbidden("Device link approval authentication failed");
+    }
+    const decided = this.#store.decideDeviceLinkChallenge(linkId, "approved", approverUserId, observed);
+    if (!decided) {
+      const current = this.#store.findDeviceLinkChallenge(linkId);
+      if (current === null) throw conflict("Device link challenge is already decided");
+      const approver = current.approvedByAccountId;
+      const projection = current.status === "approved" && approver !== null
+        ? projectDecision(current, approver)
+        : project(current, 0);
+      throw conflict("Device link challenge is already decided", { challenge: projection.challenge });
+    }
+    const committed = this.#store.findDeviceLinkChallenge(linkId);
+    if (committed === null) throw conflict("Device link challenge is already decided");
+    return projectDecision(committed, approverUserId);
+  }
+
+  /**
+   * Passkey-ceremony approval: phishing-resistant alternative to the
+   * password step-up. Consumes a step-up token minted for a consumed
+   * `device-link.approve` ceremony bound to (linkId, approver, session).
+   * Single-use emerges from the challenge CAS below: a replayed token hits
+   * a non-pending challenge and converges to 409.
+   */
+  async #approveWithCeremony(
+    approverUserId: string,
+    approverSessionId: string,
+    linkId: string,
+    stepUpCeremonyId: string | undefined,
+    stepUpToken: string | undefined,
+    observed: string
+  ): Promise<DeviceLinkChallengeResponse> {
+    const authority = this.#options.stepUpTokens;
+    if (authority === undefined) {
+      throw serviceUnavailable("Device link ceremony step-up is not configured");
+    }
+    if (stepUpCeremonyId === undefined || stepUpToken === undefined) {
+      throw badRequest("Ceremony approval requires stepUpCeremonyId and stepUpToken");
+    }
+    const targetDigest = canonicalTargetDigest({
+      accountId: approverUserId,
+      operation: "device-link.approve",
+      sessionId: approverSessionId,
+      linkId
+    });
+    try {
+      await authority.verify(stepUpToken, {
+        accountId: approverUserId,
+        sessionId: approverSessionId,
+        ceremonyId: stepUpCeremonyId,
+        purpose: "device-link.approve",
+        targetDigest
+      });
+    } catch (error) {
+      if (error instanceof InvalidStepUpTokenError) {
+        throw forbidden("Device link approval authentication failed");
+      }
+      throw serviceUnavailable("Device link approval is temporarily unavailable");
+    }
+    const grant = this.#store.findDeviceLinkStepUpGrant(stepUpCeremonyId);
+    if (
+      grant === null ||
+      grant.linkId !== linkId ||
+      grant.accountId !== approverUserId ||
+      grant.sessionId !== approverSessionId ||
+      grant.deviceId !== approverSessionId ||
+      grant.targetDigest !== targetDigest ||
+      grant.authTimeSec !== grant.issuedAtSec ||
+      grant.expiresAtSec <= grant.issuedAtSec ||
+      grant.expiresAtSec - grant.issuedAtSec > 300 ||
+      !this.#store.isSessionActive(approverSessionId, approverUserId, observed)
+    ) {
       throw forbidden("Device link approval authentication failed");
     }
     const decided = this.#store.decideDeviceLinkChallenge(linkId, "approved", approverUserId, observed);

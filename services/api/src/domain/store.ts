@@ -99,7 +99,9 @@ import type {
   AccountDeletionRecord,
   AccountDeletionState,
   DeviceLinkChallengeRecord,
-  DeviceLinkChallengeStatus
+  DeviceLinkChallengeStatus,
+  DeviceLinkStepUpGrantRecord,
+  DeviceLinkStepUpIntentRecord
 } from "./types.js";
 
 export interface NewUser {
@@ -1316,6 +1318,26 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     at: string
   ): boolean;
   consumeDeviceLinkChallenge(linkId: string, sessionId: string, at: string): boolean;
-  expireDeviceLinkChallenges(now: string, limit: number): number;
+  createDeviceLinkStepUpIntent(input: {
+    ceremonyId: string;
+    linkId: string;
+    accountId: string;
+    sessionId: string;
+    targetDigest: string;
+    createdAt: string;
+  }): void;
+  findDeviceLinkStepUpIntent(ceremonyId: string): DeviceLinkStepUpIntentRecord | null;
+  createDeviceLinkStepUpGrant(input: {
+    ceremonyId: string;
+    linkId: string;
+    accountId: string;
+    sessionId: string;
+    deviceId: string;
+    targetDigest: string;
+    authTimeSec: number;
+    issuedAtSec: number;
+    expiresAtSec: number;
+  }): void;
+  findDeviceLinkStepUpGrant(ceremonyId: string): DeviceLinkStepUpGrantRecord | null;  expireDeviceLinkChallenges(now: string, limit: number): number;
   purgeDeviceLinkChallenges(before: string, limit: number): number;
 }

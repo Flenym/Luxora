@@ -4255,5 +4255,29 @@ export const migrations: Migration[] = [
       ALTER TABLE device_link_challenges
         ADD COLUMN redeemed_session_id TEXT REFERENCES device_sessions(id);
     `
+  },
+  {
+    id: "043_device_link_step_up",
+    sql: `
+      CREATE TABLE device_link_step_up_intents (
+        ceremony_id TEXT PRIMARY KEY,
+        link_id TEXT NOT NULL REFERENCES device_link_challenges(link_id) ON DELETE CASCADE,
+        account_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES device_sessions(id) ON DELETE CASCADE,
+        target_digest TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE device_link_step_up_grants (
+        ceremony_id TEXT PRIMARY KEY REFERENCES device_link_step_up_intents(ceremony_id) ON DELETE CASCADE,
+        link_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        target_digest TEXT NOT NULL,
+        auth_time_sec INTEGER NOT NULL,
+        issued_at_sec INTEGER NOT NULL,
+        expires_at_sec INTEGER NOT NULL
+      ) STRICT;
+    `
   }
 ];

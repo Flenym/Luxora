@@ -64,6 +64,7 @@ import type { ParsedPasskeyResponseBody } from "../http/passkey-response-body.js
 
 const PASSKEY_RP_NAME = "Luxora" as const;
 const AUTHENTICATOR_ADD_OPERATION = "authenticator.add" as const;
+const DEVICE_LINK_APPROVE_OPERATION = "device-link.approve" as const;
 
 type PasskeyOptionsAdapter = MaintainedWebAuthnVerifierAdapter & {
   createRegistrationOptions(input: RegistrationOptionsInput): ReturnType<SimpleWebAuthnVerifierAdapter["createRegistrationOptions"]>;
@@ -81,7 +82,7 @@ export interface PasskeyStepUpTokenAuthority {
   verifyCommittedReplay(token: string, durableIssueInput: StepUpTokenIssueInput): Promise<void>;
 }
 
-function canonicalTargetDigest(value: Record<string, string>): string {
+export function canonicalTargetDigest(value: Record<string, string>): string {
   const canonical = Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${JSON.stringify(value[key])}`).join(",");
   return createHash("sha256").update(`{${canonical}}`, "utf8").digest("hex");
 }
@@ -551,18 +552,40 @@ export class PasskeyService {
     input: {
       readonly commandId: string;
       readonly clientNonce: string;
-      readonly operation: typeof AUTHENTICATOR_ADD_OPERATION;
+      readonly operation: typeof AUTHENTICATOR_ADD_OPERATION | typeof DEVICE_LINK_APPROVE_OPERATION;
+      readonly linkId?: string;
     }
   ): Promise<PasskeyStepUpBeginResponse> {
     const credentials = await this.#store.listPasskeyCredentialsByAccountId(principal.userId);
     if (credentials.length === 0) {
       throw conflict("No phishing-resistant authenticator is available", { reason: "assurance_insufficient" });
     }
-    const targetDigest = canonicalTargetDigest({
-      accountId: principal.userId,
-      operation: input.operation,
-      sessionId: principal.sessionId
-    });
+    let linkChallenge: { linkId: string } | null = null;
+    if (input.operation === DEVICE_LINK_APPROVE_OPERATION) {
+      if (input.linkId === undefined) throw badRequest("Device link approval step-up requires linkId");
+      const challenge = this.#store.findDeviceLinkChallenge(input.linkId);
+      if (challenge === null) throw notFound("Device link challenge was not found");
+      if (challenge.status !== "pending" || challenge.expiresAt <= this.#currentTimeIso()) {
+        throw conflict("Device link challenge is not pending");
+      }
+      linkChallenge = { linkId: challenge.linkId };
+    } else if (input.linkId !== undefined) {
+      throw badRequest("linkId is only valid for device-link.approve");
+    }
+    const targetDigest = canonicalTargetDigest(
+      input.operation === DEVICE_LINK_APPROVE_OPERATION
+        ? {
+            accountId: principal.userId,
+            operation: input.operation,
+            sessionId: principal.sessionId,
+            linkId: (linkChallenge as { linkId: string }).linkId
+          }
+        : {
+            accountId: principal.userId,
+            operation: input.operation,
+            sessionId: principal.sessionId
+          }
+    );
     let executed: ExecutedCeremonyCommand;
     try {
       executed = await this.#executor.begin({
@@ -579,6 +602,29 @@ export class PasskeyService {
     } catch (error) {
       if (error instanceof PasskeyDomainError) throw mapDomainError(error);
       throw error;
+    }
+    if (linkChallenge !== null) {
+      const nowIso = this.#currentTimeIso();
+      const existing = this.#store.findDeviceLinkStepUpIntent(executed.snapshot.ceremonyId);
+      if (existing !== null) {
+        if (
+          existing.linkId !== linkChallenge.linkId ||
+          existing.accountId !== principal.userId ||
+          existing.sessionId !== principal.sessionId ||
+          existing.targetDigest !== targetDigest
+        ) {
+          throw conflict("Device link step-up intent changed", { reason: "ceremony_conflict" });
+        }
+      } else {
+        this.#store.createDeviceLinkStepUpIntent({
+          ceremonyId: executed.snapshot.ceremonyId,
+          linkId: linkChallenge.linkId,
+          accountId: principal.userId,
+          sessionId: principal.sessionId,
+          targetDigest,
+          createdAt: nowIso
+        });
+      }
     }
     const requirements = executed.clientRequirements;
     if (requirements?.kind !== "authentication") {
@@ -834,6 +880,12 @@ export class PasskeyService {
         }));
       }
       const grant = await this.#store.findPasskeyStepUpGrant(executed.snapshot.ceremonyId);
+      const linkIntent = grant === null
+        ? await this.#store.findDeviceLinkStepUpIntent(executed.snapshot.ceremonyId)
+        : null;
+      if (linkIntent !== null) {
+        return this.#issueDeviceLinkStepUp(principal, executed, linkIntent);
+      }
       if (
         grant === null
         || grant.authenticationCeremonyId !== executed.snapshot.ceremonyId
@@ -888,6 +940,76 @@ export class PasskeyService {
       ceremony: publicCeremony(executed),
       verified: true,
       replayed: executed.replayed
+    }));
+  }
+
+  async #issueDeviceLinkStepUp(
+    principal: AuthenticatedPrincipal,
+    executed: ExecutedCeremonyCommand,
+    linkIntent: {
+      ceremonyId: string;
+      linkId: string;
+      accountId: string;
+      sessionId: string;
+      targetDigest: string;
+      createdAt: string;
+    }
+  ): Promise<PasskeyCeremonyVerifyResponse> {
+    if (this.#stepUpTokens === null) {
+      throw serviceUnavailable("Step-up authorization is temporarily unavailable");
+    }
+    const grant = await this.#store.findDeviceLinkStepUpGrant(executed.snapshot.ceremonyId);
+    if (
+      grant === null
+      || grant.ceremonyId !== executed.snapshot.ceremonyId
+      || grant.linkId !== linkIntent.linkId
+      || grant.accountId !== principal.userId
+      || grant.accountId !== executed.snapshot.actor.accountId
+      || grant.accountId !== linkIntent.accountId
+      || grant.sessionId !== principal.sessionId
+      || grant.sessionId !== executed.snapshot.actor.sessionId
+      || grant.sessionId !== linkIntent.sessionId
+      || grant.deviceId !== principal.sessionId
+      || grant.deviceId !== executed.snapshot.actor.deviceId
+      || grant.targetDigest !== executed.snapshot.purpose.targetDigest
+      || grant.targetDigest !== linkIntent.targetDigest
+      || grant.authTimeSec !== grant.issuedAtSec
+      || grant.expiresAtSec <= grant.issuedAtSec
+      || grant.expiresAtSec - grant.issuedAtSec > STEP_UP_TOKEN_MAX_TTL_SECONDS
+      || !this.#store.isSessionActive(principal.sessionId, principal.userId, this.#currentTimeIso())
+    ) {
+      throw new AppError(500, "INTERNAL_ERROR", "Step-up authorization record is inconsistent");
+    }
+    let token: string;
+    try {
+      token = PasskeyStepUpTokenSchema.parse(await this.#stepUpTokens.issue({
+        accountId: grant.accountId,
+        sessionId: grant.sessionId,
+        ceremonyId: grant.ceremonyId,
+        purpose: DEVICE_LINK_APPROVE_OPERATION,
+        targetDigest: grant.targetDigest,
+        issuedAt: grant.issuedAtSec,
+        expiresAt: grant.expiresAtSec
+      }));
+    } catch {
+      throw new AppError(500, "INTERNAL_ERROR", "Step-up authorization could not be issued");
+    }
+    const expiresAtMs = grant.expiresAtSec * 1_000;
+    const expiresAt = new Date(expiresAtMs);
+    if (!Number.isSafeInteger(expiresAtMs) || !Number.isFinite(expiresAt.getTime())) {
+      throw new AppError(500, "INTERNAL_ERROR", "Step-up authorization record is inconsistent");
+    }
+    return parseTrustedPasskeyResponse(() => PasskeyCeremonyVerifyResponseSchema.parse({
+      schemaVersion: 1,
+      ceremony: publicCeremony(executed),
+      verified: true,
+      replayed: executed.replayed,
+      stepUpAuthorization: {
+        scheme: "Bearer",
+        token,
+        purpose: DEVICE_LINK_APPROVE_OPERATION,
+        expiresAt: expiresAt.toISOString()
+      }
     }));
   }
 }

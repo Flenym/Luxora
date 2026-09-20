@@ -53,7 +53,8 @@ export interface PasskeyRouteService {
     input: {
       readonly commandId: string;
       readonly clientNonce: string;
-      readonly operation: "authenticator.add";
+      readonly operation: "authenticator.add" | "device-link.approve";
+      readonly linkId?: string;
     }
   ): Promise<PasskeyStepUpBeginResponse>;
   verify(
@@ -193,7 +194,8 @@ export function registerPasskeyRoutes(
       await dependencies.service.beginStepUp(request.auth, {
         commandId,
         clientNonce: body.clientNonce,
-        operation: body.operation
+        operation: body.operation,
+        ...(body.linkId === undefined ? {} : { linkId: body.linkId })
       })
     );
     return sendCeremonyResponse(reply, response);

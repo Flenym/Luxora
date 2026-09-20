@@ -631,12 +631,31 @@ export const BeginPasskeyRegistrationRequestSchema = z.object({
   stepUpCeremonyId: IdSchema
 }).strict();
 
-export const PasskeyStepUpOperationSchema = z.literal("authenticator.add");
+export const PasskeyStepUpOperationSchema = z.union([
+  z.literal("authenticator.add"),
+  z.literal("device-link.approve")
+]);
 
 export const BeginPasskeyStepUpRequestSchema = z.object({
   clientNonce: IdSchema,
-  operation: PasskeyStepUpOperationSchema
-}).strict();
+  operation: PasskeyStepUpOperationSchema,
+  linkId: IdSchema.optional()
+}).strict().superRefine((value, context) => {
+  if (value.operation === "device-link.approve" && value.linkId === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "device-link.approve requires linkId",
+      path: ["linkId"]
+    });
+  }
+  if (value.operation !== "device-link.approve" && value.linkId !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "linkId is only valid for device-link.approve",
+      path: ["linkId"]
+    });
+  }
+});
 
 export const PasskeyAuthenticatorRevokeOperationSchema = z.literal("authenticator.revoke");
 export const BeginPasskeyAuthenticatorRevokeStepUpRequestSchema = z.object({
@@ -2437,8 +2456,27 @@ export const DeviceLinkRedeemResponseSchema = z.object({
 
 export const DeviceLinkApproveRequestSchema = z.object({
   linkSecret: DeviceLinkSecretSchema.optional(),
-  password: z.string().min(1).max(128)
-}).strict();
+  password: z.string().min(1).max(128).optional(),
+  stepUpCeremonyId: z.string().min(1).max(128).optional(),
+  stepUpToken: z.string().min(1).max(4096).optional()
+}).strict().superRefine((value, context) => {
+  const hasPassword = value.password !== undefined;
+  const hasCeremony = value.stepUpCeremonyId !== undefined || value.stepUpToken !== undefined;
+  if (hasPassword === hasCeremony) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "approval requires either password or a step-up ceremony pair, exclusively",
+      path: ["password"]
+    });
+  }
+  if (hasCeremony && (value.stepUpCeremonyId === undefined || value.stepUpToken === undefined)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "ceremony approval requires both stepUpCeremonyId and stepUpToken",
+      path: ["stepUpCeremonyId"]
+    });
+  }
+});
 
 export const DeviceLinkChallengeResponseSchema = z.object({
   challenge: DeviceLinkChallengeSchema

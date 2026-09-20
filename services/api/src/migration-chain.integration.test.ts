@@ -50,7 +50,8 @@ const MIGRATION_IDS = [
   "039_call_room_index",
   "040_device_link_challenges",
   "041_device_link_approval",
-  "042_device_link_redemption"
+  "042_device_link_redemption",
+  "043_device_link_step_up"
 ] as const;
 const BASE_TIME = "2026-08-03T12:00:00.000Z";
 const LEGACY_FINGERPRINT = "legacy-encrypted-request-fingerprint";

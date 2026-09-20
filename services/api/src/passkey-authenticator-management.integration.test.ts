@@ -554,7 +554,7 @@ describe("durable passkey authenticator management", () => {
     expect(metadata.display_name_ciphertext).not.toContain("Ключ доступа");
     expect(database.prepare(`
       SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1
-    `).get()).toEqual({ id: "042_device_link_redemption" });
+    `).get()).toEqual({ id: "043_device_link_step_up" });
     database.close();
 
     const { authenticationCeremonyId, authorization } = await authorizeRevoke(

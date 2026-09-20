@@ -1174,7 +1174,12 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
       request.auth.userId,
       request.auth.sessionId,
       id,
-      { linkSecret: input.linkSecret, password: input.password },
+      {
+        linkSecret: input.linkSecret,
+        password: input.password,
+        stepUpCeremonyId: input.stepUpCeremonyId,
+        stepUpToken: input.stepUpToken
+      },
       new Date()
     );
   });

@@ -10,7 +10,8 @@ const STEP_UP_TOKEN_TYPE = "luxora-step-up+jwt";
 const STEP_UP_ALGORITHM = "HS256";
 const STEP_UP_PURPOSES = new Set<StepUpTokenPurpose>([
   "authenticator.add",
-  "authenticator.revoke"
+  "authenticator.revoke",
+  "device-link.approve"
 ]);
 const STEP_UP_AUTHENTICATION_METHOD = "webauthn";
 
@@ -48,7 +49,7 @@ const EXPECTED_CLAIM_KEYS = [
 
 export const STEP_UP_TOKEN_MAX_TTL_SECONDS = 300;
 
-export type StepUpTokenPurpose = "authenticator.add" | "authenticator.revoke";
+export type StepUpTokenPurpose = "authenticator.add" | "authenticator.revoke" | "device-link.approve";
 
 export interface StepUpTokenBinding {
   readonly accountId: string;
