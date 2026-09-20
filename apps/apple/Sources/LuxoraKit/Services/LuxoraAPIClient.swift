@@ -551,6 +551,84 @@ actor LuxoraAPIClient {
         return response.revokedSessionIds
     }
 
+    func createDeviceLinkChallenge(targetLabel: String?) async throws -> APIDeviceLinkChallenge {
+        struct Response: Decodable, Sendable {
+            let linkId: UUID
+            let linkSecret: String
+            let expiresAt: Date
+            let pollIntervalMs: Int
+        }
+        var body: [String: String] = [:]
+        if let targetLabel { body["targetLabel"] = targetLabel }
+        let response: Response = try await request(
+            path: "/v1/device-links/challenges",
+            method: "POST",
+            body: body,
+            token: nil
+        )
+        return APIDeviceLinkChallenge(
+            linkId: response.linkId,
+            linkSecret: response.linkSecret,
+            expiresAt: response.expiresAt,
+            pollIntervalMs: response.pollIntervalMs
+        )
+    }
+
+    func pollDeviceLinkChallenge(linkID: UUID, linkSecret: String) async throws -> APIDeviceLinkStatus {
+        struct Response: Decodable, Sendable { let challenge: APIDeviceLinkStatus }
+        let response: Response = try await request(
+            path: "/v1/device-links/challenges/\(linkID.apiPathComponent)/poll",
+            method: "POST",
+            body: ["linkSecret": linkSecret],
+            token: nil
+        )
+        return response.challenge
+    }
+
+    func closeDeviceLinkChallenge(linkID: UUID, linkSecret: String) async throws -> APIDeviceLinkStatus {
+        struct Response: Decodable, Sendable { let challenge: APIDeviceLinkStatus }
+        let response: Response = try await request(
+            path: "/v1/device-links/challenges/\(linkID.apiPathComponent)/close",
+            method: "POST",
+            body: ["linkSecret": linkSecret],
+            token: nil
+        )
+        return response.challenge
+    }
+
+    func approveDeviceLinkChallenge(linkID: UUID, linkSecret: String, password: String, token: String) async throws -> APIDeviceLinkStatus {
+        struct Response: Decodable, Sendable { let challenge: APIDeviceLinkStatus }
+        let response: Response = try await request(
+            path: "/v1/device-links/challenges/\(linkID.apiPathComponent)/approve",
+            method: "POST",
+            body: ["linkSecret": linkSecret, "password": password],
+            token: token
+        )
+        return response.challenge
+    }
+
+    func denyDeviceLinkChallenge(linkID: UUID, linkSecret: String, token: String) async throws -> APIDeviceLinkStatus {
+        struct Response: Decodable, Sendable { let challenge: APIDeviceLinkStatus }
+        let response: Response = try await request(
+            path: "/v1/device-links/challenges/\(linkID.apiPathComponent)/deny",
+            method: "POST",
+            body: ["linkSecret": linkSecret],
+            token: token
+        )
+        return response.challenge
+    }
+
+    func redeemDeviceLinkChallenge(linkID: UUID, linkSecret: String, proofSignature: String) async throws -> APITokens {
+        struct Response: Decodable, Sendable { let tokens: APITokens }
+        let response: Response = try await request(
+            path: "/v1/device-links/challenges/\(linkID.apiPathComponent)/redeem",
+            method: "POST",
+            body: ["linkSecret": linkSecret, "proofSignature": proofSignature],
+            token: nil
+        )
+        return response.tokens
+    }
+
     func currentPushRegistration(token: String) async throws -> APIPushRegistration? {
         struct Response: Decodable, Sendable { let registration: APIPushRegistration? }
         let response: Response = try await request(

@@ -222,6 +222,26 @@ struct APIDeviceSession: Decodable, Sendable {
     }
 }
 
+struct APIDeviceLinkChallenge: Decodable, Sendable {
+    let linkId: UUID
+    let linkSecret: String?
+    let expiresAt: Date
+    let pollIntervalMs: Int?
+}
+
+struct APIDeviceLinkStatus: Decodable, Sendable {
+    let linkId: UUID
+    let state: String
+    let expiresAt: Date
+    let retryAfterMs: Int
+    let sasWords: [String]?
+
+    var shortAuthenticationString: String? {
+        guard let sasWords, sasWords.count == 4 else { return nil }
+        return sasWords.joined(separator: " ")
+    }
+}
+
 struct APIUploadAttachment: Decodable, Sendable {
     let id: UUID
     let kind: String?

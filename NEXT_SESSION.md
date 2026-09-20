@@ -13,7 +13,7 @@
 
 ## Ближайшая очередь
 
-1. iPhone terminate-others DONE локально (uncommitted, проверит Apple CI) + containment (`bfd1f44`, CI PASS оба). Дальше: contact discovery явно БЕЗ upload (spec-LATER), final QA, iPhone app epics (device-link UI, calls UI).
+1. iPhone device-link API client DONE локально (uncommitted, проверит Apple CI) + terminate-others/containment CI PASS. Дальше: DeviceLinkStore + QR UI, contact discovery явно БЕЗ upload (spec-LATER), final QA.
 3. Финальный QA.
 
 ## Правила цикла (не нарушать)
