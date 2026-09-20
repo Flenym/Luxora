@@ -54,6 +54,7 @@ import {
   VerifyPhoneChallengeSchema,
   CreateDataExportRequestSchema,
   CreateDeviceLinkChallengeRequestSchema,
+  DeviceLinkApproveRequestSchema,
   DeviceLinkChallengeSecretSchema,
   ScheduleAccountDeletionRequestSchema,
   CreateCallRequestSchema,
@@ -1167,8 +1168,14 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
   }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
-    const input = DeviceLinkChallengeSecretSchema.parse(request.body ?? {});
-    return dependencies.deviceLinks.approveChallenge(request.auth.userId, id, input.linkSecret, new Date());
+    const input = DeviceLinkApproveRequestSchema.parse(request.body ?? {});
+    return dependencies.deviceLinks.approveChallenge(
+      request.auth.userId,
+      request.auth.sessionId,
+      id,
+      { linkSecret: input.linkSecret, password: input.password },
+      new Date()
+    );
   });
 
   app.post("/v1/device-links/challenges/:id/deny", {

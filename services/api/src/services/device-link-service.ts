@@ -6,8 +6,15 @@ import type {
 import { DeviceLinkChallengeResponseSchema } from "@luxora/protocol";
 import type { DeviceLinkChallengeRecord } from "../domain/types.js";
 import type { Store } from "../domain/store.js";
-import { conflict, rateLimited, unauthenticated } from "../errors.js";
+import { conflict, forbidden, rateLimited, unauthenticated, badRequest } from "../errors.js";
+import { hashPassword, verifyPassword } from "./password-auth.js";
 import { DEVICE_LINK_SAS_WORDS } from "./device-link-wordlist.js";
+
+// Argon2id is intentionally expensive: one salted timing hash per process so
+// passwordless or unknown approvers take the same verification path.
+const TIMING_DUMMY_PASSWORD_HASH = hashPassword(
+  "not-a-real-password-used-for-timing-only"
+);
 
 /** Spec §10.2: challenge lifetime is 120 seconds, single-use. */
 export const DEVICE_LINK_TTL_MS = 120_000;
@@ -161,19 +168,28 @@ export class DeviceLinkService {
 
   /**
    * Trusted-device decision (IDENTITY_ACCESS §10.1.4-10.1.5, partial).
-   * Requires the approver's live bearer session plus link-secret possession
-   * (QR scan). HONESTY LIMITATION: transaction-bound step-up is NOT yet
-   * enforced — it arrives in the next slice before any client ships, and
-   * until then approval binds bearer session + secret + explicit action
-   * inside the 120-second single-use window.
+   * Requires the approver's live bearer session, link-secret possession (QR
+   * scan) AND a fresh password step-up bound to this exact approval
+   * (linkId + approver + session verified below before the state CAS).
+   * HONESTY LIMITATION: password is a knowledge factor, not
+   * phishing-resistant; passkey-ceremony step-up arrives in the next slice
+   * before any client ships.
    */
   approveChallenge(
     approverUserId: string,
+    approverSessionId: string,
     linkId: string,
-    linkSecret: string | undefined,
+    input: { linkSecret: string | undefined; password: string },
     now: Date
-  ): DeviceLinkChallengeResponse {
-    return this.#decideChallenge(approverUserId, linkId, linkSecret, "approved", now);
+  ): Promise<DeviceLinkChallengeResponse> {
+    return this.#decideChallenge(
+      approverUserId,
+      approverSessionId,
+      linkId,
+      { linkSecret: input.linkSecret, password: input.password },
+      "approved",
+      now
+    );
   }
 
   denyChallenge(
@@ -181,21 +197,22 @@ export class DeviceLinkService {
     linkId: string,
     linkSecret: string | undefined,
     now: Date
-  ): DeviceLinkChallengeResponse {
-    return this.#decideChallenge(approverUserId, linkId, linkSecret, "denied", now);
+  ): Promise<DeviceLinkChallengeResponse> {
+    return this.#decideChallenge(approverUserId, null, linkId, { linkSecret, password: undefined }, "denied", now);
   }
 
-  #decideChallenge(
+  async #decideChallenge(
     approverUserId: string,
+    approverSessionId: string | null,
     linkId: string,
-    linkSecret: string | undefined,
+    input: { linkSecret: string | undefined; password: string | undefined },
     toStatus: "approved" | "denied",
     now: Date
-  ): DeviceLinkChallengeResponse {
+  ): Promise<DeviceLinkChallengeResponse> {
     const observed = now.toISOString();
     const record = this.store.findDeviceLinkChallenge(linkId);
     if (record === null) throw unauthenticated("Device link challenge was not found");
-    checkSecret(linkSecret, record);
+    checkSecret(input.linkSecret, record);
     if (record.status === "pending" && record.expiresAt <= observed) {
       this.store.transitionDeviceLinkChallenge(linkId, "pending", "expired", observed);
       throw conflict("Device link challenge has expired", {
@@ -210,21 +227,53 @@ export class DeviceLinkService {
         : project(decided, 0);
       throw conflict("Device link challenge is already decided", { challenge: current.challenge });
     }
-    const decided = this.store.decideDeviceLinkChallenge(
-      linkId,
-      toStatus,
-      toStatus === "approved" ? approverUserId : null,
-      observed
-    );
+    if (toStatus === "approved") {
+      if (input.password === undefined) throw badRequest("Device link approval requires a password");
+      return this.#approvePending(approverUserId, approverSessionId as string, linkId, input.password, observed);
+    }
+    const decided = this.store.decideDeviceLinkChallenge(linkId, "denied", null, observed);
     if (!decided) {
       throw conflict("Device link challenge is already decided", {
         challenge: project({ ...record, status: record.status, decidedAt: observed }, 0).challenge
       });
     }
-    if (toStatus === "denied") {
-      return project({ ...record, status: "denied", decidedAt: observed }, 0);
+    return project({ ...record, status: "denied", decidedAt: observed }, 0);
+  }
+
+  async #approvePending(
+    approverUserId: string,
+    approverSessionId: string,
+    linkId: string,
+    password: string,
+    observed: string
+  ): Promise<DeviceLinkChallengeResponse> {
+    const user = this.store.findUserById(approverUserId);
+    const candidateHash = user?.passwordHash ?? await TIMING_DUMMY_PASSWORD_HASH;
+    let valid = false;
+    try {
+      valid = await verifyPassword(candidateHash, password);
+    } catch {
+      await verifyPassword(await TIMING_DUMMY_PASSWORD_HASH, password).catch(() => false);
     }
-    return projectDecision({ ...record, status: "approved", decidedAt: observed }, approverUserId);
+    if (!valid || user === null || !user.passwordAuthEnabled) {
+      throw forbidden("Device link approval authentication failed");
+    }
+    if (!this.store.isSessionActive(approverSessionId, approverUserId, observed)) {
+      throw forbidden("Device link approval authentication failed");
+    }
+    const decided = this.store.decideDeviceLinkChallenge(linkId, "approved", approverUserId, observed);
+    if (!decided) {
+      const current = this.store.findDeviceLinkChallenge(linkId);
+      if (current === null) throw conflict("Device link challenge is already decided");
+      const approver = current.approvedByAccountId;
+      const projection = current.status === "approved" && approver !== null
+        ? projectDecision(current, approver)
+        : project(current, 0);
+      throw conflict("Device link challenge is already decided", { challenge: projection.challenge });
+    }
+    const committed = this.store.findDeviceLinkChallenge(linkId);
+    if (committed === null) throw conflict("Device link challenge is already decided");
+    return projectDecision(committed, approverUserId);
   }
 
   sweep(now: Date): { expired: number; purged: number } {

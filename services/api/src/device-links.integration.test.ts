@@ -184,7 +184,7 @@ describe("device link challenges", () => {
       method: "POST",
       url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
       headers: { authorization: `Bearer ${approver.accessToken}` },
-      payload: { linkSecret: created.body.linkSecret }
+      payload: { linkSecret: created.body.linkSecret, password: "correct horse battery staple" }
     });
     expect(approve.statusCode, approve.body).toBe(200);
     const approved = (approve.json() as { challenge: ChallengeBody }).challenge;
@@ -204,7 +204,7 @@ describe("device link challenges", () => {
       method: "POST",
       url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
       headers: { authorization: `Bearer ${approver.accessToken}` },
-      payload: { linkSecret: created.body.linkSecret }
+      payload: { linkSecret: created.body.linkSecret, password: "correct horse battery staple" }
     });
     expect(again.statusCode).toBe(409);
 
@@ -247,9 +247,25 @@ describe("device link challenges", () => {
       method: "POST",
       url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
       headers: { authorization: `Bearer ${approverToken}` },
-      payload: { linkSecret: "c".repeat(64) }
+      payload: { linkSecret: "c".repeat(64), password: "correct horse battery staple" }
     });
     expect(wrongSecret.statusCode).toBe(401);
+
+    const missingPassword = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: created.body.linkSecret }
+    });
+    expect(missingPassword.statusCode).toBe(400);
+
+    const wrongPassword = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: created.body.linkSecret, password: "wrong password phrase here" }
+    });
+    expect(wrongPassword.statusCode).toBe(403);
 
     const unknown = await app!.inject({
       method: "POST",
@@ -270,7 +286,7 @@ describe("device link challenges", () => {
       method: "POST",
       url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
       headers: { authorization: `Bearer ${approverToken}` },
-      payload: { linkSecret: created.body.linkSecret }
+      payload: { linkSecret: created.body.linkSecret, password: "correct horse battery staple" }
     });
     expect(expiredApprove.statusCode).toBe(409);
   });

@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-19):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s), calls slices 1–7 (`5b1d2f8` + Docker fix `7c4552f` + `2076c9b` + `c31f644` + `6f99edf` + `e3d2ef8` + `5d70e36` + `27bb510`, CI PASS оба) готовы и запушены. Search slice 1 (conversation search) DONE локально (uncommitted): `GET /v1/search/chats` (`search-chats.integration` 2/2, матрица 111→112, API typecheck clean, полный API 97/724). QR device-link slices 1–2 (challenge + approval/SAS) DONE локально (uncommitted): миграция 041 (`041_device_link_approval`), `POST .../approve|deny` + SAS обе стороны, `device-link-service.test` 2/2 + `device-links.integration` 5/5, матрица 114→116, typechecks clean, инвентаризации 041, полный API 99/731. Последняя миграция 041. Calls remainder done кроме push-доставки (blocked) — next: QR slice 3, затем contact discovery, затем QA.
+**Точка продолжения (обновлено 2026-09-20):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s), calls slices 1–7 (`5b1d2f8` + Docker fix `7c4552f` + `2076c9b` + `c31f644` + `6f99edf` + `e3d2ef8` + `5d70e36` + `27bb510`, CI PASS оба) готовы и запушены. Search slice 1 (conversation search) DONE локально (uncommitted): `GET /v1/search/chats` (`search-chats.integration` 2/2, матрица 111→112, API typecheck clean, полный API 97/724). QR device-link slices 1–2 (challenge + approval/SAS) DONE локально (uncommitted): миграция 041 (`041_device_link_approval`), `POST .../approve|deny` + SAS обе стороны, `device-link-service.test` 2/2 + `device-links.integration` 5/5, матрица 114→116, typechecks clean, инвентаризации 041, полный API 99/731. QR device-link slice 2b (password-bound approval step-up) DONE локально (uncommitted): approve `{linkSecret?, password}` (`400`/`403`), SAS из COMMITTED-записи, матрица без изменений (116), API typecheck clean, полный API 99/731. Последняя миграция 041. Calls remainder done кроме push-доставки (blocked) — next: QR slice 3, затем contact discovery, затем QA.
 
 ## Как продолжить без потери контекста
 
@@ -13,7 +13,7 @@
 
 ## Ближайшая очередь
 
-1. QR device-link slice 2 approval DONE локально (uncommitted, миграция 041; `device-link-service.test` 2/2 + `device-links.integration` 5/5, матрица 114→116, typechecks clean, инвентаризации 041, полный API 99/731); queue item 1: slice 3 next (step-up issuance + grant redemption + session issuance + New-device-linked notifications), затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
+1. QR device-link slice 2b password step-up DONE локально (uncommitted; approve `{linkSecret?, password}`, `400`/`403`, SAS из COMMITTED-записи, матрица 116, API typecheck clean, полный API 99/731); queue item 1: slice 3 next (passkey-ceremony step-up + grant redemption + session issuance + notifications), затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
 2. Export/delete, QR-linking, contact discovery.
 3. Финальный QA.
 

@@ -167,7 +167,17 @@
 > миграция `041_device_link_approval` (`approved_by_account_id`); `POST /v1/device-links/challenges/:id/approve|deny` (bearer approver + linkSecret; pending→approved с записью approver / pending→denied; non-pending → `409` с текущим challenge, expired → lazy-expire затем `409`, unknown/wrong secret → identical `401` без oracle; матрица 114→116).
 > SAS — 4 слова из 256-word списка через `sha256(luxora-device-link-sas-v1:secretHash:approverId)`, отдаётся в approve-ответе И в poll таргета (детерминированное совпадение, approver id таргету НЕ раскрывается).
 > HONESTY LIMIT: transaction-bound step-up пока НЕ enforced — approval связывает bearer-сессию + secret + явное действие в окне 120s; step-up issuance — slice 3, обязателен до шипа любого клиента.
-> Тесты локально: `device-link-service.test` 2/2 (wordlist 256 + SAS binding) + `device-links.integration` 5/5 (approve/SAS-match/deny/double-409/expired-409/401s), matrix green, API typecheck clean, protocol typecheck+build clean, инвентаризации миграций обновлены (041); полный suite пока НЕ гонялся. Честный остаток: slice 3 (step-up issuance + grant redemption + session issuance + New-device-linked notifications).
+> Тесты локально: `device-link-service.test` 2/2 (wordlist 256 + SAS binding) + `device-links.integration` 5/5 (approve/SAS-match/deny/double-409/expired-409/401s), matrix green, API typecheck clean, protocol typecheck+build clean, инвентаризации миграций обновлены (041); полный API 99 файлов / 731 тест PASS. Честный остаток: slice 3 (step-up issuance + grant redemption + session issuance + New-device-linked notifications).
+>
+> **Дополнение 2026-09-20 (QR approval password step-up, DONE, локально зелёный):**
+> approve теперь требует `{linkSecret?, password}` через `DeviceLinkApproveRequestSchema`
+> (нет пароля → `400`, неверный → `403`); сервис сверяет пароль с хешем аппрувера
+> (dummy-timing guard + `passwordAuthEnabled` + live-session check), затем CAS-decide;
+> deny без изменений (bearer + secret, без пароля). SAS теперь из COMMITTED-записи
+> (approve-ответ и poll таргета всегда совпадают). HONESTY LIMIT: knowledge-factor
+> (НЕ phishing-resistant) step-up, transaction-bound (linkId+approver+session до CAS);
+> passkey-ceremony step-up — плановый апгрейд до шипа любого клиента.
+> Тесты локально: `device-links.integration` 5/5 (approve/SAS/deny/double-409 + 401s + missing/wrong-password + expired-409), `device-link-service.test` 2/2, API typecheck clean; полный suite НЕ гонялся, матрица без изменений (116).
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

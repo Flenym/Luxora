@@ -2419,6 +2419,11 @@ export const DeviceLinkChallengeSecretSchema = z.object({
   linkSecret: DeviceLinkSecretSchema.optional()
 }).strict();
 
+export const DeviceLinkApproveRequestSchema = z.object({
+  linkSecret: DeviceLinkSecretSchema.optional(),
+  password: z.string().min(1).max(128)
+}).strict();
+
 export const DeviceLinkChallengeResponseSchema = z.object({
   challenge: DeviceLinkChallengeSchema
 });
