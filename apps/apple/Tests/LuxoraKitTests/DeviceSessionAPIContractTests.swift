@@ -58,7 +58,24 @@ final class DeviceSessionAPIContractTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.url?.path, "/v1/security/containment")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-token")
-            let body = try XCTUnwrap(request.httpBody.map { try JSONSerialization.jsonObject(with: $0) as? [String: String] })
+            let rawBody: Data?
+            if let httpBody = request.httpBody {
+                rawBody = httpBody
+            } else if let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var result = Data()
+                var buffer = [UInt8](repeating: 0, count: 1_024)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count < 0 { break }
+                    result.append(buffer, count: count)
+                }
+                rawBody = result
+            } else {
+                rawBody = nil
+            }
+            let body = try XCTUnwrap(rawBody.map { try JSONSerialization.jsonObject(with: $0) as? [String: String] })
             XCTAssertEqual(body, ["scope": "all_other_sessions"])
             return (200, try JSONSerialization.data(withJSONObject: [
                 "scope": "all_other_sessions",
