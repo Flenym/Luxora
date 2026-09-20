@@ -50,6 +50,7 @@ private struct LoadedPhoneDevicesSettingsView: View {
 
     @State private var pendingRevocation: DeviceSession?
     @State private var confirmsCurrentSignOut = false
+    @State private var confirmsTerminateOthers = false
 
     var body: some View {
         List {
@@ -107,6 +108,20 @@ private struct LoadedPhoneDevicesSettingsView: View {
         } message: {
             Text("Локальные ключи входа будут удалены после запроса к серверу.")
         }
+        .confirmationDialog(
+            "Завершить все другие сеансы?",
+            isPresented: $confirmsTerminateOthers,
+            titleVisibility: .visible
+        ) {
+            Button("Завершить другие сеансы", role: .destructive) {
+                confirmsTerminateOthers = false
+                Task { await store.terminateOtherSessions() }
+            }
+            Button("Отмена", role: .cancel) { confirmsTerminateOthers = false }
+        } message: {
+            Text("Другие устройства потеряют доступ и должны будут войти снова. Текущий сеанс сохранится.")
+        }
+    }
     }
 
     @ViewBuilder
@@ -154,6 +169,16 @@ private struct LoadedPhoneDevicesSettingsView: View {
                 Section("Другие устройства") {
                     ForEach(others) { session in
                         sessionRow(session)
+                    }
+                    Button("Завершить другие сеансы", role: .destructive) {
+                        confirmsTerminateOthers = true
+                    }
+                    .disabled(store.terminateOthersState == .loading)
+                    .accessibilityIdentifier("devices-terminate-others")
+                    if case let .failed(message) = store.terminateOthersState {
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
                     }
                 }
             }

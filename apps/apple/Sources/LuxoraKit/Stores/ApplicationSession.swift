@@ -1405,6 +1405,11 @@ public final class ApplicationSession {
                 try await coordinator.withAccessToken { token in
                     try await api.revokeDeviceSession(id: sessionID, token: token)
                 }
+            },
+            othersTerminator: {
+                try await coordinator.withAccessToken { token in
+                    try await api.containOtherSessions(token: token)
+                }
             }
         )
 

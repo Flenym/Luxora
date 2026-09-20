@@ -114,12 +114,73 @@ final class DeviceSessionsStoreTests: XCTestCase {
         XCTAssertEqual(message, authenticationError.localizedDescription)
     }
 
-    private func makeSession(
+    func testTerminateOthersRemovesOnlyServerConfirmedSessions() async {
+        let current = makeSession(name: "Этот iPhone", isCurrent: true)
+        let other = makeSession(name: "MacBook Pro")
+        let store = DeviceSessionsStore(sessions: [current, other], loadState: .loaded)
+        store.configureRemote(
+            loader: { [current, other] },
+            revoker: { _ in },
+            othersTerminator: { [other.id] }
+        )
+
+        let accepted = await store.terminateOtherSessions()
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(store.sessions.map(\.id), [current.id])
+        XCTAssertEqual(store.terminateOthersState, .loaded)
+    }
+
+    func testTerminateOthersWithoutOthersSucceedsWithoutTransport() async {
+        let current = makeSession(name: "Этот iPhone", isCurrent: true)
+        let store = DeviceSessionsStore(sessions: [current], loadState: .loaded)
+        store.configureRemote(
+            loader: { [current] },
+            revoker: { _ in },
+            othersTerminator: { throw DeviceSessionTestError.responseLost }
+        )
+
+        let accepted = await store.terminateOtherSessions()
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(store.sessions.map(\.id), [current.id])
+    }
+
+    func testTerminateOthersReconcilesAgainstFreshListOnFailure() async {
+        let current = makeSession(name: "Этот iPhone", isCurrent: true)
+        let other = makeSession(name: "MacBook Pro")
+        let store = DeviceSessionsStore(sessions: [current, other], loadState: .loaded)
+        store.configureRemote(
+            loader: { [current] },
+            revoker: { _ in },
+            othersTerminator: { throw DeviceSessionTestError.responseLost }
+        )
+
+        let accepted = await store.terminateOtherSessions()
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(store.sessions.map(\.id), [current.id])
+        XCTAssertEqual(store.terminateOthersState, .loaded)
+    }
+
+    func testTerminateOthersWithoutRemoteFailsClosed() async {
+        let current = makeSession(name: "Этот iPhone", isCurrent: true)
+        let other = makeSession(name: "MacBook Pro")
+        let store = DeviceSessionsStore(sessions: [current, other], loadState: .loaded)
+        store.configureRemote(loader: { [current, other] }, revoker: { _ in })
+
+        let accepted = await store.terminateOtherSessions()
+
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(store.sessions.count, 2)
+        guard case .failed = store.terminateOthersState else {
+            return XCTFail("Missing containment remote must fail closed")
+        }
+    }
         name: String,
         lastSeenOffset: TimeInterval = 0,
         isCurrent: Bool = false
-    ) -> DeviceSession {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
+    ) -> DeviceSession {        let now = Date(timeIntervalSince1970: 1_800_000_000)
         return DeviceSession(
             id: UUID(),
             deviceName: name,

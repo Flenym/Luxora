@@ -52,6 +52,24 @@ final class DeviceSessionAPIContractTests: XCTestCase {
         try await client.revokeDeviceSession(id: sessionID, token: "access-token")
     }
 
+    func testContainmentPostsScopeAndDecodesRevokedIdentifiers() async throws {
+        let otherID = UUID(uuidString: "12345678-1234-4abc-8def-123456789012")!
+        let client = makeClient { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/v1/security/containment")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-token")
+            let body = try XCTUnwrap(request.httpBody.map { try JSONSerialization.jsonObject(with: $0) as? [String: String] })
+            XCTAssertEqual(body, ["scope": "all_other_sessions"])
+            return (200, try JSONSerialization.data(withJSONObject: [
+                "scope": "all_other_sessions",
+                "revokedSessionIds": [otherID.uuidString],
+            ]))
+        }
+
+        let revoked = try await client.containOtherSessions(token: "access-token")
+        XCTAssertEqual(revoked, [otherID])
+    }
+
     private func makeClient(
         handler: @escaping @Sendable (URLRequest) throws -> (Int, Data)
     ) -> LuxoraAPIClient {

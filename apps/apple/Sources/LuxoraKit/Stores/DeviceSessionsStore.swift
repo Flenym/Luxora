@@ -7,14 +7,17 @@ public final class DeviceSessionsStore {
     public private(set) var sessions: [DeviceSession]
     public private(set) var loadState: RemoteContentState
     public private(set) var revocationStates: [UUID: RemoteContentState] = [:]
+    public private(set) var terminateOthersState: RemoteContentState = .idle
 
     var remoteLoader: (@Sendable () async throws -> [DeviceSession])?
     var remoteRevoker: (@Sendable (UUID) async throws -> Void)?
+    var remoteOthersTerminator: (@Sendable () async throws -> [UUID])?
 
     @ObservationIgnored private var generation: UInt = 0
     @ObservationIgnored private var loadAttempt: UInt = 0
     @ObservationIgnored private var loadOperation: Task<[DeviceSession], Error>?
     @ObservationIgnored private var revokeOperations: [UUID: Task<Void, Error>] = [:]
+    @ObservationIgnored private var terminateOthersOperation: Task<[UUID], Error>?
 
     public init(sessions: [DeviceSession] = [], loadState: RemoteContentState = .idle) {
         self.sessions = Self.sorted(sessions)
@@ -125,10 +128,77 @@ public final class DeviceSessionsStore {
 
     func configureRemote(
         loader: @escaping @Sendable () async throws -> [DeviceSession],
-        revoker: @escaping @Sendable (UUID) async throws -> Void
+        revoker: @escaping @Sendable (UUID) async throws -> Void,
+        othersTerminator: (@Sendable () async throws -> [UUID])? = nil
     ) {
         remoteLoader = loader
         remoteRevoker = revoker
+        remoteOthersTerminator = othersTerminator
+    }
+
+    /// Terminates every session except the current one via the containment
+    /// endpoint. Returns true when the server-confirmed revoked ids are gone
+    /// locally; on transport failure reconciles against a fresh list, same
+    /// as single-session revocation.
+    @discardableResult
+    public func terminateOtherSessions() async -> Bool {
+        guard let remoteOthersTerminator, let remoteLoader else {
+            terminateOthersState = .failed("Серверное завершение недоступно в этом сеансе.")
+            return false
+        }
+        guard terminateOthersState != .loading else { return false }
+        guard sessions.contains(where: { !$0.isCurrent }) else { return true }
+
+        let operationGeneration = generation
+        let operation = Task { try await remoteOthersTerminator() }
+        terminateOthersOperation?.cancel()
+        terminateOthersOperation = operation
+        terminateOthersState = .loading
+
+        do {
+            let revoked = try await operation.value
+            guard acceptsOthers(operation, generation: operationGeneration) else { return false }
+            acceptOthersTermination(revoked)
+            return true
+        } catch is CancellationError {
+            guard generation == operationGeneration else { return false }
+            terminateOthersState = .idle
+            terminateOthersOperation = nil
+            return false
+        } catch {
+            guard generation == operationGeneration else { return false }
+            if Self.isUnauthorized(error) {
+                clearSessionsAfterAuthenticationFailure(error)
+                terminateOthersState = .failed(error.localizedDescription)
+                terminateOthersOperation = nil
+                return false
+            }
+            do {
+                let reconciled = try await remoteLoader()
+                guard acceptsOthers(operation, generation: operationGeneration) else { return false }
+                if !reconciled.contains(where: { !$0.isCurrent }) {
+                    sessions = Self.sorted(reconciled)
+                    terminateOthersState = .loaded
+                    terminateOthersOperation = nil
+                    return true
+                }
+            } catch is CancellationError {
+                guard generation == operationGeneration else { return false }
+                terminateOthersState = .idle
+                terminateOthersOperation = nil
+                return false
+            } catch {
+                if Self.isUnauthorized(error) {
+                    clearSessionsAfterAuthenticationFailure(error)
+                    terminateOthersState = .failed(error.localizedDescription)
+                    terminateOthersOperation = nil
+                    return false
+                }
+            }
+            terminateOthersState = .failed(error.localizedDescription)
+            terminateOthersOperation = nil
+            return false
+        }
     }
 
     func cancelRemoteOperations() {
@@ -137,9 +207,25 @@ public final class DeviceSessionsStore {
         loadOperation = nil
         revokeOperations.values.forEach { $0.cancel() }
         revokeOperations.removeAll()
-        if loadState == .loading {
-            loadState = sessions.isEmpty ? .idle : .loaded
+        terminateOthersOperation?.cancel()
+        terminateOthersOperation = nil
+        if loadState == .loading { loadState = sessions.isEmpty ? .idle : .loaded }
+        revocationStates = revocationStates.mapValues { state in
+            state == .loading ? .idle : state
         }
+        if terminateOthersState == .loading { terminateOthersState = .idle }
+    }
+
+    private func acceptsOthers(_ operation: Task<[UUID], Error>, generation operationGeneration: UInt) -> Bool {
+        generation == operationGeneration && !operation.isCancelled && !Task.isCancelled
+    }
+
+    private func acceptOthersTermination(_ revoked: [UUID]) {
+        let revokedIDs = Set(revoked)
+        sessions.removeAll { revokedIDs.contains($0.id) }
+        terminateOthersState = .loaded
+        terminateOthersOperation = nil
+    }
         revocationStates = revocationStates.mapValues { state in
             state == .loading ? .idle : state
         }

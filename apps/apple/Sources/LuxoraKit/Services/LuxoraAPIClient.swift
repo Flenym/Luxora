@@ -540,6 +540,17 @@ actor LuxoraAPIClient {
         )
     }
 
+    func containOtherSessions(token: String) async throws -> [UUID] {
+        struct Response: Decodable, Sendable { let revokedSessionIds: [UUID] }
+        let response: Response = try await request(
+            path: "/v1/security/containment",
+            method: "POST",
+            body: ["scope": "all_other_sessions"],
+            token: token
+        )
+        return response.revokedSessionIds
+    }
+
     func currentPushRegistration(token: String) async throws -> APIPushRegistration? {
         struct Response: Decodable, Sendable { let registration: APIPushRegistration? }
         let response: Response = try await request(

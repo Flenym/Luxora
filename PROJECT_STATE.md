@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-20 · security containment DONE локально (uncommitted) + iPhone search-chats wiring (`8361e62` + фикс `d12f49c`, CI PASS все) + QR step-up ceremony (uncommitted); API 100/736 зелёный локально
+**Обновлено:** 2026-09-20 · iPhone terminate-others + security containment (`bfd1f44`, CI PASS оба) DONE локально uncommitted; API 101/739 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -34,6 +34,8 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 - Матрица `IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md` частично устарела (миграции 025→032, счётчики тестов).
 
 ## Последние изменения
+
+- iPhone terminate-others DONE (локально, uncommitted, проверит Apple CI): `containOtherSessions` (`POST /v1/security/containment`), `terminateOtherSessions` в store (reconcile-on-ambiguity как у revoke), кнопка + диалог + состояние во view, Swift-тесты store + contract.
 
 - Security containment DONE локально (uncommitted): `POST /v1/security/containment` (session|all_other_sessions|account, 10/min, без миграции), account гасит все сессии + экспорты + push, realtime best-effort, `recovery_takeover` не принимается; `containment.integration` 3/3, typechecks clean, матрица 117→118, полный API 101/739; остаток — authenticator suspension + security epoch.
 - iPhone search-chats wiring (`8361e62` + фикс `d12f49c`, CI PASS все incl. Apple): `GlobalChatSearchResult` + `searchChatsPage` (`/v1/search/chats`) + chats/channels loaders с kind-фильтром (paging/dedup/cursor-fail-closed), строки + счётчики во view, Swift-тесты; сервер без изменений. Плюс правка матрицы set Cu (Search/Calls/Devices rows).
