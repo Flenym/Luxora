@@ -80,6 +80,30 @@ describe("query-safe structured API request logging", () => {
       headers: { "x-request-id": clientRequestIdCanary }
     });
     expect(unmatched.statusCode).toBe(404);
+    const linkChallenge = await app.inject({
+      method: "POST",
+      url: "/v1/device-links/challenges",
+      payload: { targetLabel: "Log canary device" }
+    });
+    expect(linkChallenge.statusCode).toBe(201);
+    const linkSecret = linkChallenge.json().linkSecret as string;
+    const linkPoll = await app.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${linkChallenge.json().linkId as string}/poll`,
+      payload: { linkSecret }
+    });
+    expect(linkPoll.statusCode).toBe(200);
+    const webhookCanary = "CANARY_WEBHOOK_AUTH_7e21";
+    const forgedWebhook = await app.inject({
+      method: "POST",
+      url: "/v1/internal/calls/livekit-webhook",
+      headers: {
+        "content-type": "application/webhook+json",
+        authorization: webhookCanary
+      },
+      payload: Buffer.from("{}", "utf8")
+    });
+    expect(forgedWebhook.statusCode).toBe(401);
     await app.close();
     app = undefined;
 
@@ -94,7 +118,9 @@ describe("query-safe structured API request logging", () => {
       unmatchedPathCanary,
       accessToken,
       refreshToken,
-      "authorization"
+      "authorization",
+      linkSecret,
+      webhookCanary
     ]) {
       expect(output).not.toContain(forbidden);
     }

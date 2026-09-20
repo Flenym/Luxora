@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-20):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS: Node/Web/Desktop 4m27s, Security 2m31s), WAV duration (`b873747`, CI PASS: Node/Web/Desktop 3m13s, Security 2m7s), calls slices 1–7 (`5b1d2f8` + Docker fix `7c4552f` + `2076c9b` + `c31f644` + `6f99edf` + `e3d2ef8` + `5d70e36` + `27bb510`, CI PASS оба) готовы и запушены. Search slice 1 (conversation search) DONE локально (uncommitted): `GET /v1/search/chats` (`search-chats.integration` 2/2, матрица 111→112, API typecheck clean, полный API 97/724). QR device-link slices 1–2 (challenge + approval/SAS) DONE локально (uncommitted): миграция 041 (`041_device_link_approval`), `POST .../approve|deny` + SAS обе стороны, `device-link-service.test` 2/2 + `device-links.integration` 5/5, матрица 114→116, typechecks clean, инвентаризации 041, полный API 99/731. QR device-link slice 2b (password-bound approval step-up) DONE локально (uncommitted): approve `{linkSecret?, password}` (`400`/`403`), SAS из COMMITTED-записи, матрица без изменений (116), API typecheck clean, полный API 99/731. Последняя миграция 042. QR device-link slice 3 redemption DONE локально (uncommitted): миграция 042 (`042_device_link_redemption`), redeem `201 {tokens}`, `device-links.integration` 7/7, typechecks clean, матрица 116→117. Calls remainder done кроме push-доставки (blocked) — queue: passkey step-up альтернатива, затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
+**Точка продолжения (обновлено 2026-09-20):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS), WAV duration (`b873747`, CI PASS), calls slices 1–7 (CI PASS оба), search slice 1 (`57a801f`, CI PASS), QR device-link slices 1–3 (`d03d6fe` + `be4faa9` + `936e1a5` + `42dd53c`, CI PASS все) — всё запушено. Локально зелёный: protocol 17/104 build, API 99/733, оба typecheck; последняя миграция 042. QA-слайс в работе (uncommitted): log-leak canaries для linkSecret/webhook-auth.
 
 ## Как продолжить без потери контекста
 
@@ -8,13 +8,13 @@
 2. Проверь состояние: `git status --short --branch`, `git log --oneline -5`,
    `gh run list --repo Flenym/Luxora --limit 4`.
 3. Канонические контракты: `packages/protocol/src/index.ts`,
-    `services/api/src/infrastructure/migrations.ts` (последняя `037`),
+    `services/api/src/infrastructure/migrations.ts` (последняя `042`),
    `docs/specs/IPHONE_FUNCTIONAL_COMPLETION_MATRIX_RU.md` (частично устарела).
 
 ## Ближайшая очередь
 
-1. QR device-link slice 3 redemption DONE локально (uncommitted; миграция 042, redeem `201 {tokens}`, `device-links.integration` 7/7, typechecks clean, матрица 116→117, полный API 99/733); queue: passkey step-up альтернатива, затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
-2. Export/delete, QR-linking, contact discovery.
+1. QA-слайс (uncommitted): log-leak canaries, верификация счётчиков/матрицы/capabilities, дрейф доков. Затем: passkey-ceremony step-up альтернатива, contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
+2. Export/delete — done; QR-linking (slices 1–3 done) — остались step-up-ceremony, E2EE гранта, history bootstrap.
 3. Финальный QA.
 
 ## Правила цикла (не нарушать)

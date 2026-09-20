@@ -212,13 +212,13 @@
 ### MEDIUM
 
 - [x] Image dimensions server-verified (mismatch `400`, measured adopt, AVIF/HEIC остаются client_declared)
-- [ ] Media processing остаток: thumbnails, duration/waveform на сервере, quarantine/transcode pipeline
+- [ ] Media processing остаток: quarantine/transcode pipeline (thumbnails + duration/waveform на сервере DONE: thumbnails 320px, WAV duration, оба CI PASS)
 - [x] Search pagination convergence (messages/people/files); остаток: contacts/address-book policy
-- [ ] Calls signaling + state machine + честный UI (SFU/TURN — по готовности инфры)
+- [ ] Calls честный UI + push-доставка (серверный signaling slices 1–7 DONE, CI PASS: create/get/cancel/hangup, group, ring/accept/decline, invite, join-grant, webhook, reconcile, sweeper; SFU/TURN — по готовности инфры)
 - [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON (profile/settings/sessions/relationships/blocks/chats/messages/media-meta), 7-day TTL, Range download
 - [x] Account export media binaries (DONE): `media/<attachmentId>/<fileName>` в архиве, per-file SHA-256, `listAllOwnedAttachments` через `#mapAttachment`, расхождение размера → 503 вместо тихой потери
-- [x] Account deletion state machine first slice (036): state machine `none → scheduled → … → completed|failed_retryable`, grace 7 дней, cancel, sweep, tombstone-подход, routes + unit/integration тесты; остаток — retention workers
-- [ ] QR device linking + security event/device compromise flow
+- [x] Account deletion state machine first slice (036 + retention 037, оба CI PASS): state machine `none → scheduled → … → completed|failed_retryable`, grace 7 дней, cancel, sweep, tombstone-подход, routes + unit/integration тесты, export retention worker
+- [x] QR device linking сервер (slices 1–3 DONE, CI PASS: challenge lifecycle 040, approve/deny+SAS 041, password step-up, redemption+session 042) + security event (`session_list_changed`); остаток — device compromise flow, passkey-ceremony step-up, E2EE гранта, history bootstrap
 - [ ] Privacy-preserving contact discovery/upload
 
 ### LOW
