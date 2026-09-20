@@ -188,7 +188,7 @@
 > **Дополнение 2026-09-20 (QR step-up ceremony alternative, DONE, локально зелёный):**
 > миграция `043` (`device_link_step_up_intents` + `device_link_step_up_grants`); `beginStepUp` принимает `operation device-link.approve` + `linkId` (`targetDigest` связывает account/session/linkId; unknown/non-pending → `404`/`409`); consumed ceremonies идут в device-link grants (generic `authenticator.add` untouched), `verify()` выдаёт JWT purpose `device-link.approve` (`StepUpTokenPurpose` + `PasskeyStepUpOperationSchema` расширены).
 > approval принимает password XOR ceremony-пару (schema-refined): ceremony-путь проверяет JWT + bindings гранта (link/account/session/device/digest/TTL/session-live), затем CAS; replay сходится в `409`.
-> Тесты локально: `device-link-stepup.test` 2/2 (real ceremony через seam adapter: issuance + binding + negatives), `device-links.integration` 8/8 (HTTP consumption incl. replay/wrong-purpose/no-grant), API typecheck clean, protocol 17/104 + typecheck/build clean; полный API 100 файлов / 736 тестов PASS, матрица без изменений (no new routes).
+> Тесты локально: `device-link-stepup.test` 2/2 (real ceremony через seam adapter: issuance + binding + negatives), `device-links.integration` 8/8 (HTTP consumption incl. replay/wrong-purpose/no-grant), API typecheck clean, protocol 17/104 + typecheck/build clean; полный API 100 файлов / 736 тестов PASS, матрица без изменений (no new routes); generic-grant routing proven (no stray rows).
 > Честный остаток: E2E-шифрование гранта, Private-history bootstrap, затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)

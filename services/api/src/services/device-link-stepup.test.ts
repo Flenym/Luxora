@@ -227,10 +227,12 @@ describe("device-link step-up issuance", () => {
       sessionId: SESSION_ID,
       targetDigest: expectedDigest()
     });
+
+    const generic = await harness.store.findPasskeyStepUpGrant(begun.ceremony.id);
+    expect(generic).toBeNull();
   });
 
-  it("rejects unknown links and keeps authenticator.add issuance untouched", async () => {
-    const harness = await createHarness();
+  it("rejects unknown links and keeps authenticator.add issuance untouched", async () => {    const harness = await createHarness();
     await expect(harness.service.beginStepUp(harness.principal, {
       commandId: randomUUID(),
       clientNonce: randomUUID(),
