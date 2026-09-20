@@ -67,7 +67,7 @@ public final class DeviceLinkStore {
             linkID = created.linkId
             linkSecret = created.linkSecret
             expiresAt = created.expiresAt
-            pollIntervalNanoseconds = UInt64(max(created.pollIntervalMs, 1)) * 1_000_000
+            pollIntervalNanoseconds = UInt64(max(created.pollIntervalMs ?? 2000, 1)) * 1_000_000
             state = .waitingApproval(expiresAt: created.expiresAt)
             startPolling(generation: requestedGeneration)
         } catch is CancellationError {
