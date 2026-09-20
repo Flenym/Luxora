@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-20 · iPhone search-chats wiring DONE локально uncommitted + QR step-up ceremony DONE локально (uncommitted, миграция 043); ниже — запушенное с CI PASS; API 100/736 зелёный локально
+**Обновлено:** 2026-09-20 · iPhone search-chats wiring (`8361e62` + фикс `d12f49c`, CI PASS все) + QR step-up ceremony (uncommitted); API 100/736 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,7 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
-- iPhone search-chats wiring DONE (локально, uncommitted, проверит Apple CI): `GlobalChatSearchResult` + `searchChatsPage` (`/v1/search/chats`) + chats/channels loaders с kind-фильтром в `GlobalSearchStore` (paging/dedup/cursor-fail-closed как у people), строки + счётчики во view, Swift-тесты paging/unavailable/session-reset + contract chats-path; сервер без изменений.
+- iPhone search-chats wiring (`8361e62` + фикс `d12f49c`, CI PASS все incl. Apple): `GlobalChatSearchResult` + `searchChatsPage` (`/v1/search/chats`) + chats/channels loaders с kind-фильтром (paging/dedup/cursor-fail-closed), строки + счётчики во view, Swift-тесты; сервер без изменений. Плюс правка матрицы set Cu (Search/Calls/Devices rows).
 
 - QR device-link slice 4 passkey-ceremony step-up (DONE локально, uncommitted): миграция `043` (`device_link_step_up_intents`+`device_link_step_up_grants`), `beginStepUp device-link.approve`+`linkId` (`targetDigest` account/session/linkId; unknown/non-pending → `404`/`409`), JWT purpose `device-link.approve`, approval password XOR ceremony (JWT + grant bindings link/account/session/device/digest/TTL/session-live, затем CAS; replay → `409`); тесты stepup 2/2 + integration 8/8, оба typecheck + protocol build clean, матрица без изменений, полный API 100/736; остаток — E2E гранта, history bootstrap, contact discovery БЕЗ upload, QA.
 - QA-слайс в работе (uncommitted): log-leak canaries для linkSecret/webhook-auth в `request-logging.test.ts`; верификация счётчиков/матрицы/capabilities/дрейфа доков.
