@@ -462,10 +462,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const attachments = new AttachmentService(store, storage);
   const dataExports = new DataExportService(store, storage);
   const dataExportRetention = new DataExportRetentionWorker(store, storage);
+  const stepUpTokens = new StepUpTokenSecurity(config.jwtSecret);
   const deviceLinks = new DeviceLinkService(store, security, outbox, {
     refreshTokenTtlDays: config.refreshTokenTtlDays,
     accessTokenTtlSeconds: config.accessTokenTtlSeconds,
-    syncInvalidationEnabled: config.syncInvalidationEnabled
+    syncInvalidationEnabled: config.syncInvalidationEnabled,
+    stepUpTokens
   });
   const accountDeletion = new AccountDeletionService(store);
   const profileAvatars = new ProfileAvatarService(
@@ -683,7 +685,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
       // This is deliberately a non-production integration seam. Public
       // capabilities remain false until recovery and the remaining independent
       // production gates have passed.
-      const stepUpTokens = new StepUpTokenSecurity(config.jwtSecret);
       const passkeys = new PasskeyService(store, {
         adapter: passkeyAdapter,
         stepUpTokens
