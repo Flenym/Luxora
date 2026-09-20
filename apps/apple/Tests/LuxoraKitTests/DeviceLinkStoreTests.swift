@@ -62,7 +62,8 @@ final class DeviceLinkStoreTests: XCTestCase {
         await store.createChallenge(targetLabel: nil)
         let terminal = await Self.awaitTerminal(store)
         XCTAssertEqual(terminal, .denied)
-        XCTAssertGreaterThanOrEqual(await counter.value, 3)
+        let pollCount = await counter.value
+        XCTAssertGreaterThanOrEqual(pollCount, 3)
     }
 
     @MainActor
