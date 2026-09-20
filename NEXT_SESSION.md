@@ -23,6 +23,8 @@
 - Перед пушем: `npm --prefix packages/protocol run build`, оба typecheck,
   **полный** `npm --prefix services/api test` (86 файлов / ~3 мин). Частичные
   прогоны уже дважды давали красный CI.
+- После КАЖДОГО коммита: `git status` (пусто, кроме luxora.json) + `git show --stat HEAD`
+  (все задуманные файлы внутри). Дважды терялись файлы мимо коммита (app.ts wiring → CI 503).
 - Swift проверить нельзя локально (Windows) — только CI. После правок Swift
   ждать Apple Swift + IPA.
 - Не коммитить `luxora.json` (сессионный файл) и `dist/`.
