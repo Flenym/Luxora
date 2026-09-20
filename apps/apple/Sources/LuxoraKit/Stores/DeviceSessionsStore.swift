@@ -226,10 +226,6 @@ public final class DeviceSessionsStore {
         terminateOthersState = .loaded
         terminateOthersOperation = nil
     }
-        revocationStates = revocationStates.mapValues { state in
-            state == .loading ? .idle : state
-        }
-    }
 
     private func accepts(_ operation: Task<Void, Error>, generation operationGeneration: UInt) -> Bool {
         generation == operationGeneration && !operation.isCancelled && !Task.isCancelled

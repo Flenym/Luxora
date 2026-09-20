@@ -122,7 +122,6 @@ private struct LoadedPhoneDevicesSettingsView: View {
             Text("Другие устройства потеряют доступ и должны будут войти снова. Текущий сеанс сохранится.")
         }
     }
-    }
 
     @ViewBuilder
     private var sessionContent: some View {
