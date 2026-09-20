@@ -12,18 +12,20 @@ final class DeviceLinkAPIContractTests: XCTestCase {
     }
 
     func testCreatePostsLabelAndDecodesChallenge() async throws {
+        let linkID = linkID
+        let linkSecret = linkSecret
         let client = makeClient { request in
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.url?.path, "/v1/device-links/challenges")
             XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
             let body = try XCTUnwrap(Self.decodedBody(request))
             XCTAssertEqual(body, ["targetLabel": "MacBook Pro"])
-            return (201, try Self.json([
-                "linkId": self.linkID.uuidString,
-                "linkSecret": self.linkSecret,
+            return try Self.json([
+                "linkId": linkID.uuidString,
+                "linkSecret": linkSecret,
                 "expiresAt": "2026-09-20T12:00:00Z",
                 "pollIntervalMs": 2000,
-            ]))
+            ], status: 201)
         }
 
         let created = try await client.createDeviceLinkChallenge(targetLabel: "MacBook Pro")
@@ -33,21 +35,23 @@ final class DeviceLinkAPIContractTests: XCTestCase {
     }
 
     func testPollSendsSecretWithoutBearer() async throws {
+        let linkID = linkID
+        let linkSecret = linkSecret
         let client = makeClient { request in
             XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.url?.path, "/v1/device-links/challenges/\(self.linkID.uuidString.lowercased())/poll")
+            XCTAssertEqual(request.url?.path, "/v1/device-links/challenges/\(linkID.uuidString.lowercased())/poll")
             XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
             let body = try XCTUnwrap(Self.decodedBody(request))
-            XCTAssertEqual(body, ["linkSecret": self.linkSecret])
-            return (200, try Self.json([
+            XCTAssertEqual(body, ["linkSecret": linkSecret])
+            return try Self.json([
                 "challenge": [
-                    "linkId": self.linkID.uuidString,
+                    "linkId": linkID.uuidString,
                     "state": "approved",
                     "expiresAt": "2026-09-20T12:02:00Z",
                     "retryAfterMs": 0,
                     "sasWords": ["amber", "anchor", "angel", "apple"],
                 ],
-            ]))
+            ])
         }
 
         let status = try await client.pollDeviceLinkChallenge(linkID: linkID, linkSecret: linkSecret)
@@ -56,22 +60,24 @@ final class DeviceLinkAPIContractTests: XCTestCase {
     }
 
     func testApproveSendsSecretPlusPasswordWithBearer() async throws {
+        let linkID = linkID
+        let linkSecret = linkSecret
         let client = makeClient { request in
             XCTAssertEqual(request.httpMethod, "POST")
-            XCTAssertEqual(request.url?.path, "/v1/device-links/challenges/\(self.linkID.uuidString.lowercased())/approve")
+            XCTAssertEqual(request.url?.path, "/v1/device-links/challenges/\(linkID.uuidString.lowercased())/approve")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-token")
             let body = try XCTUnwrap(Self.decodedBody(request))
             XCTAssertEqual(body["password"], "secret-password")
-            XCTAssertEqual(body["linkSecret"], self.linkSecret)
-            return (200, try Self.json([
+            XCTAssertEqual(body["linkSecret"], linkSecret)
+            return try Self.json([
                 "challenge": [
-                    "linkId": self.linkID.uuidString,
+                    "linkId": linkID.uuidString,
                     "state": "approved",
                     "expiresAt": "2026-09-20T12:02:00Z",
                     "retryAfterMs": 0,
                     "sasWords": NSNull(),
                 ],
-            ]))
+            ])
         }
 
         let status = try await client.approveDeviceLinkChallenge(
@@ -82,37 +88,39 @@ final class DeviceLinkAPIContractTests: XCTestCase {
     }
 
     func testDenyAndCloseUseSecretOnlyShapes() async throws {
+        let linkID = linkID
+        let linkSecret = linkSecret
         let denyClient = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/v1/device-links/challenges/\(self.linkID.uuidString.lowercased())/deny")
+            XCTAssertEqual(request.url?.path, "/v1/device-links/challenges/\(linkID.uuidString.lowercased())/deny")
             let body = try XCTUnwrap(Self.decodedBody(request))
-            XCTAssertEqual(body, ["linkSecret": self.linkSecret])
-            return (200, try Self.json([
+            XCTAssertEqual(body, ["linkSecret": linkSecret])
+            return try Self.json([
                 "challenge": [
-                    "linkId": self.linkID.uuidString,
+                    "linkId": linkID.uuidString,
                     "state": "denied",
                     "expiresAt": "2026-09-20T12:02:00Z",
                     "retryAfterMs": 0,
                     "sasWords": NSNull(),
                 ],
-            ]))
+            ])
         }
         let denied = try await denyClient.denyDeviceLinkChallenge(linkID: linkID, linkSecret: linkSecret, token: "access-token")
         XCTAssertEqual(denied.state, "denied")
 
         let redeemClient = makeClient { request in
-            XCTAssertEqual(request.url?.path, "/v1/device-links/challenges/\(self.linkID.uuidString.lowercased())/redeem")
+            XCTAssertEqual(request.url?.path, "/v1/device-links/challenges/\(linkID.uuidString.lowercased())/redeem")
             XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
             let body = try XCTUnwrap(Self.decodedBody(request))
             XCTAssertEqual(body["proofSignature"]?.count, 86)
-            return (201, try Self.json([
+            return try Self.json([
                 "tokens": [
                     "accessToken": "access",
                     "refreshToken": "refresh",
                     "tokenType": "Bearer",
                     "expiresIn": 900,
-                    "sessionId": self.linkID.uuidString,
+                    "sessionId": linkID.uuidString,
                 ],
-            ]))
+            ], status: 201)
         }
         let tokens = try await redeemClient.redeemDeviceLinkChallenge(
             linkID: linkID, linkSecret: linkSecret, proofSignature: String(repeating: "A", count: 86)
@@ -152,8 +160,8 @@ final class DeviceLinkAPIContractTests: XCTestCase {
         return try JSONSerialization.jsonObject(with: result) as? [String: String]
     }
 
-    private static func json(_ object: [String: Any]) throws -> (Int, Data) {
-        (200, try JSONSerialization.data(withJSONObject: object))
+    private static func json(_ object: [String: Any], status: Int = 200) throws -> (Int, Data) {
+        (status, try JSONSerialization.data(withJSONObject: object))
     }
 }
 
