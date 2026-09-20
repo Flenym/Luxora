@@ -177,6 +177,8 @@ final class DeviceSessionsStoreTests: XCTestCase {
             return XCTFail("Missing containment remote must fail closed")
         }
     }
+
+    private func makeSession(
         name: String,
         lastSeenOffset: TimeInterval = 0,
         isCurrent: Bool = false
