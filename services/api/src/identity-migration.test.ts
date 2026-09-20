@@ -50,7 +50,8 @@ describe("IA-1 append-only migration", () => {
       "038_call_control_records",
       "039_call_room_index",
       "040_device_link_challenges",
-      "041_device_link_approval"
+      "041_device_link_approval",
+      "042_device_link_redemption"
     ]);
 
     const directory = mkdtempSync(join(tmpdir(), "luxora-ia1-migration-"));

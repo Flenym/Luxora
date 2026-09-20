@@ -1297,6 +1297,7 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     linkId: string;
     linkSecretHash: string;
     targetLabel: string | null;
+    proofPublicKeyJwk: string | null;
     createdAt: string;
     expiresAt: string;
   }): void;
@@ -1314,6 +1315,7 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     approverAccountId: string | null,
     at: string
   ): boolean;
+  consumeDeviceLinkChallenge(linkId: string, sessionId: string, at: string): boolean;
   expireDeviceLinkChallenges(now: string, limit: number): number;
   purgeDeviceLinkChallenges(before: string, limit: number): number;
 }

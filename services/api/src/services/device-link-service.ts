@@ -1,12 +1,16 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, randomUUID, timingSafeEqual, verify } from "node:crypto";
 import type {
   DeviceLinkChallengeResponse,
-  CreateDeviceLinkChallengeRequest
+  CreateDeviceLinkChallengeRequest,
+  DeviceLinkRedeemResponse
 } from "@luxora/protocol";
-import { DeviceLinkChallengeResponseSchema } from "@luxora/protocol";
+import { AuthTokensSchema, DeviceLinkChallengeResponseSchema } from "@luxora/protocol";
 import type { DeviceLinkChallengeRecord } from "../domain/types.js";
 import type { Store } from "../domain/store.js";
-import { conflict, forbidden, rateLimited, unauthenticated, badRequest } from "../errors.js";
+import { conflict, forbidden, rateLimited, unauthenticated, badRequest, serviceUnavailable } from "../errors.js";
+import type { TokenSecurity } from "../security.js";
+import type { EventPublisher } from "./event-publisher.js";
+import { appendSyncInvalidations } from "./sync-invalidation.js";
 import { hashPassword, verifyPassword } from "./password-auth.js";
 import { DEVICE_LINK_SAS_WORDS } from "./device-link-wordlist.js";
 
@@ -91,7 +95,30 @@ function projectDecision(
  * interval is rejected with 429 so clients must honor `retryAfterMs`.
  */
 export class DeviceLinkService {
-  constructor(private readonly store: Store) {}
+  readonly #store: Store;
+  readonly #tokens: TokenSecurity | undefined;
+  readonly #publisher: Pick<EventPublisher, "publish"> | undefined;
+  readonly #options: {
+    refreshTokenTtlDays?: number;
+    accessTokenTtlSeconds?: number;
+    syncInvalidationEnabled?: boolean;
+  };
+
+  constructor(
+    store: Store,
+    tokens?: TokenSecurity,
+    publisher?: Pick<EventPublisher, "publish">,
+    options: {
+      refreshTokenTtlDays?: number;
+      accessTokenTtlSeconds?: number;
+      syncInvalidationEnabled?: boolean;
+    } = {}
+  ) {
+    this.#store = store;
+    this.#tokens = tokens;
+    this.#publisher = publisher;
+    this.#options = options;
+  }
 
   createChallenge(input: CreateDeviceLinkChallengeRequest, now: Date): {
     linkId: string;
@@ -103,10 +130,11 @@ export class DeviceLinkService {
     const linkId = randomUUID();
     const linkSecret = randomBytes(32).toString("hex");
     const expiresAt = new Date(now.getTime() + DEVICE_LINK_TTL_MS).toISOString();
-    this.store.createDeviceLinkChallenge({
+    this.#store.createDeviceLinkChallenge({
       linkId,
       linkSecretHash: hashSecret(linkSecret),
       targetLabel: input.targetLabel ?? null,
+      proofPublicKeyJwk: input.proofPublicKey === undefined ? null : JSON.stringify(input.proofPublicKey),
       createdAt,
       expiresAt
     });
@@ -119,11 +147,11 @@ export class DeviceLinkService {
     now: Date
   ): DeviceLinkChallengeResponse {
     const observed = now.toISOString();
-    const record = this.store.findDeviceLinkChallenge(linkId);
+    const record = this.#store.findDeviceLinkChallenge(linkId);
     if (record === null) throw unauthenticated("Device link challenge was not found");
     checkSecret(linkSecret, record);
     if (record.status === "pending" && record.expiresAt <= observed) {
-      this.store.transitionDeviceLinkChallenge(linkId, "pending", "expired", observed);
+      this.#store.transitionDeviceLinkChallenge(linkId, "pending", "expired", observed);
       return project({ ...record, status: "expired", decidedAt: observed }, 0);
     }
     if (record.status === "approved" && record.approvedByAccountId !== null) {
@@ -142,7 +170,7 @@ export class DeviceLinkService {
         });
       }
     }
-    this.store.touchDeviceLinkChallenge(linkId, observed);
+    this.#store.touchDeviceLinkChallenge(linkId, observed);
     return project(record, 0);
   }
 
@@ -152,15 +180,15 @@ export class DeviceLinkService {
     now: Date
   ): DeviceLinkChallengeResponse {
     const observed = now.toISOString();
-    const record = this.store.findDeviceLinkChallenge(linkId);
+    const record = this.#store.findDeviceLinkChallenge(linkId);
     if (record === null) throw unauthenticated("Device link challenge was not found");
     checkSecret(linkSecret, record);
     if (record.status === "pending" && record.expiresAt <= observed) {
-      this.store.transitionDeviceLinkChallenge(linkId, "pending", "expired", observed);
+      this.#store.transitionDeviceLinkChallenge(linkId, "pending", "expired", observed);
       return project({ ...record, status: "expired", decidedAt: observed }, 0);
     }
     if (record.status === "pending") {
-      this.store.transitionDeviceLinkChallenge(linkId, "pending", "closed", observed);
+      this.#store.transitionDeviceLinkChallenge(linkId, "pending", "closed", observed);
       return project({ ...record, status: "closed", decidedAt: observed }, 0);
     }
     return project(record, 0);
@@ -210,17 +238,17 @@ export class DeviceLinkService {
     now: Date
   ): Promise<DeviceLinkChallengeResponse> {
     const observed = now.toISOString();
-    const record = this.store.findDeviceLinkChallenge(linkId);
+    const record = this.#store.findDeviceLinkChallenge(linkId);
     if (record === null) throw unauthenticated("Device link challenge was not found");
     checkSecret(input.linkSecret, record);
     if (record.status === "pending" && record.expiresAt <= observed) {
-      this.store.transitionDeviceLinkChallenge(linkId, "pending", "expired", observed);
+      this.#store.transitionDeviceLinkChallenge(linkId, "pending", "expired", observed);
       throw conflict("Device link challenge has expired", {
         challenge: project({ ...record, status: "expired", decidedAt: observed }, 0).challenge
       });
     }
     if (record.status !== "pending") {
-      const decided = this.store.findDeviceLinkChallenge(linkId) ?? record;
+      const decided = this.#store.findDeviceLinkChallenge(linkId) ?? record;
       const approver = decided.approvedByAccountId;
       const current = decided.status === "approved" && approver !== null
         ? projectDecision(decided, approver)
@@ -231,7 +259,7 @@ export class DeviceLinkService {
       if (input.password === undefined) throw badRequest("Device link approval requires a password");
       return this.#approvePending(approverUserId, approverSessionId as string, linkId, input.password, observed);
     }
-    const decided = this.store.decideDeviceLinkChallenge(linkId, "denied", null, observed);
+    const decided = this.#store.decideDeviceLinkChallenge(linkId, "denied", null, observed);
     if (!decided) {
       throw conflict("Device link challenge is already decided", {
         challenge: project({ ...record, status: record.status, decidedAt: observed }, 0).challenge
@@ -247,7 +275,7 @@ export class DeviceLinkService {
     password: string,
     observed: string
   ): Promise<DeviceLinkChallengeResponse> {
-    const user = this.store.findUserById(approverUserId);
+    const user = this.#store.findUserById(approverUserId);
     const candidateHash = user?.passwordHash ?? await TIMING_DUMMY_PASSWORD_HASH;
     let valid = false;
     try {
@@ -258,12 +286,12 @@ export class DeviceLinkService {
     if (!valid || user === null || !user.passwordAuthEnabled) {
       throw forbidden("Device link approval authentication failed");
     }
-    if (!this.store.isSessionActive(approverSessionId, approverUserId, observed)) {
+    if (!this.#store.isSessionActive(approverSessionId, approverUserId, observed)) {
       throw forbidden("Device link approval authentication failed");
     }
-    const decided = this.store.decideDeviceLinkChallenge(linkId, "approved", approverUserId, observed);
+    const decided = this.#store.decideDeviceLinkChallenge(linkId, "approved", approverUserId, observed);
     if (!decided) {
-      const current = this.store.findDeviceLinkChallenge(linkId);
+      const current = this.#store.findDeviceLinkChallenge(linkId);
       if (current === null) throw conflict("Device link challenge is already decided");
       const approver = current.approvedByAccountId;
       const projection = current.status === "approved" && approver !== null
@@ -271,16 +299,117 @@ export class DeviceLinkService {
         : project(current, 0);
       throw conflict("Device link challenge is already decided", { challenge: projection.challenge });
     }
-    const committed = this.store.findDeviceLinkChallenge(linkId);
+    const committed = this.#store.findDeviceLinkChallenge(linkId);
     if (committed === null) throw conflict("Device link challenge is already decided");
     return projectDecision(committed, approverUserId);
   }
 
   sweep(now: Date): { expired: number; purged: number } {
     const observed = now.toISOString();
-    const expired = this.store.expireDeviceLinkChallenges(observed, SWEEP_BATCH_SIZE);
+    const expired = this.#store.expireDeviceLinkChallenges(observed, SWEEP_BATCH_SIZE);
     const purgeBefore = new Date(now.getTime() - DEVICE_LINK_PURGE_AFTER_MS).toISOString();
-    const purged = this.store.purgeDeviceLinkChallenges(purgeBefore, SWEEP_BATCH_SIZE);
+    const purged = this.#store.purgeDeviceLinkChallenges(purgeBefore, SWEEP_BATCH_SIZE);
     return { expired, purged };
+  }
+
+  /**
+   * Grant redemption (IDENTITY_ACCESS §10.1.6-10.1.7): the target proves
+   * possession of the proof private key whose public half was bound at
+   * challenge creation. Possession — not the link secret — authorizes the
+   * redemption, so a relayed/screenshot QR alone cannot complete linking.
+   * On success the server atomically consumes the challenge (single-use CAS)
+   * and issues a fresh session/token family for the approver's account; all
+   * existing sessions receive a `session_list_changed` invalidation.
+   */
+  async redeemChallenge(
+    linkId: string,
+    input: { linkSecret: string | undefined; proofSignature: string | undefined },
+    now: Date
+  ): Promise<DeviceLinkRedeemResponse> {
+    const tokens = this.#tokens;
+    if (tokens === undefined) throw serviceUnavailable("Device link redemption is not configured");
+    const observed = now.toISOString();
+    const record = this.#store.findDeviceLinkChallenge(linkId);
+    if (record === null) throw unauthenticated("Device link challenge was not found");
+    checkSecret(input.linkSecret, record);
+    if (record.status === "pending" && record.expiresAt <= observed) {
+      this.#store.transitionDeviceLinkChallenge(linkId, "pending", "expired", observed);
+      throw conflict("Device link challenge has expired");
+    }
+    if (record.status !== "approved" || record.approvedByAccountId === null) {
+      throw conflict("Device link challenge is not redeemable");
+    }
+    if (record.proofPublicKeyJwk === null) {
+      throw conflict("Device link challenge predates proof keys and cannot be redeemed");
+    }
+    let publicKey: ReturnType<typeof createPublicKey>;
+    try {
+      publicKey = createPublicKey({
+        key: JSON.parse(record.proofPublicKeyJwk) as Record<string, unknown>,
+        format: "jwk"
+      });
+    } catch {
+      throw conflict("Device link challenge predates proof keys and cannot be redeemed");
+    }
+    if (publicKey.asymmetricKeyType !== "ed25519") {
+      throw conflict("Device link challenge predates proof keys and cannot be redeemed");
+    }
+    let signature: Buffer;
+    try {
+      if (input.proofSignature === undefined) throw new Error("missing");
+      signature = Buffer.from(input.proofSignature, "base64url");
+      if (signature.length !== 64) throw new Error("length");
+    } catch {
+      throw forbidden("Device link proof verification failed");
+    }
+    const message = Buffer.from(`luxora-device-link-redeem-v1:${linkId}`, "utf8");
+    let proven = false;
+    try {
+      proven = verify(null, message, publicKey, signature);
+    } catch {
+      proven = false;
+    }
+    if (!proven) throw forbidden("Device link proof verification failed");
+
+    const sessionId = randomUUID();
+    const refresh = tokens.newRefreshToken();
+    const refreshTokenTtlDays = this.#options.refreshTokenTtlDays ?? 30;
+    const accessTokenTtlSeconds = this.#options.accessTokenTtlSeconds ?? 900;
+    const expiresAt = new Date(now.getTime() + refreshTokenTtlDays * 24 * 60 * 60_000).toISOString();
+    const access = await tokens.signAccessToken(record.approvedByAccountId, sessionId);
+    const consumed = this.#store.transaction(() => {
+      this.#store.createSession({
+        id: sessionId,
+        userId: record.approvedByAccountId as string,
+        deviceName: record.targetLabel ?? "Linked device",
+        createdAt: observed,
+        expiresAt
+      }, {
+        id: randomUUID(),
+        sessionId,
+        tokenHash: refresh.hash,
+        createdAt: observed,
+        expiresAt
+      });
+      return this.#store.consumeDeviceLinkChallenge(linkId, sessionId, observed);
+    });
+    if (!consumed) throw conflict("Device link challenge is already decided");
+    const events = appendSyncInvalidations(
+      this.#store,
+      [record.approvedByAccountId as string],
+      "session_list_changed",
+      observed,
+      this.#options.syncInvalidationEnabled ?? true
+    );
+    this.#publisher?.publish(events);
+    return {
+      tokens: AuthTokensSchema.parse({
+        accessToken: access.token,
+        refreshToken: refresh.raw,
+        tokenType: "Bearer",
+        expiresIn: accessTokenTtlSeconds,
+        sessionId
+      })
+    };
   }
 }

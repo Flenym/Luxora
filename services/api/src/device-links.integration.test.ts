@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
+import { createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import type { LuxoraApp } from "./app.js";
 import { buildApp } from "./app.js";
 import { testConfig } from "./test-helpers.js";
@@ -289,5 +290,147 @@ describe("device link challenges", () => {
       payload: { linkSecret: created.body.linkSecret, password: "correct horse battery staple" }
     });
     expect(expiredApprove.statusCode).toBe(409);
+  });
+
+  it("redeems an approved challenge with proof-key possession into a working session", async () => {
+    await boot();
+    const registerResponse = await app!.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { username: "redeemer", displayName: "redeemer", password: "correct horse battery staple" }
+    });
+    expect(registerResponse.statusCode).toBe(201);
+    const approverToken = registerResponse.json().tokens.accessToken as string;
+    const approverId = registerResponse.json().user.id as string;
+
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const publicJwk = publicKey.export({ format: "jwk" }) as { kty: string; crv: string; x: string };
+
+    const created = await app!.inject({
+      method: "POST",
+      url: "/v1/device-links/challenges",
+      payload: { targetLabel: "new phone", proofPublicKey: publicJwk }
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const linkId = created.json().linkId as string;
+    const linkSecret = created.json().linkSecret as string;
+
+    const approve = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret, password: "correct horse battery staple" }
+    });
+    expect(approve.statusCode, approve.body).toBe(200);
+
+    const message = Buffer.from(`luxora-device-link-redeem-v1:${linkId}`, "utf8");
+    const signature = sign(null, message, privateKey).toString("base64url");
+    const redeem = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${linkId}/redeem`,
+      payload: { linkSecret, proofSignature: signature }
+    });
+    expect(redeem.statusCode, redeem.body).toBe(201);
+    const tokens = redeem.json().tokens as { accessToken: string; refreshToken: string; sessionId: string };
+    expect(typeof tokens.accessToken).toBe("string");
+    expect(typeof tokens.refreshToken).toBe("string");
+
+    const me = await app!.inject({
+      method: "GET",
+      url: "/v1/me",
+      headers: { authorization: `Bearer ${tokens.accessToken}` }
+    });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().user.id).toBe(approverId);
+
+    const stored = app!.luxora.store.findDeviceLinkChallenge(linkId);
+    expect(stored?.status).toBe("consumed");
+    expect(stored?.redeemedSessionId).toBe(tokens.sessionId);
+
+    const replay = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${linkId}/redeem`,
+      payload: { linkSecret, proofSignature: signature }
+    });
+    expect(replay.statusCode).toBe(409);
+
+    const otherKeys = generateKeyPairSync("ed25519");
+    const forged = sign(null, message, otherKeys.privateKey).toString("base64url");
+    const second = await app!.inject({
+      method: "POST",
+      url: "/v1/device-links/challenges",
+      payload: { proofPublicKey: publicJwk }
+    });
+    const secondLinkId = second.json().linkId as string;
+    const secondSecret = second.json().linkSecret as string;
+    const secondApprove = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${secondLinkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: secondSecret, password: "correct horse battery staple" }
+    });
+    expect(secondApprove.statusCode).toBe(200);
+    const secondMessage = Buffer.from(`luxora-device-link-redeem-v1:${secondLinkId}`, "utf8");
+    const forgedSecond = sign(null, secondMessage, otherKeys.privateKey).toString("base64url");
+    const forgedRedeem = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${secondLinkId}/redeem`,
+      payload: { linkSecret: secondSecret, proofSignature: forgedSecond }
+    });
+    expect(forgedRedeem.statusCode).toBe(403);
+    expect(forged).toBeTruthy();
+    expect(createPublicKey({ key: publicJwk, format: "jwk" }).asymmetricKeyType).toBe("ed25519");
+  });
+
+  it("rejects redemption without keys, with wrong secret, and before approval", async () => {
+    await boot();
+    const registerResponse = await app!.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { username: "redeemer2", displayName: "redeemer2", password: "correct horse battery staple" }
+    });
+    const approverToken = registerResponse.json().tokens.accessToken as string;
+
+    const legacy = await create();
+    expect(legacy.status).toBe(201);
+    const legacyApprove = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${legacy.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: legacy.body.linkSecret, password: "correct horse battery staple" }
+    });
+    expect(legacyApprove.statusCode).toBe(200);
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const legacyRedeem = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${legacy.body.linkId}/redeem`,
+      payload: {
+        linkSecret: legacy.body.linkSecret,
+        proofSignature: sign(null, Buffer.from(`luxora-device-link-redeem-v1:${legacy.body.linkId}`, "utf8"), privateKey).toString("base64url")
+      }
+    });
+    expect(legacyRedeem.statusCode).toBe(409);
+
+    const pending = await create();
+    const pendingRedeem = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${pending.body.linkId}/redeem`,
+      payload: { linkSecret: pending.body.linkSecret, proofSignature: "A".repeat(86) }
+    });
+    expect(pendingRedeem.statusCode).toBe(409);
+
+    const wrongSecret = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${pending.body.linkId}/redeem`,
+      payload: { linkSecret: "d".repeat(64), proofSignature: "A".repeat(86) }
+    });
+    expect(wrongSecret.statusCode).toBe(401);
+
+    const missingProof = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${pending.body.linkId}/redeem`,
+      payload: { linkSecret: pending.body.linkSecret }
+    });
+    expect(missingProof.statusCode).toBe(409);
   });
 });

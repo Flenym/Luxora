@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-20 · QR device-link slice 2b (password-bound approval step-up) DONE локально uncommitted + slices 1–2 + search slice 1 + calls slices 1–7, API typecheck clean локально
+**Обновлено:** 2026-09-20 · QR device-link slices 1–3 done локально uncommitted (redemption 042) + search slice 1 + calls slices 1–7, API 99/733 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- QR device-link slice 3 redemption DONE (локально, uncommitted): миграция `042_device_link_redemption`, redeem `201 {tokens}` (possession-proof, approved-only, CAS approved→consumed, session via TokenSecurity+createSession, `sync.invalidated` всем сессиям), `device-links.integration` 7/7, typechecks clean, матрица 116→117; остаток — E2E гранта, passkey step-up альтернатива, Private-history bootstrap, затем contact discovery БЕЗ upload, затем QA.
 - QR device-link slice 2b password step-up DONE (локально, uncommitted): approve требует `{linkSecret?, password}` via `DeviceLinkApproveRequestSchema` (нет пароля → `400`, неверный → `403`; сверка с хешем аппрувера + dummy-timing guard + `passwordAuthEnabled` + live-session check, затем CAS-decide), deny без изменений, SAS из COMMITTED-записи (approve-ответ и poll таргета совпадают), HONESTY LIMIT knowledge-factor (НЕ phishing-resistant), transaction-bound (linkId+approver+session до CAS), passkey-ceremony step-up — плановый апгрейд до шипа; тесты `device-links.integration` 5/5 + `device-link-service.test` 2/2, API typecheck clean, полный API 99/731; остаток — slice 3 (passkey-ceremony step-up + grant redemption + session issuance + notifications).
 - QR device-link slice 2 approval DONE (локально, uncommitted): миграция `041_device_link_approval` (`approved_by_account_id`), `POST /v1/device-links/challenges/:id/approve|deny` (bearer approver + linkSecret; pending→approved/denied, non-pending 409, expired lazy-expire 409, unknown/wrong 401 identical), SAS 4 слова из 256-word списка (`sha256(luxora-device-link-sas-v1:secretHash:approverId)`) в approve-ответе и poll таргета (approver id не раскрывается), HONESTY LIMIT step-up НЕ enforced (slice 3 обязателен до шипа), матрица 114→116, `device-link-service.test` 2/2 + `device-links.integration` 5/5, typechecks clean, полный API 99/731; остаток — slice 3 (step-up issuance + grant redemption + session issuance + New-device-linked notifications).
 - QR device-link slice 1 (challenge lifecycle) DONE (локально, uncommitted): миграция `040_device_link_challenges`, `DeviceLinkService` create/poll/close (linkSecret once, +120s/2s/429, digest-only, sweeper 10-мин), `device-links.integration` 3/3, матрица 112→114, typechecks clean, инвентаризации 040, полный API 98/727; остаток — approval slice 2, grant/session slice 3.

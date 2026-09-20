@@ -4246,5 +4246,14 @@ export const migrations: Migration[] = [
       ALTER TABLE device_link_challenges
         ADD COLUMN approved_by_account_id TEXT REFERENCES users(id);
     `
+  },
+  {
+    id: "042_device_link_redemption",
+    sql: `
+      ALTER TABLE device_link_challenges
+        ADD COLUMN proof_public_key_jwk TEXT;
+      ALTER TABLE device_link_challenges
+        ADD COLUMN redeemed_session_id TEXT REFERENCES device_sessions(id);
+    `
   }
 ];

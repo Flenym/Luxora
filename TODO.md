@@ -178,6 +178,12 @@
 > (НЕ phishing-resistant) step-up, transaction-bound (linkId+approver+session до CAS);
 > passkey-ceremony step-up — плановый апгрейд до шипа любого клиента.
 > Тесты локально: `device-links.integration` 5/5 (approve/SAS/deny/double-409 + 401s + missing/wrong-password + expired-409), `device-link-service.test` 2/2, API typecheck clean; полный suite НЕ гонялся, матрица без изменений (116).
+>
+> **Дополнение 2026-09-20 (QR device linking slice 3 redemption, DONE, локально зелёный):**
+> миграция `042_device_link_redemption` (`proof_public_key_jwk` + `redeemed_session_id`); create принимает опциональный строгий Ed25519 `proofPublicKey` JWK, `POST .../challenges/:id/redeem {linkSecret?, proofSignature?}` → `201 {tokens}` только для approved (остальные `409`, legacy без ключа честно `409`), single-use CAS approved→consumed; авторизует владение (Ed25519 over `luxora-device-link-redeem-v1:{linkId}`), НЕ секрет — relayed QR alone не completes, подделка `403`, replay `409`; сессия через `TokenSecurity` + `store.createSession` (sign-before-write, `deviceName` = `targetLabel`).
+> все живые сессии получают `sync.invalidated session_list_changed` (новый protocol enum + Swift case; consumer игнорирует reason, триггерит reconcile), секреты/ключи никогда в логах, матрица 116→117.
+> Тесты локально: `device-links.integration` 7/7 (full flow incl. tokens работают для `/v1/me`, replay 409, forged 403, legacy/pending/wrong-secret), API typecheck clean, protocol typecheck+build clean, инвентаризации миграций обновлены (042); полный API 99 файлов / 733 теста PASS.
+> Честный остаток: E2E-шифрование гранта (пока TLS+secret-auth poll), passkey-ceremony step-up альтернатива, Private-history bootstrap отдельным аудированным протоколом, затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

@@ -588,6 +588,8 @@ export interface DeviceLinkChallengeRecord {
   linkSecretHash: string;
   status: DeviceLinkChallengeStatus;
   targetLabel: string | null;
+  proofPublicKeyJwk: string | null;
+  redeemedSessionId: string | null;
   createdAt: string;
   expiresAt: string;
   decidedAt: string | null;

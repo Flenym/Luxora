@@ -2396,8 +2396,15 @@ export const DeviceLinkChallengeStateSchema = z.enum([
 
 export const DeviceLinkSecretSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
+export const DeviceLinkProofKeySchema = z.object({
+  kty: z.literal("OKP"),
+  crv: z.literal("Ed25519"),
+  x: z.string().regex(/^[A-Za-z0-9_-]{43}$/)
+}).strict();
+
 export const CreateDeviceLinkChallengeRequestSchema = z.object({
-  targetLabel: z.string().trim().min(1).max(64).optional()
+  targetLabel: z.string().trim().min(1).max(64).optional(),
+  proofPublicKey: DeviceLinkProofKeySchema.optional()
 }).strict();
 
 export const CreateDeviceLinkChallengeResponseSchema = z.object({
@@ -2418,6 +2425,15 @@ export const DeviceLinkChallengeSchema = z.object({
 export const DeviceLinkChallengeSecretSchema = z.object({
   linkSecret: DeviceLinkSecretSchema.optional()
 }).strict();
+
+export const DeviceLinkRedeemRequestSchema = z.object({
+  linkSecret: DeviceLinkSecretSchema.optional(),
+  proofSignature: z.string().regex(/^[A-Za-z0-9_-]{86}$/).optional()
+}).strict();
+
+export const DeviceLinkRedeemResponseSchema = z.object({
+  tokens: AuthTokensSchema
+});
 
 export const DeviceLinkApproveRequestSchema = z.object({
   linkSecret: DeviceLinkSecretSchema.optional(),
@@ -2992,7 +3008,8 @@ export const ChatDraftRealtimeEventSchema = z.object({
 export const SyncInvalidationReasonSchema = z.enum([
   "profile_updated",
   "avatar_updated",
-  "attachment_removed"
+  "attachment_removed",
+  "session_list_changed"
 ]);
 
 export const SyncInvalidatedRealtimeEventSchema = z.object({
@@ -3405,3 +3422,6 @@ export type CreateDeviceLinkChallengeRequest = z.infer<typeof CreateDeviceLinkCh
 export type CreateDeviceLinkChallengeResponse = z.infer<typeof CreateDeviceLinkChallengeResponseSchema>;
 export type DeviceLinkChallenge = z.infer<typeof DeviceLinkChallengeSchema>;
 export type DeviceLinkChallengeResponse = z.infer<typeof DeviceLinkChallengeResponseSchema>;
+export type DeviceLinkProofKey = z.infer<typeof DeviceLinkProofKeySchema>;
+export type DeviceLinkRedeemRequest = z.infer<typeof DeviceLinkRedeemRequestSchema>;
+export type DeviceLinkRedeemResponse = z.infer<typeof DeviceLinkRedeemResponseSchema>;

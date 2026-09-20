@@ -462,7 +462,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const attachments = new AttachmentService(store, storage);
   const dataExports = new DataExportService(store, storage);
   const dataExportRetention = new DataExportRetentionWorker(store, storage);
-  const deviceLinks = new DeviceLinkService(store);
+  const deviceLinks = new DeviceLinkService(store, security, outbox, {
+    refreshTokenTtlDays: config.refreshTokenTtlDays,
+    accessTokenTtlSeconds: config.accessTokenTtlSeconds,
+    syncInvalidationEnabled: config.syncInvalidationEnabled
+  });
   const accountDeletion = new AccountDeletionService(store);
   const profileAvatars = new ProfileAvatarService(
     store,

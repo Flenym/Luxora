@@ -366,6 +366,7 @@ enum RealtimeSyncInvalidationReason: String, Decodable, Equatable, Sendable {
     case profileUpdated = "profile_updated"
     case avatarUpdated = "avatar_updated"
     case attachmentRemoved = "attachment_removed"
+    case sessionListChanged = "session_list_changed"
 }
 
 struct RealtimeSyncInvalidationDispatch: Sendable {

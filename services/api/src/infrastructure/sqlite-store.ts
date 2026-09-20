@@ -228,6 +228,8 @@ interface DeviceLinkChallengeRow {
   link_secret_hash: string;
   status: DeviceLinkChallengeStatus;
   target_label: string | null;
+  proof_public_key_jwk: string | null;
+  redeemed_session_id: string | null;
   created_at: string;
   expires_at: string;
   decided_at: string | null;
@@ -11233,12 +11235,13 @@ export class SqliteStore implements Store {
     linkId: string;
     linkSecretHash: string;
     targetLabel: string | null;
+    proofPublicKeyJwk: string | null;
     createdAt: string;
     expiresAt: string;
   }): void {
     this.#db.prepare(`
-      INSERT INTO device_link_challenges (link_id, link_secret_hash, status, target_label, created_at, expires_at)
-      VALUES (@linkId, @linkSecretHash, 'pending', @targetLabel, @createdAt, @expiresAt)
+      INSERT INTO device_link_challenges (link_id, link_secret_hash, status, target_label, proof_public_key_jwk, created_at, expires_at)
+      VALUES (@linkId, @linkSecretHash, 'pending', @targetLabel, @proofPublicKeyJwk, @createdAt, @expiresAt)
     `).run(input);
   }
 
@@ -11252,6 +11255,8 @@ export class SqliteStore implements Store {
       linkSecretHash: row.link_secret_hash,
       status: row.status,
       targetLabel: row.target_label,
+      proofPublicKeyJwk: row.proof_public_key_jwk,
+      redeemedSessionId: row.redeemed_session_id,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
       decidedAt: row.decided_at,
@@ -11294,6 +11299,15 @@ export class SqliteStore implements Store {
       SET status = @toStatus, decided_at = @at, approved_by_account_id = @approverAccountId
       WHERE link_id = @linkId AND status = 'pending'
     `).run({ linkId, toStatus, approverAccountId, at });
+    return result.changes === 1;
+  }
+
+  consumeDeviceLinkChallenge(linkId: string, sessionId: string, at: string): boolean {
+    const result = this.#db.prepare(`
+      UPDATE device_link_challenges
+      SET status = 'consumed', decided_at = @at, redeemed_session_id = @sessionId
+      WHERE link_id = @linkId AND status = 'approved'
+    `).run({ linkId, sessionId, at });
     return result.changes === 1;
   }
 

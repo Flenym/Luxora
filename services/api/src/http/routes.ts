@@ -56,6 +56,7 @@ import {
   CreateDeviceLinkChallengeRequestSchema,
   DeviceLinkApproveRequestSchema,
   DeviceLinkChallengeSecretSchema,
+  DeviceLinkRedeemRequestSchema,
   ScheduleAccountDeletionRequestSchema,
   CreateCallRequestSchema,
   CancelCallRequestSchema,
@@ -1185,6 +1186,21 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { id } = IdParamSchema.parse(request.params);
     const input = DeviceLinkChallengeSecretSchema.parse(request.body ?? {});
     return dependencies.deviceLinks.denyChallenge(request.auth.userId, id, input.linkSecret, new Date());
+  });
+
+  // Slice 3: grant redemption. Secret-authenticated (no bearer — the target
+  // is not logged in); possession of the proof private key authorizes.
+  app.post("/v1/device-links/challenges/:id/redeem", {
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = DeviceLinkRedeemRequestSchema.parse(request.body ?? {});
+    const result = await dependencies.deviceLinks.redeemChallenge(
+      id,
+      { linkSecret: input.linkSecret, proofSignature: input.proofSignature },
+      new Date()
+    );
+    return reply.code(201).send(result);
   });
 }
 
