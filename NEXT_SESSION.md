@@ -13,7 +13,7 @@
 
 ## Ближайшая очередь
 
-1. iPhone device-link API client DONE локально (uncommitted, проверит Apple CI) + terminate-others/containment CI PASS. Дальше: DeviceLinkStore + QR UI, contact discovery явно БЕЗ upload (spec-LATER), final QA.
+1. iPhone DeviceLinkStore (`c75948c` пушнут, ждёт Apple CI) + client (`a7db52c` + `652d972`, CI PASS все). Дальше: QR UI (показ/скан/approve), contact discovery явно БЕЗ upload (spec-LATER), final QA.
 3. Финальный QA.
 
 ## Правила цикла (не нарушать)

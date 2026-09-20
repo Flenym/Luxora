@@ -35,6 +35,8 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- iPhone DeviceLinkStore DONE (локально, `c75948c` пушнут, ждёт Apple CI): state machine idle→creating→waiting→approved/denied/expired/closed/failed, polling-цикл с generation-fence, QR-контент, Swift-тесты сходимости/отмены/сессии.
+
 - iPhone device-link API client DONE (локально, uncommitted, проверит Apple CI): `APIDeviceLinkChallenge/Status` + 6 методов клиента (create/poll/close/approve/deny/redeem) + contract-тесты путей/тел/декода; сервер без изменений.
 - iPhone terminate-others (`b123d4f` + фиксы, CI PASS все incl. Apple): `containOtherSessions` (`POST /v1/security/containment`), `terminateOtherSessions` в store, кнопка + диалог + состояние во view, Swift-тесты store + contract.
 
