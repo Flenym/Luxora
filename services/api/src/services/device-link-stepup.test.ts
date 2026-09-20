@@ -241,8 +241,7 @@ describe("device-link step-up issuance", () => {
     await expect(harness.service.beginStepUp(harness.principal, {
       commandId: randomUUID(),
       clientNonce: randomUUID(),
-      operation: "device-link.approve",
-      linkId: undefined
+      operation: "device-link.approve"
     })).rejects.toMatchObject({ statusCode: 400 });
 
     const begun = await harness.service.beginStepUp(harness.principal, {
