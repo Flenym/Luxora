@@ -151,8 +151,10 @@ final class GlobalSearchStoreTests: XCTestCase {
 
         await store.search(query: "   ", scope: .people)
         XCTAssertEqual(store.state, .idle)
-        await store.search(query: "команда", scope: .channels)
-        XCTAssertEqual(store.state, .loaded)
+        await store.search(query: "болталка", scope: .channels)
+        guard case .failed = store.state else {
+            return XCTFail("Channels without a loader must fail closed")
+        }
         XCTAssertEqual(counter.value, 0)
     }
 
