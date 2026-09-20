@@ -249,6 +249,41 @@ export class AuthService {
     this.#terminateRevokedSession(sessionId);
   }
 
+  /**
+   * Security containment (IDENTITY_ACCESS §11, first slice): revoke a
+   * selected session, all other sessions, or the whole account. The account
+   * scope additionally expires data-export artifacts and revokes push
+   * registrations. Authenticator suspension, security-epoch increments and
+   * recovery takeover arrive with their dedicated flows.
+   */
+  containSessions(
+    principal: AuthenticatedPrincipal,
+    input: { scope: "session" | "all_other_sessions" | "account"; sessionId?: string }
+  ): { scope: string; revokedSessionIds: string[] } {
+    const now = this.clock().toISOString();
+    const live = this.store.listSessions(principal.userId, principal.sessionId).map((session) => session.id);
+    let targets: string[];
+    if (input.scope === "session") {
+      if (input.sessionId === undefined || !live.includes(input.sessionId)) {
+        throw notFound("Session not found");
+      }
+      targets = [input.sessionId];
+    } else if (input.scope === "all_other_sessions") {
+      targets = live.filter((id) => id !== principal.sessionId);
+    } else {
+      targets = live;
+    }
+    for (const sessionId of targets) {
+      this.store.revokeSession(sessionId, now);
+      this.#terminateRevokedSession(sessionId);
+    }
+    if (input.scope === "account") {
+      this.store.expireDataExportsForAccount(principal.userId, now);
+      this.store.deletePushRegistrationsForAccount(principal.userId, now);
+    }
+    return { scope: input.scope, revokedSessionIds: targets };
+  }
+
   getUser(userId: string): User {
     const user = this.store.findUserById(userId);
     if (user === null) throw notFound("User not found");

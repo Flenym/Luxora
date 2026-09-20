@@ -254,6 +254,36 @@ export const AuthResponseSchema = z.object({
   tokens: AuthTokensSchema
 });
 
+// Security containment (IDENTITY_ACCESS §11), first slice: session,
+// all_other_sessions and account scopes. recovery_takeover arrives with the
+// recovery review flow and is not accepted yet.
+export const ContainmentScopeSchema = z.enum(["session", "all_other_sessions", "account"]);
+
+export const ContainmentRequestSchema = z.object({
+  scope: ContainmentScopeSchema,
+  sessionId: IdSchema.optional()
+}).strict().superRefine((value, context) => {
+  if (value.scope === "session" && value.sessionId === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "session scope requires sessionId",
+      path: ["sessionId"]
+    });
+  }
+  if (value.scope !== "session" && value.sessionId !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "sessionId is only valid for the session scope",
+      path: ["sessionId"]
+    });
+  }
+});
+
+export const ContainmentResponseSchema = z.object({
+  scope: ContainmentScopeSchema,
+  revokedSessionIds: z.array(IdSchema)
+});
+
 export const PHONE_AUTH_CODE_LENGTH = 6;
 export const PhoneCountryCallingCodeSchema = z.string()
   .regex(/^[1-9][0-9]{0,2}$/u, "Country calling code must contain 1-3 digits without '+'");
@@ -3236,6 +3266,9 @@ export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 export type RefreshRequest = z.infer<typeof RefreshRequestSchema>;
 export type AuthTokens = z.infer<typeof AuthTokensSchema>;
 export type AuthResponse = z.infer<typeof AuthResponseSchema>;
+export type ContainmentScope = z.infer<typeof ContainmentScopeSchema>;
+export type ContainmentRequest = z.infer<typeof ContainmentRequestSchema>;
+export type ContainmentResponse = z.infer<typeof ContainmentResponseSchema>;
 export type PhoneCountryCallingCode = z.infer<typeof PhoneCountryCallingCodeSchema>;
 export type PhoneNationalNumber = z.infer<typeof PhoneNationalNumberSchema>;
 export type PhoneVerificationCode = z.infer<typeof PhoneVerificationCodeSchema>;

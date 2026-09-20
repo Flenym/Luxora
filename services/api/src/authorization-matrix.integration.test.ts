@@ -53,6 +53,12 @@ const PROTECTED_HTTP_MATRIX: HttpProbe[] = [
   { key: "GET /v1/auth/sessions", method: "GET", url: "/v1/auth/sessions" },
   { key: "DELETE /v1/auth/sessions/current", method: "DELETE", url: "/v1/auth/sessions/current" },
   { key: "DELETE /v1/auth/sessions/:id", method: "DELETE", url: `/v1/auth/sessions/${RESOURCE_ID_CANARY}` },
+  {
+    key: "POST /v1/security/containment",
+    method: "POST",
+    url: "/v1/security/containment",
+    payload: { scope: "all_other_sessions" }
+  },
   { key: "GET /v1/me", method: "GET", url: "/v1/me" },
   {
     key: "PATCH /v1/me",
@@ -734,7 +740,7 @@ describe("complete HTTP authorization matrix", () => {
 
     expect(new Set(expected).size).toBe(expected.length);
     expect(actual).toEqual(expected);
-    expect(PROTECTED_HTTP_MATRIX).toHaveLength(117);
+    expect(PROTECTED_HTTP_MATRIX).toHaveLength(118);
   });
 
   it("rejects an invalid principal on every protected HTTP route without leaks or side effects", async () => {

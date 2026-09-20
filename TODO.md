@@ -191,6 +191,11 @@
 > Тесты локально: `device-link-stepup.test` 2/2 (real ceremony через seam adapter: issuance + binding + negatives), `device-links.integration` 8/8 (HTTP consumption incl. replay/wrong-purpose/no-grant), API typecheck clean, protocol 17/104 + typecheck/build clean; полный API 100 файлов / 736 тестов PASS, матрица без изменений (no new routes); generic-grant routing proven (no stray rows).
 > Честный остаток: E2E-шифрование гранта, Private-history bootstrap, затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
 
+> **Дополнение 2026-09-20 (security containment, DONE, локально зелёный):**
+> `POST /v1/security/containment` (`session|all_other_sessions|account`, 10/min, без миграции): session — одна owned-сессия (чужая → `404`, без sessionId → `400`), all_other_sessions — все кроме текущей, account — все включая текущую + expire экспортов + revoke push; realtime закрывается best-effort, ответ `{scope, revokedSessionIds}`.
+> `containment.integration` 3/3, API typecheck clean, protocol typecheck+build clean, матрица 117→118; полный API 101 файл / 739 тестов PASS.
+> Честный остаток: `recovery_takeover` явно не принимается, authenticator suspension + security epoch — задокументированный remainder.
+
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
 `- [ ]` не сделано · `- [~]` в процессе · `- [x]` сделано. Статус — в

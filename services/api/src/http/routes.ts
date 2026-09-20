@@ -53,6 +53,8 @@ import {
   UpsertPushRegistrationSchema,
   VerifyPhoneChallengeSchema,
   CreateDataExportRequestSchema,
+  ContainmentRequestSchema,
+  ContainmentResponseSchema,
   CreateDeviceLinkChallengeRequestSchema,
   DeviceLinkApproveRequestSchema,
   DeviceLinkChallengeSecretSchema,
@@ -342,6 +344,20 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const { id } = IdParamSchema.parse(request.params);
     dependencies.auth.revokeSession(request.auth, id);
     return reply.code(204).send();
+  });
+
+  // Security containment (IDENTITY_ACCESS §11, first slice): one-tap
+  // revocation with a deliberately strict bucket.
+  app.post("/v1/security/containment", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const input = ContainmentRequestSchema.parse(request.body);
+    const result = dependencies.auth.containSessions(request.auth, {
+      scope: input.scope,
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId })
+    });
+    return ContainmentResponseSchema.parse(result);
   });
 
   app.get("/v1/me", { preHandler: dependencies.authGuard }, async (request) => ({
