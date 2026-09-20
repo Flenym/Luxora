@@ -11,11 +11,21 @@ public enum GlobalSearchScope: String, CaseIterable, Identifiable, Sendable {
 
     var isRemote: Bool {
         switch self {
-        case .people, .messages, .media:
+        case .people, .messages, .media, .chats, .channels:
             true
-        case .chats, .channels:
-            false
         }
+    }
+}
+
+public struct GlobalChatSearchResult: Identifiable, Equatable, Hashable, Sendable {
+    public let id: UUID
+    public let title: String
+    public let kind: String
+
+    public init(id: UUID, title: String, kind: String) {
+        self.id = id
+        self.title = title
+        self.kind = kind
     }
 }
 

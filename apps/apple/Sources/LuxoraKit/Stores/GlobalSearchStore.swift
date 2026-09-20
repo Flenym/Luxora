@@ -26,6 +26,7 @@ public final class GlobalSearchStore {
     public private(set) var people: [Participant] = []
     public private(set) var messages: [GlobalMessageSearchResult] = []
     public private(set) var files: [GlobalFileSearchResult] = []
+    public private(set) var chats: [GlobalChatSearchResult] = []
     public private(set) var state: RemoteContentState = .idle
     public private(set) var activeScope: GlobalSearchScope?
     public private(set) var activeQuery = ""
@@ -34,6 +35,8 @@ public final class GlobalSearchStore {
     @ObservationIgnored private var peopleLoader: PeopleLoader?
     @ObservationIgnored private var messageLoader: MessageLoader?
     @ObservationIgnored private var fileLoader: FileLoader?
+    @ObservationIgnored private var chatsLoader: ChatsLoader?
+    @ObservationIgnored private var channelsLoader: ChatsLoader?
     @ObservationIgnored private var nextCursor: String?
     @ObservationIgnored private var seenCursors: Set<String> = []
     @ObservationIgnored private var pageCount = 0
@@ -42,15 +45,20 @@ public final class GlobalSearchStore {
     typealias PeopleLoader = @Sendable (String, String?) async throws -> GlobalSearchPage<Participant>
     typealias MessageLoader = @Sendable (String, String?) async throws -> GlobalSearchPage<GlobalMessageSearchResult>
     typealias FileLoader = @Sendable (String, String?) async throws -> GlobalSearchPage<GlobalFileSearchResult>
+    typealias ChatsLoader = @Sendable (String, String?) async throws -> GlobalSearchPage<GlobalChatSearchResult>
 
     func configureRemote(
         people: @escaping PeopleLoader,
         messages: @escaping MessageLoader,
-        files: @escaping FileLoader
+        files: @escaping FileLoader,
+        chats: ChatsLoader? = nil,
+        channels: ChatsLoader? = nil
     ) {
         peopleLoader = people
         messageLoader = messages
         fileLoader = files
+        chatsLoader = chats
+        channelsLoader = channels
     }
 
     public func search(query: String, scope: GlobalSearchScope) async {
@@ -122,6 +130,8 @@ public final class GlobalSearchStore {
         peopleLoader = nil
         messageLoader = nil
         fileLoader = nil
+        chatsLoader = nil
+        channelsLoader = nil
         resetResults(scope: nil, query: "")
     }
 
@@ -164,8 +174,20 @@ public final class GlobalSearchStore {
             files = Self.merging(files, page.items)
             try accept(nextCursor: page.nextCursor, requestedCursor: cursor)
             if let cursor { _ = seenCursors.insert(cursor) }
-        case .chats, .channels:
-            return
+        case .chats:
+            guard let chatsLoader else { throw GlobalSearchStoreError.unavailable }
+            let chatsPage = try await chatsLoader(query, cursor)
+            guard generation == requestedGeneration else { return }
+            chats = Self.merging(chats, chatsPage.items)
+            try accept(nextCursor: chatsPage.nextCursor, requestedCursor: cursor)
+            if let cursor { _ = seenCursors.insert(cursor) }
+        case .channels:
+            guard let channelsLoader else { throw GlobalSearchStoreError.unavailable }
+            let channelsPage = try await channelsLoader(query, cursor)
+            guard generation == requestedGeneration else { return }
+            chats = Self.merging(chats, channelsPage.items)
+            try accept(nextCursor: channelsPage.nextCursor, requestedCursor: cursor)
+            if let cursor { _ = seenCursors.insert(cursor) }
         }
 
         pageCount += 1
@@ -192,6 +214,7 @@ public final class GlobalSearchStore {
         people = []
         messages = []
         files = []
+        chats = []
         nextCursor = nil
         seenCursors = []
         pageCount = 0
@@ -204,7 +227,7 @@ public final class GlobalSearchStore {
         case .people: people.isEmpty
         case .messages: messages.isEmpty
         case .media: files.isEmpty
-        case .chats, .channels: true
+        case .chats, .channels: chats.isEmpty
         }
     }
 

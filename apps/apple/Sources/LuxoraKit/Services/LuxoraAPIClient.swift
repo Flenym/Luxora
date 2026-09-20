@@ -986,6 +986,21 @@ actor LuxoraAPIClient {
         return try await request(path: path, token: token)
     }
 
+    func searchChatsPage(
+        query: String,
+        cursor: String?,
+        limit: Int = 30,
+        token: String
+    ) async throws -> APIList<APIChat> {
+        let path = try Self.searchPath(
+            base: "/v1/search/chats",
+            query: query,
+            cursor: cursor,
+            limit: limit
+        )
+        return try await request(path: path, token: token)
+    }
+
     func lookupUser(username: String, token: String) async throws -> APIPublicProfile? {
         guard let encoded = Self.encodedQueryValue(username) else { return nil }
         struct Response: Decodable, Sendable { let profile: APIPublicProfile? }

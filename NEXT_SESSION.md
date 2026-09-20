@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-20):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS), WAV duration (`b873747`, CI PASS), calls slices 1–7 (CI PASS оба), search slice 1 (`57a801f`, CI PASS), QR device-link slices 1–3 (`d03d6fe` + `be4faa9` + `936e1a5` + `42dd53c`, CI PASS все) — всё запушено. Локально зелёный: protocol 17/104 build, API 100/736, оба typecheck; последняя запушенная миграция 042; slice 4 QR step-up ceremony DONE локально (uncommitted, миграция 043: intents+grants, JWT purpose device-link.approve, password XOR ceremony, replay 409; stepup 2/2 + integration 8/8, typechecks clean, полный API 100/736). QA-слайс в работе (uncommitted): log-leak canaries для linkSecret/webhook-auth.
+**Точка продолжения (обновлено 2026-09-20):** export (035, `5df2317`, CI PASS), deletion (036), media binaries и export retention worker (037, `8b0b665`, CI PASS), image thumbnails (`8bae86a`, CI PASS), WAV duration (`b873747`, CI PASS), calls slices 1–7 (CI PASS оба), search slice 1 (`57a801f`, CI PASS), QR device-link slices 1–3 (`d03d6fe` + `be4faa9` + `936e1a5` + `42dd53c`, CI PASS все) — всё запушено. Локально зелёный: protocol 17/104 build, API 100/736, оба typecheck; последняя запушенная миграция 042; slice 4 QR step-up ceremony + iPhone search-chats wiring DONE локально (uncommitted). QA-слайс в работе (uncommitted): log-leak canaries для linkSecret/webhook-auth.
 
 ## Как продолжить без потери контекста
 

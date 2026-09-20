@@ -188,6 +188,78 @@ final class GlobalSearchStoreTests: XCTestCase {
             status: "@participant-\(index)"
         )
     }
+
+    private static func chatResult(_ index: Int, kind: String = "group") -> GlobalChatSearchResult {
+        GlobalChatSearchResult(
+            id: UUID(uuidString: String(format: "60000000-0000-4000-8000-%012d", index))!,
+            title: "Походный клуб \(index)",
+            kind: kind
+        )
+    }
+
+    @MainActor
+    func testChatsScopeLoadsPagesAndDeduplicatesBoundaryItems() async throws {
+        let first = Self.chatResult(1)
+        let second = Self.chatResult(2)
+        let store = GlobalSearchStore()
+        store.configureRemote(
+            people: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) },
+            messages: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) },
+            files: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) },
+            chats: { _, cursor in
+                if cursor == nil {
+                    return GlobalSearchPage(items: [first], nextCursor: "chats-2")
+                }
+                return GlobalSearchPage(items: [first, second], nextCursor: nil)
+            }
+        )
+
+        await store.search(query: "поход", scope: .chats)
+        XCTAssertEqual(store.chats.map(\.id), [first.id])
+        XCTAssertTrue(store.canLoadMore)
+
+        await store.loadMore()
+        XCTAssertEqual(store.chats.map(\.id), [first.id, second.id])
+        XCTAssertFalse(store.canLoadMore)
+        XCTAssertEqual(store.state, .loaded)
+    }
+
+    @MainActor
+    func testChatsScopeWithoutLoaderFailsClosedAsUnavailable() async throws {
+        let store = GlobalSearchStore()
+        store.configureRemote(
+            people: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) },
+            messages: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) },
+            files: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) }
+        )
+
+        await store.search(query: "поход", scope: .chats)
+        guard case .failed = store.state else {
+            return XCTFail("Chats without a loader must fail closed")
+        }
+        XCTAssertTrue(store.chats.isEmpty)
+        XCTAssertFalse(store.canLoadMore)
+    }
+
+    @MainActor
+    func testSessionReplacementClearsChatLoaders() async throws {
+        let store = GlobalSearchStore()
+        store.configureRemote(
+            people: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) },
+            messages: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) },
+            files: { _, _ in GlobalSearchPage(items: [], nextCursor: nil) },
+            chats: { _, _ in GlobalSearchPage(items: [Self.chatResult(1)], nextCursor: nil) }
+        )
+
+        await store.search(query: "поход", scope: .chats)
+        XCTAssertEqual(store.chats.count, 1)
+
+        store.resetForSessionReplacement()
+        await store.search(query: "поход", scope: .chats)
+        guard case .failed = store.state else {
+            return XCTFail("A replaced session must not retain the old loader")
+        }
+    }
 }
 
 final class GlobalSearchAPIContractTests: XCTestCase {
@@ -212,6 +284,8 @@ final class GlobalSearchAPIContractTests: XCTestCase {
                 return Self.json(["items": [Self.message], "nextCursor": NSNull()])
             case "/v1/search/files":
                 return Self.json(["items": [Self.file], "nextCursor": NSNull()])
+            case "/v1/search/chats":
+                return Self.json(["items": [Self.chat], "nextCursor": NSNull()])
             default:
                 return Self.json([:], status: 404)
             }
@@ -233,13 +307,20 @@ final class GlobalSearchAPIContractTests: XCTestCase {
             cursor: "next/+opaque",
             token: "token"
         )
+        let chats = try await client.searchChatsPage(
+            query: "Люксора test",
+            cursor: "next/+opaque",
+            token: "token"
+        )
 
         XCTAssertEqual(people.items.single?.username, "search-user")
         XCTAssertEqual(messages.items.single?.globalSearchResult.text, "Люксора test")
         XCTAssertEqual(files.items.single?.globalSearchResult.fileName, "Luxora.pdf")
+        XCTAssertEqual(chats.items.single?.globalSearchResult.title, "Походный клуб")
         XCTAssertNil(people.nextCursor)
         XCTAssertNil(messages.nextCursor)
         XCTAssertNil(files.nextCursor)
+        XCTAssertNil(chats.nextCursor)
     }
 
     func testSearchRejectsEmptyQueryInvalidLimitAndEmptyCursorBeforeTransport() async {
@@ -253,6 +334,7 @@ final class GlobalSearchAPIContractTests: XCTestCase {
             { try await client.searchUsersPage(query: " ", cursor: nil, token: "token") as Any },
             { try await client.searchMessagesPage(query: "q", cursor: nil, limit: 101, token: "token") as Any },
             { try await client.searchFilesPage(query: "q", cursor: "", token: "token") as Any },
+            { try await client.searchChatsPage(query: " ", cursor: nil, token: "token") as Any },
         ] {
             do {
                 _ = try await operation()
@@ -312,8 +394,24 @@ final class GlobalSearchAPIContractTests: XCTestCase {
         ]
     }
 
-    private static var file: [String: Any] {
+    private static var chat: [String: Any] {
         [
+            "id": "60000000-0000-4000-8000-000000000001",
+            "kind": "group",
+            "title": "Походный клуб",
+            "avatarUrl": NSNull(),
+            "role": "member",
+            "memberCount": 3,
+            "lastMessage": NSNull(),
+            "lastActivityAt": "2026-08-15T10:00:00Z",
+            "createdAt": "2026-08-15T10:00:00Z",
+            "unreadCount": 0,
+            "archivedAt": NSNull(),
+            "mutedUntil": NSNull(),
+        ]
+    }
+
+    private static var file: [String: Any] {        [
             "id": "50000000-0000-4000-8000-000000000001",
             "kind": "file",
             "fileName": "Luxora.pdf",

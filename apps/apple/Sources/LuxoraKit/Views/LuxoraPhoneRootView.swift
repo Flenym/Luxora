@@ -3756,13 +3756,25 @@ private struct PhoneSearchView: View {
     private func searchRows(localResults: [Conversation]) -> some View {
         switch scope {
         case .chats, .channels:
-            ForEach(localResults) { conversation in
-                Button { openConversation(conversation.id) } label: {
-                    PhoneSearchResultRow(conversation: conversation)
+            if let searchStore {
+                ForEach(searchStore.chats) { result in
+                    Button { openConversation(result.id) } label: {
+                        PhoneChatSearchResultRow(result: result)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowInsets(.init(top: 0, leading: 14, bottom: 0, trailing: 16))
+                    .accessibilityIdentifier("search-chat-\(result.id.uuidString.lowercased())")
                 }
-                .buttonStyle(.plain)
-                .listRowInsets(.init(top: 0, leading: 14, bottom: 0, trailing: 16))
-                .accessibilityIdentifier("search-result-\(conversation.id.uuidString.lowercased())")
+                remoteStateRows(searchStore)
+            } else {
+                ForEach(localResults) { conversation in
+                    Button { openConversation(conversation.id) } label: {
+                        PhoneSearchResultRow(conversation: conversation)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowInsets(.init(top: 0, leading: 14, bottom: 0, trailing: 16))
+                    .accessibilityIdentifier("search-result-\(conversation.id.uuidString.lowercased())")
+                }
             }
         case .people:
             if let searchStore {
@@ -3876,7 +3888,7 @@ private struct PhoneSearchView: View {
         case .people: searchStore.people.count
         case .messages: searchStore.messages.count
         case .media: searchStore.files.count
-        case .chats, .channels: 0
+        case .chats, .channels: searchStore.chats.count
         }
     }
 
@@ -3981,8 +3993,32 @@ private struct PhoneSearchScopeRail: View {
     }
 }
 
-private struct PhoneSearchResultRow: View {
-    let conversation: Conversation
+private struct PhoneChatSearchResultRow: View {
+    let result: GlobalChatSearchResult
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: result.kind == "channel" ? "megaphone" : "person.2.fill")
+                .foregroundStyle(.secondary)
+                .frame(width: 40)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(result.title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(result.kind)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 50)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct PhoneSearchResultRow: View {    let conversation: Conversation
 
     var body: some View {
         HStack(spacing: 10) {

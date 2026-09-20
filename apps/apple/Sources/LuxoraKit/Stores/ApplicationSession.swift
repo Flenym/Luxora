@@ -1374,6 +1374,24 @@ public final class ApplicationSession {
                     items: page.items.map(\.globalSearchResult),
                     nextCursor: page.nextCursor
                 )
+            },
+            chats: { query, cursor in
+                let page = try await coordinator.withAccessToken { token in
+                    try await api.searchChatsPage(query: query, cursor: cursor, token: token)
+                }
+                return GlobalSearchPage(
+                    items: page.items.map(\.globalSearchResult).filter { $0.kind == "group" },
+                    nextCursor: page.nextCursor
+                )
+            },
+            channels: { query, cursor in
+                let page = try await coordinator.withAccessToken { token in
+                    try await api.searchChatsPage(query: query, cursor: cursor, token: token)
+                }
+                return GlobalSearchPage(
+                    items: page.items.map(\.globalSearchResult).filter { $0.kind == "channel" },
+                    nextCursor: page.nextCursor
+                )
             }
         )
         let sessionsStore = DeviceSessionsStore()

@@ -1111,6 +1111,10 @@ struct APIChat: Decodable, Sendable {
         ChatPreferences(archivedAt: archivedAt, mutedUntil: mutedUntil)
     }
 
+    var globalSearchResult: GlobalChatSearchResult {
+        GlobalChatSearchResult(id: id, title: title, kind: kind)
+    }
+
     func conversation(currentUserID: UUID, now: Date = Date()) -> Conversation {
         let participant = Participant(
             id: id,
