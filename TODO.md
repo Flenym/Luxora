@@ -195,6 +195,10 @@
 > `POST /v1/security/containment` (`session|all_other_sessions|account`, 10/min, без миграции): session — одна owned-сессия (чужая → `404`, без sessionId → `400`), all_other_sessions — все кроме текущей, account — все включая текущую + expire экспортов + revoke push; realtime закрывается best-effort, ответ `{scope, revokedSessionIds}`.
 > `containment.integration` 3/3, API typecheck clean, protocol typecheck+build clean, матрица 117→118; полный API 101 файл / 739 тестов PASS.
 > Честный остаток: `recovery_takeover` явно не принимается, authenticator suspension + security epoch — задокументированный remainder.
+>
+> **Дополнение 2026-09-20 (calls list, DONE, локально зелёный):**
+> `GET /v1/calls?chatId=` → `{calls: CallResponse[]}` (`updated_at` DESC, max 50, включая ended для missed-call истории); стор `listCallsForChat` + `CallListQuerySchema`/`CallListResponseSchema`, без миграции; неизвестные чаты и не-участники — один `404` без oracle, без `chatId` → `400`.
+> Тесты локально: `calls-signaling` 9/9 (новый list-тест), API typecheck clean, protocol typecheck+build clean; полный API 101 файл / 740 тестов PASS; матрица 118→119.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 

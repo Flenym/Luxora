@@ -61,6 +61,7 @@ import {
   DeviceLinkRedeemRequestSchema,
   ScheduleAccountDeletionRequestSchema,
   CreateCallRequestSchema,
+  CallListQuerySchema,
   CancelCallRequestSchema,
   DeclineCallRequestSchema,
   InviteCallParticipantRequestSchema,
@@ -1072,6 +1073,11 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   app.get("/v1/calls/:id", { preHandler: dependencies.authGuard }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
     return { call: dependencies.calls.getCall(request.auth.userId, id) };
+  });
+
+  app.get("/v1/calls", { preHandler: dependencies.authGuard }, async (request) => {
+    const query = CallListQuerySchema.parse(request.query);
+    return { calls: dependencies.calls.listCalls(request.auth.userId, query.chatId) };
   });
 
   app.post("/v1/calls/:id/cancel", {

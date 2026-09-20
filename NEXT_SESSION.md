@@ -1,6 +1,6 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-09-20):** export (035), deletion (036), export retention (037), thumbnails, WAV duration, calls 1–7, search 1, QR slices 1–4 (`1c4c8a3` + фиксы, CI PASS), iPhone search-chats (`8361e62` + `d12f49c`, CI PASS все), QA-слайс (`968eb38`, CI PASS), E2E N/A (`de28492`, CI PASS) — всё запушено. Security containment DONE локально (uncommitted, без миграции): `POST /v1/security/containment`, `containment.integration` 3/3, матрица 117→118, полный API 101/739.
+**Точка продолжения (обновлено 2026-09-20):** export (035), deletion (036), export retention (037), thumbnails, WAV duration, calls 1–7, search 1, QR slices 1–4 (`1c4c8a3` + фиксы, CI PASS), iPhone search-chats (`8361e62` + `d12f49c`, CI PASS все), QA-слайс (`968eb38`, CI PASS), E2E N/A (`de28492`, CI PASS) — всё запушено. Security containment DONE локально (uncommitted, без миграции): `POST /v1/security/containment`, `containment.integration` 3/3, матрица 117→118, полный API 101/739. Calls call-list DONE локально (uncommitted): `GET /v1/calls?chatId=`, `calls-signaling` 9/9, матрица 118→119, полный API 101/740.
 
 ## Как продолжить без потери контекста
 
@@ -13,7 +13,8 @@
 
 ## Ближайшая очередь
 
-1. iPhone DeviceLinkStore (`c75948c` пушнут, ждёт Apple CI) + client (`a7db52c` + `652d972`, CI PASS все). Дальше: QR UI (показ/скан/approve), contact discovery явно БЕЗ upload (spec-LATER), final QA.
+1. Calls call-list DONE локально (uncommitted) — очередь без изменений: contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
+2. iPhone DeviceLinkStore (`c75948c` пушнут, ждёт Apple CI) + client (`a7db52c` + `652d972`, CI PASS все). Дальше: QR UI (показ/скан/approve), contact discovery явно БЕЗ upload (spec-LATER), final QA.
 3. Финальный QA.
 
 ## Правила цикла (не нарушать)

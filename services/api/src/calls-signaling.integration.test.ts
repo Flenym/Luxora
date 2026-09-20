@@ -544,7 +544,7 @@ describe("calls signaling first slice", () => {
     expect(offlineInvite.statusCode).toBe(409);
   });
 
-  it("rejects invites on fixed 1:1 membership and offline invitees", async () => {    await boot();
+    it("rejects invites on fixed 1:1 membership and offline invitees", async () => {    await boot();
     const alice = await register("alice_invite_121");
     const bob = await register("bob_invite_121");
     const chatId = await createDirectChat(alice, bob);
@@ -654,5 +654,59 @@ describe("calls signaling first slice", () => {
       payload: { requestedSources: ["microphone"] }
     });
     expect(survivorGrant.statusCode, survivorGrant.body).toBe(200);
+  });
+
+  it("lists participant calls per chat including ended ones, hiding them from strangers", async () => {
+    await boot();
+    const alice = await register("alice_call_list");
+    const bob = await register("bob_call_list");
+    const stranger = await register("mallory_call_list");
+    const chatId = await createDirectChat(alice, bob);
+
+    const first = await createCall(alice, chatId);
+    expect(first.status).toBe(201);
+    const firstId = (first.body as { call: CallPayload }).call.callId;
+    const second = await createCall(alice, chatId);
+    expect(second.status).toBe(201);
+    const secondId = (second.body as { call: CallPayload }).call.callId;
+
+    const cancel = await app!.inject({
+      method: "POST",
+      url: `/v1/calls/${firstId}/cancel`,
+      headers: auth(alice),
+      payload: { expectedRevision: 1 }
+    });
+    expect(cancel.statusCode).toBe(200);
+
+    const listed = await app!.inject({
+      method: "GET",
+      url: `/v1/calls?chatId=${chatId}`,
+      headers: auth(bob)
+    });
+    expect(listed.statusCode, listed.body).toBe(200);
+    const calls = (listed.json() as { calls: CallPayload[] }).calls;
+    expect(calls.map((call) => call.callId)).toEqual([firstId, secondId]);
+    expect(calls.find((call) => call.callId === firstId)?.state).toBe("ended");
+
+    const strangerList = await app!.inject({
+      method: "GET",
+      url: `/v1/calls?chatId=${chatId}`,
+      headers: auth(stranger)
+    });
+    expect(strangerList.statusCode).toBe(404);
+
+    const unknownList = await app!.inject({
+      method: "GET",
+      url: `/v1/calls?chatId=${randomUUID()}`,
+      headers: auth(alice)
+    });
+    expect(unknownList.statusCode).toBe(404);
+
+    const missingParam = await app!.inject({
+      method: "GET",
+      url: "/v1/calls",
+      headers: auth(alice)
+    });
+    expect(missingParam.statusCode).toBe(400);
   });
 });

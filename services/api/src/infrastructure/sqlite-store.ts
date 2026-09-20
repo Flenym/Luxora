@@ -11540,6 +11540,16 @@ export class SqliteStore implements Store {
     return rows.map((row) => this.#mapCallAggregate(row.snapshot_json));
   }
 
+  listCallsForChat(chatId: string, limit: number): CallAggregate[] {
+    const rows = this.#db.prepare(`
+      SELECT snapshot_json FROM calls
+      WHERE chat_id = @chatId
+      ORDER BY updated_at DESC, call_id DESC
+      LIMIT @limit
+    `).all({ chatId, limit }) as Array<{ snapshot_json: string }>;
+    return rows.map((row) => this.#mapCallAggregate(row.snapshot_json));
+  }
+
   listStaleReconnectingCalls(beforeIso: string, limit: number): CallAggregate[] {
     const rows = this.#db.prepare(`
       SELECT snapshot_json FROM calls

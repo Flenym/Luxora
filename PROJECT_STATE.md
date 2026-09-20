@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-20 · iPhone terminate-others + security containment (`bfd1f44`, CI PASS оба) DONE локально uncommitted; API 101/739 зелёный локально
+**Обновлено:** 2026-09-20 · calls call-list DONE локально (uncommitted); iPhone DeviceLinkStore + client + фиксы (CI PASS все), containment (`bfd1f44`, CI PASS оба); API 101/739 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,7 +35,8 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
-- iPhone DeviceLinkStore DONE (локально, `c75948c` пушнут, ждёт Apple CI): state machine idle→creating→waiting→approved/denied/expired/closed/failed, polling-цикл с generation-fence, QR-контент, Swift-тесты сходимости/отмены/сессии.
+- Calls call-list DONE локально (uncommitted): `GET /v1/calls?chatId=` → `{calls: CallResponse[]}` (`updated_at` DESC, max 50, включая ended), `calls-signaling` 9/9, матрица 118→119, полный API 101/740, без миграции.
+- iPhone DeviceLinkStore (`c75948c` + фиксы `d4538a1`/`ca8c043`, CI PASS все incl. Apple): state machine idle→creating→waiting→approved/denied/expired/closed/failed, polling-цикл с generation-fence, QR-контент, Swift-тесты сходимости/отмены/сессии.
 
 - iPhone device-link API client DONE (локально, uncommitted, проверит Apple CI): `APIDeviceLinkChallenge/Status` + 6 методов клиента (create/poll/close/approve/deny/redeem) + contract-тесты путей/тел/декода; сервер без изменений.
 - iPhone terminate-others (`b123d4f` + фиксы, CI PASS все incl. Apple): `containOtherSessions` (`POST /v1/security/containment`), `terminateOtherSessions` в store, кнопка + диалог + состояние во view, Swift-тесты store + contract.

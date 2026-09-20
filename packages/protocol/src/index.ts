@@ -2386,6 +2386,13 @@ export const CallStatusResponseSchema = z.object({
   call: CallResponseSchema
 });
 
+export const CallListQuerySchema = z.object({
+  chatId: IdSchema
+}).strict();
+
+export const CallListResponseSchema = z.object({
+  calls: z.array(CallResponseSchema).max(50)
+});
 export const CancelCallRequestSchema = z.object({
   expectedRevision: z.number().int().nonnegative()
 }).strict();
@@ -3481,6 +3488,7 @@ export type CallResponse = z.infer<typeof CallResponseSchema>;
 export type CreateCallRequest = z.infer<typeof CreateCallRequestSchema>;
 export type CreateCallResponse = z.infer<typeof CreateCallResponseSchema>;
 export type CallStatusResponse = z.infer<typeof CallStatusResponseSchema>;
+export type CallListResponse = z.infer<typeof CallListResponseSchema>;
 export type CancelCallRequest = z.infer<typeof CancelCallRequestSchema>;
 export type DeclineCallRequest = z.infer<typeof DeclineCallRequestSchema>;
 export type InviteCallParticipantRequest = z.infer<typeof InviteCallParticipantRequestSchema>;

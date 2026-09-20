@@ -155,6 +155,21 @@ export class CallService {
     return projectCall(this.#requireParticipantCall(userId, callId));
   }
 
+  /**
+   * Participant-visible call history for a chat (polling discovery until
+   * push/ringing delivery lands). Unknown chats and non-members share one
+   * 404; ended calls are included so clients can render missed-call history.
+   */
+  listCalls(userId: string, chatId: string): ProtocolCallResponse[] {
+    const chat = this.#store.findChatRecord(chatId);
+    if (chat === null || this.#store.getChatMember(chatId, userId) === null) {
+      throw notFound("Call not found");
+    }
+    return this.#store.listCallsForChat(chatId, 50)
+      .filter((snapshot) => snapshot.participants.some((participant) => participant.memberId === userId))
+      .map(projectCall);
+  }
+
   async cancelCall(userId: string, sessionId: string, callId: string, expectedRevision: number): Promise<ProtocolCallResponse> {
     this.#requireParticipantCall(userId, callId);
     try {
