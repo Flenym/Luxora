@@ -373,6 +373,24 @@ This is an application-specific binding protocol informed by NIST authenticator 
 - an approving device never receives the target refresh token and target never receives approving-device credentials;
 - Private-history bootstrap and E2EE device keys are a separate audited protocol and cannot be smuggled into this access grant.
 
+### 10.3. Grant confidentiality analysis (Beta-0.1 decision)
+
+Session credentials are minted server-side and delivered to the target over
+its own TLS connection authenticated by the link secret plus proof-key
+possession. End-to-end grant encryption to a target ephemeral key is
+deliberately NOT implemented in Beta-0.1, with this recorded reasoning:
+
+- the relay/screenshot threat is handled by proof-of-possession: a leaked QR
+  (secret only) cannot complete redemption without the proof private key,
+  which never leaves the target device;
+- encrypting to the target would not constrain a breached issuer, since the
+  server mints the credentials it would encrypt;
+- passive network observation is already covered by TLS plus
+  secret-authenticated redemption.
+
+Revisit only with a dedicated threat model if grant delivery ever leaves the
+redeeming TLS session (e.g. push-delivered grants).
+
 ## 11. Session-compromise response
 
 ### 11.1. User actions

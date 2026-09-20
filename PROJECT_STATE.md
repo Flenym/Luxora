@@ -5,7 +5,7 @@
 
 ## Текущая архитектура
 
-- **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `037_data_export_retention`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
+- **Backend:** Node 22 Fastify API (`services/api`), SQLite WAL + строгие миграции (последняя `043_device_link_step_up`), V2 realtime outbox, capability negotiation, 12-collection reconciliation snapshot. Шифрование at-rest для секретов; сервер технически может читать сообщения — **это не E2EE** (честно зафиксировано).
 - **Protocol:** `@luxora/protocol` — строгие zod-контракты (17 файлов / 104 теста).
 - **iPhone:** Swift 6 `LuxoraKit` + `LuxoraMobile`, Keychain-сессии, серверные stores, DEBUG-фикстуры только для геометрии.
 - **Проверено:** API 87 файлов / 689 тестов PASS (локально Windows), protocol 17/104, оба typecheck PASS. CI: по пушу `8b0b665` оба воркфлоу PASS (Node/Web/Desktop 4m9s, Security 3m27s).

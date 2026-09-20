@@ -183,7 +183,7 @@
 > миграция `042_device_link_redemption` (`proof_public_key_jwk` + `redeemed_session_id`); create принимает опциональный строгий Ed25519 `proofPublicKey` JWK, `POST .../challenges/:id/redeem {linkSecret?, proofSignature?}` → `201 {tokens}` только для approved (остальные `409`, legacy без ключа честно `409`), single-use CAS approved→consumed; авторизует владение (Ed25519 over `luxora-device-link-redeem-v1:{linkId}`), НЕ секрет — relayed QR alone не completes, подделка `403`, replay `409`; сессия через `TokenSecurity` + `store.createSession` (sign-before-write, `deviceName` = `targetLabel`).
 > все живые сессии получают `sync.invalidated session_list_changed` (новый protocol enum + Swift case; consumer игнорирует reason, триггерит reconcile), секреты/ключи никогда в логах, матрица 116→117.
 > Тесты локально: `device-links.integration` 7/7 (full flow incl. tokens работают для `/v1/me`, replay 409, forged 403, legacy/pending/wrong-secret), API typecheck clean, protocol typecheck+build clean, инвентаризации миграций обновлены (042); полный API 99 файлов / 733 теста PASS.
-> Честный остаток: E2E-шифрование гранта (пока TLS+secret-auth poll), passkey-ceremony step-up альтернатива, Private-history bootstrap отдельным аудированным протоколом, затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA.
+> Честный остаток: Private-history bootstrap отдельным аудированным протоколом, затем contact discovery явно БЕЗ upload (spec-LATER), затем final QA. E2E-шифрование гранта — решение N/A (§10.3: покрыто proof possession + TLS).
 >
 > **Дополнение 2026-09-20 (QR step-up ceremony alternative, DONE, локально зелёный):**
 > миграция `043` (`device_link_step_up_intents` + `device_link_step_up_grants`); `beginStepUp` принимает `operation device-link.approve` + `linkId` (`targetDigest` связывает account/session/linkId; unknown/non-pending → `404`/`409`); consumed ceremonies идут в device-link grants (generic `authenticator.add` untouched), `verify()` выдаёт JWT purpose `device-link.approve` (`StepUpTokenPurpose` + `PasskeyStepUpOperationSchema` расширены).
@@ -224,7 +224,7 @@
 - [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON (profile/settings/sessions/relationships/blocks/chats/messages/media-meta), 7-day TTL, Range download
 - [x] Account export media binaries (DONE): `media/<attachmentId>/<fileName>` в архиве, per-file SHA-256, `listAllOwnedAttachments` через `#mapAttachment`, расхождение размера → 503 вместо тихой потери
 - [x] Account deletion state machine first slice (036 + retention 037, оба CI PASS): state machine `none → scheduled → … → completed|failed_retryable`, grace 7 дней, cancel, sweep, tombstone-подход, routes + unit/integration тесты, export retention worker
-- [x] QR device linking сервер (slices 1–3 DONE, CI PASS: challenge lifecycle 040, approve/deny+SAS 041, password step-up, redemption+session 042) + security event (`session_list_changed`); остаток — device compromise flow, passkey-ceremony step-up, E2EE гранта, history bootstrap
+- [x] QR device linking сервер (slices 1–4 DONE, CI PASS: challenge lifecycle 040, approve/deny+SAS 041, password step-up, redemption+session 042, passkey-ceremony step-up 043) + security event (`session_list_changed`); E2E гранта — решение N/A (§10.3); остаток — device compromise flow, history bootstrap
 - [ ] Privacy-preserving contact discovery/upload
 
 ### LOW
