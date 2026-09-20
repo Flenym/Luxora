@@ -4239,5 +4239,12 @@ export const migrations: Migration[] = [
       CREATE INDEX idx_device_link_expiry
         ON device_link_challenges(status, expires_at);
     `
+  },
+  {
+    id: "041_device_link_approval",
+    sql: `
+      ALTER TABLE device_link_challenges
+        ADD COLUMN approved_by_account_id TEXT REFERENCES users(id);
+    `
   }
 ];

@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-19 · QR device-link slice 1 (challenge lifecycle) + search slice 1 + calls slices 1–7, API 98/727 зелёный локально
+**Обновлено:** 2026-09-19 · QR device-link slices 1–2 (challenge + approval/SAS) DONE локально uncommitted + search slice 1 + calls slices 1–7, API 99/731 зелёный локально
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -35,6 +35,7 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- QR device-link slice 2 approval DONE (локально, uncommitted): миграция `041_device_link_approval` (`approved_by_account_id`), `POST /v1/device-links/challenges/:id/approve|deny` (bearer approver + linkSecret; pending→approved/denied, non-pending 409, expired lazy-expire 409, unknown/wrong 401 identical), SAS 4 слова из 256-word списка (`sha256(luxora-device-link-sas-v1:secretHash:approverId)`) в approve-ответе и poll таргета (approver id не раскрывается), HONESTY LIMIT step-up НЕ enforced (slice 3 обязателен до шипа), матрица 114→116, `device-link-service.test` 2/2 + `device-links.integration` 5/5, typechecks clean, полный API 99/731; остаток — slice 3 (step-up issuance + grant redemption + session issuance + New-device-linked notifications).
 - QR device-link slice 1 (challenge lifecycle) DONE (локально, uncommitted): миграция `040_device_link_challenges`, `DeviceLinkService` create/poll/close (linkSecret once, +120s/2s/429, digest-only, sweeper 10-мин), `device-links.integration` 3/3, матрица 112→114, typechecks clean, инвентаризации 040, полный API 98/727; остаток — approval slice 2, grant/session slice 3.
 - Conversation search DONE (локально, uncommitted): `GET /v1/search/chats` (substring по titles групп/каналов, только текущие memberships, `updated_at` DESC + cursor `limit+1`/garbage `400`, plaintext titles без blind index, экранированные wildcards, ASCII `NOCASE`, директы исключены), без миграции/protocol-изменений (`q 1..80`), матрица 111→112, `search-chats.integration` 2/2, typecheck clean, полный suite пока НЕ гонялся; остаток — Unicode-folding, SPC-007 public catalog, offline-индекс, iPhone scope local-only.
 - Calls signaling slice 7 stale sweeper DONE (локально, uncommitted): `sweepStaleReconnecting` (`network-timeout`, 10-мин timer, без routes/migration, матрица 111), `calls-reconnect-sweeper.integration` 1/1, typecheck clean, полный API 96/722; остаток — push-доставка, затем search (grant refresh покрыт re-issuance).

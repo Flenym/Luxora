@@ -16,6 +16,7 @@ interface ChallengeBody {
   expiresAt: string;
   retryAfterMs?: number;
   pollIntervalMs?: number;
+  sasWords?: string[] | null;
 }
 
 describe("device link challenges", () => {
@@ -139,8 +140,7 @@ describe("device link challenges", () => {
     expect(unauthenticated.statusCode).toBe(401);
   });
 
-  it("expires lazily on poll and purges terminal rows on sweep", async () => {
-    await boot();
+  it("expires lazily on poll and purges terminal rows on sweep", async () => {    await boot();
     const created = await create();
     expect(created.status).toBe(201);
 
@@ -162,5 +162,116 @@ describe("device link challenges", () => {
     const purged = app!.luxora.store.purgeDeviceLinkChallenges(new Date().toISOString(), 100);
     expect(purged).toBe(1);
     expect(app!.luxora.store.findDeviceLinkChallenge(created.body.linkId)).toBeNull();
+  });
+
+  it("approves with matching SAS on both endpoints and denies explicitly", async () => {
+    await boot();
+    const registerResponse = await app!.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { username: "approver", displayName: "approver", password: "correct horse battery staple" }
+    });
+    expect(registerResponse.statusCode).toBe(201);
+    const approver = {
+      id: registerResponse.json().user.id as string,
+      accessToken: registerResponse.json().tokens.accessToken as string
+    };
+
+    const created = await create("approver laptop");
+    expect(created.status).toBe(201);
+
+    const approve = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approver.accessToken}` },
+      payload: { linkSecret: created.body.linkSecret }
+    });
+    expect(approve.statusCode, approve.body).toBe(200);
+    const approved = (approve.json() as { challenge: ChallengeBody }).challenge;
+    expect(approved.state).toBe("approved");
+    expect(approved.sasWords).toHaveLength(4);
+
+    const targetPoll = await poll(created.body.linkId, created.body.linkSecret);
+    expect(targetPoll.status).toBe(200);
+    const polled = (targetPoll.body as { challenge: ChallengeBody }).challenge;
+    expect(polled.state).toBe("approved");
+    expect(polled.sasWords).toEqual(approved.sasWords);
+
+    const stored = app!.luxora.store.findDeviceLinkChallenge(created.body.linkId);
+    expect(stored?.approvedByAccountId).toBe(approver.id);
+
+    const again = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approver.accessToken}` },
+      payload: { linkSecret: created.body.linkSecret }
+    });
+    expect(again.statusCode).toBe(409);
+
+    const second = await create();
+    expect(second.status).toBe(201);
+    const deny = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${second.body.linkId}/deny`,
+      headers: { authorization: `Bearer ${approver.accessToken}` },
+      payload: { linkSecret: second.body.linkSecret }
+    });
+    expect(deny.statusCode, deny.body).toBe(200);
+    expect((deny.json() as { challenge: ChallengeBody }).challenge.state).toBe("denied");
+
+    const deniedPoll = await poll(second.body.linkId, second.body.linkSecret);
+    expect(deniedPoll.status).toBe(200);
+    expect((deniedPoll.body as { challenge: ChallengeBody }).challenge.state).toBe("denied");
+  });
+
+  it("rejects approval without bearer, with wrong secret, and after expiry", async () => {
+    await boot();
+    const registerResponse = await app!.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: { username: "approver2", displayName: "approver2", password: "correct horse battery staple" }
+    });
+    const approverToken = registerResponse.json().tokens.accessToken as string;
+
+    const created = await create();
+    expect(created.status).toBe(201);
+
+    const noBearer = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      payload: { linkSecret: created.body.linkSecret }
+    });
+    expect(noBearer.statusCode).toBe(401);
+
+    const wrongSecret = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: "c".repeat(64) }
+    });
+    expect(wrongSecret.statusCode).toBe(401);
+
+    const unknown = await app!.inject({
+      method: "POST",
+      url: "/v1/device-links/challenges/00000000-0000-4000-8000-000000000000/deny",
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: created.body.linkSecret }
+    });
+    expect(unknown.statusCode).toBe(401);
+
+    const database = new Database(databasePath);
+    try {
+      database.prepare("UPDATE device_link_challenges SET expires_at = ? WHERE link_id = ?")
+        .run(new Date(Date.now() - 1_000).toISOString(), created.body.linkId);
+    } finally {
+      database.close();
+    }
+    const expiredApprove = await app!.inject({
+      method: "POST",
+      url: `/v1/device-links/challenges/${created.body.linkId}/approve`,
+      headers: { authorization: `Bearer ${approverToken}` },
+      payload: { linkSecret: created.body.linkSecret }
+    });
+    expect(expiredApprove.statusCode).toBe(409);
   });
 });

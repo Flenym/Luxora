@@ -2411,7 +2411,8 @@ export const DeviceLinkChallengeSchema = z.object({
   linkId: IdSchema,
   state: DeviceLinkChallengeStateSchema,
   expiresAt: TimestampSchema,
-  retryAfterMs: z.number().int().nonnegative()
+  retryAfterMs: z.number().int().nonnegative(),
+  sasWords: z.array(z.string().min(1).max(16)).length(4).nullable().default(null)
 });
 
 export const DeviceLinkChallengeSecretSchema = z.object({

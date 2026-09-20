@@ -591,6 +591,7 @@ export interface DeviceLinkChallengeRecord {
   createdAt: string;
   expiresAt: string;
   decidedAt: string | null;
+  approvedByAccountId: string | null;
   lastPolledAt: string | null;
   pollCount: number;
 }

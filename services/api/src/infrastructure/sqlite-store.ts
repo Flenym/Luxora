@@ -231,6 +231,7 @@ interface DeviceLinkChallengeRow {
   created_at: string;
   expires_at: string;
   decided_at: string | null;
+  approved_by_account_id: string | null;
   last_polled_at: string | null;
   poll_count: number;
 }
@@ -11254,6 +11255,7 @@ export class SqliteStore implements Store {
       createdAt: row.created_at,
       expiresAt: row.expires_at,
       decidedAt: row.decided_at,
+      approvedByAccountId: row.approved_by_account_id,
       lastPolledAt: row.last_polled_at,
       pollCount: row.poll_count
     };
@@ -11281,6 +11283,20 @@ export class SqliteStore implements Store {
     return result.changes === 1;
   }
 
+  decideDeviceLinkChallenge(
+    linkId: string,
+    toStatus: Extract<DeviceLinkChallengeStatus, "approved" | "denied">,
+    approverAccountId: string | null,
+    at: string
+  ): boolean {
+    const result = this.#db.prepare(`
+      UPDATE device_link_challenges
+      SET status = @toStatus, decided_at = @at, approved_by_account_id = @approverAccountId
+      WHERE link_id = @linkId AND status = 'pending'
+    `).run({ linkId, toStatus, approverAccountId, at });
+    return result.changes === 1;
+  }
+
   expireDeviceLinkChallenges(now: string, limit: number): number {
     const result = this.#db.prepare(`
       UPDATE device_link_challenges
@@ -11300,7 +11316,7 @@ export class SqliteStore implements Store {
       DELETE FROM device_link_challenges
       WHERE rowid IN (
         SELECT rowid FROM device_link_challenges
-        WHERE status IN ('expired', 'denied', 'consumed', 'closed')
+        WHERE status IN ('expired', 'denied', 'consumed', 'closed', 'approved')
           AND COALESCE(decided_at, created_at) <= @before
         ORDER BY COALESCE(decided_at, created_at), link_id
         LIMIT @limit

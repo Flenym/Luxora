@@ -1308,6 +1308,12 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
     toStatus: DeviceLinkChallengeStatus,
     at: string
   ): boolean;
+  decideDeviceLinkChallenge(
+    linkId: string,
+    toStatus: Extract<DeviceLinkChallengeStatus, "approved" | "denied">,
+    approverAccountId: string | null,
+    at: string
+  ): boolean;
   expireDeviceLinkChallenges(now: string, limit: number): number;
   purgeDeviceLinkChallenges(before: string, limit: number): number;
 }

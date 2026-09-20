@@ -1158,6 +1158,27 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     const input = DeviceLinkChallengeSecretSchema.parse(request.body ?? {});
     return dependencies.deviceLinks.closeChallenge(id, input.linkSecret, new Date());
   });
+
+  // Slice 2: trusted-device decision. Bearer session plus link-secret
+  // possession; transaction-bound step-up arrives in the next slice before
+  // any client ships (see service honesty note).
+  app.post("/v1/device-links/challenges/:id/approve", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = DeviceLinkChallengeSecretSchema.parse(request.body ?? {});
+    return dependencies.deviceLinks.approveChallenge(request.auth.userId, id, input.linkSecret, new Date());
+  });
+
+  app.post("/v1/device-links/challenges/:id/deny", {
+    preHandler: dependencies.authGuard,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } }
+  }, async (request) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = DeviceLinkChallengeSecretSchema.parse(request.body ?? {});
+    return dependencies.deviceLinks.denyChallenge(request.auth.userId, id, input.linkSecret, new Date());
+  });
 }
 
 function mapDataExportRecord(record: {

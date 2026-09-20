@@ -162,6 +162,12 @@
 > сервер хранит только SHA-256 digest (`luxora-device-link-v1` domain), secret не логируется/не хранится; polling не раскрывает account data; sweeper на старте + 10-мин timer (expire pending + purge terminal старше 24h); approval/grant/session issuance явно НЕ в этом слайсе.
 > матрица: create → PUBLIC list, poll+close → PROTECTED (secretless probes 401 без side effects), 112→114 protected. Тесты локально: `device-links.integration` 3/3, matrix green, API typecheck clean, protocol typecheck+build clean, инвентаризации миграций обновлены (040 в chain+identity+passkey-authenticator).
 > полный API 98 файлов / 727 тестов PASS. Честный остаток: approval (step-up+SAS) slice 2, grant redemption + session issuance slice 3, New-device-linked notifications, затем QR-linking done → contact discovery (spec-LATER, upload НЕ делать) → final QA.
+>
+> **Дополнение 2026-09-19 (QR device linking slice 2 approval, DONE, локально зелёный):**
+> миграция `041_device_link_approval` (`approved_by_account_id`); `POST /v1/device-links/challenges/:id/approve|deny` (bearer approver + linkSecret; pending→approved с записью approver / pending→denied; non-pending → `409` с текущим challenge, expired → lazy-expire затем `409`, unknown/wrong secret → identical `401` без oracle; матрица 114→116).
+> SAS — 4 слова из 256-word списка через `sha256(luxora-device-link-sas-v1:secretHash:approverId)`, отдаётся в approve-ответе И в poll таргета (детерминированное совпадение, approver id таргету НЕ раскрывается).
+> HONESTY LIMIT: transaction-bound step-up пока НЕ enforced — approval связывает bearer-сессию + secret + явное действие в окне 120s; step-up issuance — slice 3, обязателен до шипа любого клиента.
+> Тесты локально: `device-link-service.test` 2/2 (wordlist 256 + SAS binding) + `device-links.integration` 5/5 (approve/SAS-match/deny/double-409/expired-409/401s), matrix green, API typecheck clean, protocol typecheck+build clean, инвентаризации миграций обновлены (041); полный suite пока НЕ гонялся. Честный остаток: slice 3 (step-up issuance + grant redemption + session issuance + New-device-linked notifications).
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
