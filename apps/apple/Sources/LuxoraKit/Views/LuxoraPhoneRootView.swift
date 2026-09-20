@@ -39,6 +39,7 @@ public struct LuxoraPhoneRootView: View {
     @Bindable private var store: MessengerStore
     private let featureMatrix: LuxoraFeatureMatrix
     private let deviceSessionsStore: DeviceSessionsStore?
+    private let deviceLinkStore: DeviceLinkStore?
     private let phonePasswordSettingsStore: PhonePasswordSettingsStore?
     private let phoneBindingStore: PhoneBindingStore?
     private let attachmentImageCache: AuthenticatedAvatarImageCache?
@@ -62,6 +63,7 @@ public struct LuxoraPhoneRootView: View {
         featureMatrix: LuxoraFeatureMatrix,
         initialDestination: LuxoraPhoneInitialDestination = .inbox,
         deviceSessionsStore: DeviceSessionsStore? = nil,
+        deviceLinkStore: DeviceLinkStore? = nil,
         phonePasswordSettingsStore: PhonePasswordSettingsStore? = nil,
         phoneBindingStore: PhoneBindingStore? = nil,
         attachmentImageCache: AuthenticatedAvatarImageCache? = nil,
@@ -78,6 +80,7 @@ public struct LuxoraPhoneRootView: View {
         self.store = store
         self.featureMatrix = featureMatrix
         self.deviceSessionsStore = deviceSessionsStore
+        self.deviceLinkStore = deviceLinkStore
         self.phonePasswordSettingsStore = phonePasswordSettingsStore
         self.phoneBindingStore = phoneBindingStore
         self.attachmentImageCache = attachmentImageCache
@@ -358,6 +361,7 @@ public struct LuxoraPhoneRootView: View {
         case .devices:
             PhoneServerDevicesSettingsView(
                 store: deviceSessionsStore,
+                linkStore: deviceLinkStore,
                 gate: featureMatrix.devices,
                 signOut: signOut
             )

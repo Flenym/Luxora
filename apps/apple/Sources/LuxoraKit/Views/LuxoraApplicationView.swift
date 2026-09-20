@@ -120,6 +120,7 @@ public struct LuxoraApplicationView: View {
             featureMatrix: session.featureMatrix,
             initialDestination: initialPhoneDestination,
             deviceSessionsStore: session.deviceSessionsStore,
+            deviceLinkStore: session.deviceLinkStore,
             phonePasswordSettingsStore: session.phonePasswordSettingsStore,
             phoneBindingStore: session.phoneBindingStore,
             notificationSettingsStore: session.notificationSettingsStore,

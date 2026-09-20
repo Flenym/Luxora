@@ -1,15 +1,24 @@
 #if os(iOS)
 import SwiftUI
 
+#if canImport(CoreImage)
+import CoreImage
+import CoreImage.CIFilterBuiltins
+#endif
+#if canImport(UIKit)
+import UIKit
+#endif
+
 struct PhoneServerDevicesSettingsView: View {
     let store: DeviceSessionsStore?
+    let linkStore: DeviceLinkStore?
     let gate: FeatureGate
     let signOut: () -> Void
 
     var body: some View {
         Group {
             if let store {
-                LoadedPhoneDevicesSettingsView(store: store, gate: gate, signOut: signOut)
+                LoadedPhoneDevicesSettingsView(store: store, linkStore: linkStore, gate: gate, signOut: signOut)
             } else {
                 unavailableFixtureContent
             }
@@ -45,12 +54,14 @@ struct PhoneServerDevicesSettingsView: View {
 
 private struct LoadedPhoneDevicesSettingsView: View {
     @Bindable var store: DeviceSessionsStore
+    let linkStore: DeviceLinkStore?
     let gate: FeatureGate
     let signOut: () -> Void
 
     @State private var pendingRevocation: DeviceSession?
     @State private var confirmsCurrentSignOut = false
     @State private var confirmsTerminateOthers = false
+    @State private var showsLinkSheet = false
 
     var body: some View {
         List {
@@ -182,6 +193,18 @@ private struct LoadedPhoneDevicesSettingsView: View {
                 }
             }
 
+            if let linkStore {
+                Section("Привязка устройства") {
+                    Button("Привязать новое устройство") {
+                        showsLinkSheet = true
+                    }
+                    .accessibilityIdentifier("devices-link-new")
+                }
+                .sheet(isPresented: $showsLinkSheet) {
+                    PhoneDeviceLinkSheet(store: linkStore)
+                }
+            }
+
             if case let .failed(message) = store.loadState {
                 Section("Обновление списка") {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
@@ -274,5 +297,108 @@ private struct LoadedPhoneDevicesSettingsView: View {
         if normalized.contains("windows") || normalized.contains("pc") { return "desktopcomputer" }
         return "display"
     }
+}
+
+private struct PhoneDeviceLinkSheet: View {
+    @Bindable var store: DeviceLinkStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    switch store.state {
+                    case .idle, .creating:
+                        HStack {
+                            Spacer()
+                            ProgressView("Создаём код привязки…")
+                            Spacer()
+                        }
+                        .accessibilityIdentifier("device-link-loading")
+                    case .waitingApproval:
+                        if let image = store.qrContent.flatMap(Self.qrImage(from:)) {
+                            Image(uiImage: image)
+                                .interpolation(.none)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 280, maxHeight: 280)
+                                .accessibilityIdentifier("device-link-qr")
+                        } else {
+                            ContentUnavailableView(
+                                "Код недоступен",
+                                systemImage: "qrcode.viewfinder",
+                                description: Text("Не удалось построить QR-код на этом устройстве.")
+                            )
+                        }
+                        Text("Отсканируйте код новым устройством и подтвердите привязку на нём. Код действует 2 минуты и сгорает после использования.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .approved(let sas):
+                        Label("Устройство привязано", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Контрольные слова: \(sas)")
+                            .font(.headline)
+                            .accessibilityIdentifier("device-link-sas")
+                        Text("Сверьте слова с экраном нового устройства.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .denied:
+                        Label("Привязка отклонена", systemImage: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                    case .expired:
+                        Label("Код истёк", systemImage: "timer")
+                            .foregroundStyle(.secondary)
+                    case .closed:
+                        Label("Привязка закрыта", systemImage: "xmark.circle")
+                            .foregroundStyle(.secondary)
+                    case .failed(let message):
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                        Button("Попробовать снова") {
+                            Task { await store.createChallenge(targetLabel: nil) }
+                        }
+                        .accessibilityIdentifier("device-link-retry")
+                    }
+                }
+
+                if case .waitingApproval = store.state {
+                    Section {
+                        Button("Отменить привязку", role: .destructive) {
+                            Task { await store.close() }
+                        }
+                        .accessibilityIdentifier("device-link-close")
+                    }
+                }
+            }
+            .navigationTitle("Привязка устройства")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Закрыть") { dismiss() }
+                }
+            }
+            .task {
+                if case .idle = store.state {
+                    await store.createChallenge(targetLabel: nil)
+                }
+            }
+        }
+    }
+
+    private static func qrImage(from content: String) -> UIImage? {
+        #if canImport(CoreImage) && canImport(UIKit)
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(content.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return UIImage(cgImage: cgImage)
+        #else
+        return nil
+        #endif
+    }
+}
 }
 #endif

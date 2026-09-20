@@ -35,10 +35,11 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 
 ## Последние изменения
 
+- iPhone QR link sheet DONE (локально, uncommitted, проверит Apple CI): wiring `deviceLinkStore` (ApplicationSession→Root→devices), `PhoneDeviceLinkSheet` (CoreImage QR, статус/SAS/close/retry); approver-скан честно отложен.
 - Calls call-list DONE локально (uncommitted): `GET /v1/calls?chatId=` → `{calls: CallResponse[]}` (`updated_at` DESC, max 50, включая ended), `calls-signaling` 9/9, матрица 118→119, полный API 101/740, без миграции.
 - iPhone DeviceLinkStore (`c75948c` + фиксы `d4538a1`/`ca8c043`, CI PASS все incl. Apple): state machine idle→creating→waiting→approved/denied/expired/closed/failed, polling-цикл с generation-fence, QR-контент, Swift-тесты сходимости/отмены/сессии.
 
-- iPhone device-link API client DONE (локально, uncommitted, проверит Apple CI): `APIDeviceLinkChallenge/Status` + 6 методов клиента (create/poll/close/approve/deny/redeem) + contract-тесты путей/тел/декода; сервер без изменений.
+- iPhone device-link API client (`a7db52c` + фикс `652d972`, CI PASS все incl. Apple): `APIDeviceLinkChallenge/Status` + 6 методов клиента (create/poll/close/approve/deny/redeem) + contract-тесты путей/тел/декода; сервер без изменений.
 - iPhone terminate-others (`b123d4f` + фиксы, CI PASS все incl. Apple): `containOtherSessions` (`POST /v1/security/containment`), `terminateOtherSessions` в store, кнопка + диалог + состояние во view, Swift-тесты store + contract.
 
 - Security containment DONE локально (uncommitted): `POST /v1/security/containment` (session|all_other_sessions|account, 10/min, без миграции), account гасит все сессии + экспорты + push, realtime best-effort, `recovery_takeover` не принимается; `containment.integration` 3/3, typechecks clean, матрица 117→118, полный API 101/739; остаток — authenticator suspension + security epoch.

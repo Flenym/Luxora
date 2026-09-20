@@ -286,6 +286,7 @@ public final class ApplicationSession {
     public private(set) var phase: ApplicationPhase = .restoring
     public private(set) var messengerStore: MessengerStore?
     public private(set) var deviceSessionsStore: DeviceSessionsStore?
+    public private(set) var deviceLinkStore: DeviceLinkStore?
     public private(set) var phonePasswordSettingsStore: PhonePasswordSettingsStore?
     public private(set) var phoneBindingStore: PhoneBindingStore?
     public private(set) var notificationSettingsStore: NotificationSettingsStore?
@@ -456,6 +457,7 @@ public final class ApplicationSession {
         let fallbackSessionID = storedSessionIDForDurablePurge()
         messengerStore?.cancelRemoteOperations()
         deviceSessionsStore?.cancelRemoteOperations()
+        deviceLinkStore?.resetForSessionReplacement()
         phonePasswordSettingsStore?.cancelRemoteOperations()
         notificationSettingsStore?.cancelRemoteOperations()
         chatPreferencesStore?.resetForSessionReplacement()
@@ -480,6 +482,7 @@ public final class ApplicationSession {
         currentUserID = nil
         messengerStore = nil
         deviceSessionsStore = nil
+        deviceLinkStore = nil
         phonePasswordSettingsStore = nil
         phoneBindingStore = nil
         notificationSettingsStore = nil
@@ -824,6 +827,7 @@ public final class ApplicationSession {
     public func signOut() async {
         messengerStore?.cancelRemoteOperations()
         deviceSessionsStore?.cancelRemoteOperations()
+        deviceLinkStore?.resetForSessionReplacement()
         phonePasswordSettingsStore?.cancelRemoteOperations()
         notificationSettingsStore?.cancelRemoteOperations()
         chatPreferencesStore?.resetForSessionReplacement()
@@ -851,6 +855,7 @@ public final class ApplicationSession {
         currentUserID = nil
         messengerStore = nil
         deviceSessionsStore = nil
+        deviceLinkStore = nil
         phonePasswordSettingsStore = nil
         phoneBindingStore = nil
         notificationSettingsStore = nil
@@ -1413,6 +1418,19 @@ public final class ApplicationSession {
             }
         )
 
+        let linkStore = DeviceLinkStore()
+        linkStore.configureRemote(
+            creator: { targetLabel in
+                try await api.createDeviceLinkChallenge(targetLabel: targetLabel)
+            },
+            poller: { linkID, linkSecret in
+                try await api.pollDeviceLinkChallenge(linkID: linkID, linkSecret: linkSecret)
+            },
+            closer: { linkID, linkSecret in
+                try await api.closeDeviceLinkChallenge(linkID: linkID, linkSecret: linkSecret)
+            }
+        )
+
         let passwordSettingsStore = PhonePasswordSettingsStore()
         passwordSettingsStore.configureRemote(
             loader: {
@@ -1753,6 +1771,7 @@ public final class ApplicationSession {
 
         messengerStore?.cancelRemoteOperations()
         deviceSessionsStore?.cancelRemoteOperations()
+        deviceLinkStore?.resetForSessionReplacement()
         phonePasswordSettingsStore?.cancelRemoteOperations()
         notificationSettingsStore?.cancelRemoteOperations()
         chatPreferencesStore?.resetForSessionReplacement()
@@ -1796,6 +1815,7 @@ public final class ApplicationSession {
         durableMessagingScope = durableScope
         messengerStore = store
         deviceSessionsStore = sessionsStore
+        deviceLinkStore = linkStore
         phonePasswordSettingsStore = passwordSettingsStore
         phoneBindingStore = bindingStore
         notificationSettingsStore = notificationStore
@@ -1969,6 +1989,7 @@ public final class ApplicationSession {
         precondition(credentialCoordinator == nil)
         messengerStore?.cancelRemoteOperations()
         deviceSessionsStore?.cancelRemoteOperations()
+        deviceLinkStore?.resetForSessionReplacement()
         phonePasswordSettingsStore?.cancelRemoteOperations()
         notificationSettingsStore?.cancelRemoteOperations()
         chatPreferencesStore?.resetForSessionReplacement()
@@ -1983,6 +2004,7 @@ public final class ApplicationSession {
         currentUserID = nil
         messengerStore = nil
         deviceSessionsStore = nil
+        deviceLinkStore = nil
         phonePasswordSettingsStore = nil
         phoneBindingStore = nil
         notificationSettingsStore = nil
@@ -2007,6 +2029,7 @@ public final class ApplicationSession {
     public func installDebugUITestMessengerScenario() {
         messengerStore?.cancelRemoteOperations()
         deviceSessionsStore?.cancelRemoteOperations()
+        deviceLinkStore?.resetForSessionReplacement()
         phonePasswordSettingsStore?.cancelRemoteOperations()
         notificationSettingsStore?.cancelRemoteOperations()
         chatPreferencesStore?.resetForSessionReplacement()
@@ -2131,6 +2154,7 @@ public final class ApplicationSession {
         debugPreferencesStore.replaceConfirmed(initialPreferences)
         chatPreferencesStore = debugPreferencesStore
         deviceSessionsStore = nil
+        deviceLinkStore = nil
         phonePasswordSettingsStore = nil
         phoneBindingStore = nil
         notificationSettingsStore = nil
