@@ -2423,6 +2423,31 @@ public final class ApplicationSession {
                             }
                             guard preferencesStillOwned else { return }
 
+                        case let .callState(dispatch):
+                            // Call state has no local store yet: acknowledge the
+                            // durable cursor so the stream keeps advancing. The
+                            // call UI re-reads GET /v1/calls/:id on demand.
+                            guard dispatch.sequence > (realtimeV2Sequence ?? 0) else {
+                                continue
+                            }
+                            let callStillOwned = try await ScopedRealtimePostAwaitFence.run {
+                                try await coordinator.commitRealtimeV2Cursor(dispatch.cursor)
+                            } stillOwnsSession: {
+                                self.ownsScopedRealtime(
+                                    coordinator: coordinator,
+                                    store: store,
+                                    userID: userID,
+                                    preferencesStore: preferencesStore,
+                                    preferencesBinding: preferencesBinding,
+                                    foldersStore: foldersStore,
+                                    foldersBinding: foldersBinding,
+                                    communityStore: expectedCommunityStore
+                                )
+                            } publish: {
+                                self.realtimeV2Sequence = dispatch.sequence
+                            }
+                            guard callStillOwned else { return }
+
                         case let .chatFolders(dispatch):
                             guard dispatch.sequence > (realtimeV2Sequence ?? 0),
                                   dispatch.accountID == userID

@@ -3097,9 +3097,31 @@ export const SyncInvalidatedRealtimeEventSchema = z.object({
 
 // Realtime v2 is additive: all existing messaging events remain valid while
 // IA-1 and reconciliation-invalidating events are isolated from the strict v1 union.
+// Call control state change. Carries only the identifiers and the state needed
+// to decide what to show; clients fetch the full call via GET /v1/calls/:id.
+// Never contains media, SDP, ICE, TURN or grant material.
+export const CallStateChangedRealtimeEventSchema = z.object({
+  type: z.literal("call.state.changed"),
+  callId: IdSchema,
+  chatId: IdSchema,
+  state: z.enum([
+    "created",
+    "inviting",
+    "ringing",
+    "connecting",
+    "active",
+    "reconnecting",
+    "ending",
+    "ended"
+  ]),
+  revision: z.number().int().nonnegative(),
+  occurredAt: TimestampSchema
+}).strict();
+
 export const DurableRealtimeEventSchema = z.union([
   RealtimeEventSchema,
   IA1RealtimeEventSchema,
+  CallStateChangedRealtimeEventSchema,
   ChatMembershipRealtimeEventSchema,
   ChatJoinRequestRealtimeEventSchema,
   ChatOwnershipTransferChangedRealtimeEventSchema,

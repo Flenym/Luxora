@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LuxoraApp } from "./app.js";
+import type { LiveKitRoomClient } from "./services/livekit-room.js";
 import { buildApp } from "./app.js";
 import { establishAcceptedRelationship, testConfig } from "./test-helpers.js";
 
@@ -42,10 +43,15 @@ describe("calls join grants", () => {
     await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  async function boot(withMediaPlane: boolean): Promise<void> {
+  async function boot(withMediaPlane: boolean, roomUnavailable = false): Promise<void> {
     const storageRoot = await mkdtemp(join(tmpdir(), "luxora-grants-"));
     temporaryRoots.push(storageRoot);
     app = await buildApp({
+      callRoomClient: {
+        ensureRoom: async () => {
+          if (roomUnavailable) throw new Error("sfu unreachable");
+        }
+      } satisfies LiveKitRoomClient,
       config: testConfig({
         dataEncryptionKeys: { test: DATA_KEY },
         activeDataEncryptionKeyId: "test",
@@ -240,6 +246,17 @@ describe("calls join grants", () => {
     expect(decline.statusCode).toBe(200);
     const endedGrant = await grant(bob, callId, ["microphone"]);
     expect(endedGrant.status).toBe(403);
+  });
+
+  it("answers 503 without a token when the SFU room cannot be created", async () => {
+    await boot(true, true);
+    const alice = await register("alice_grant_sfu_down");
+    const bob = await register("bob_grant_sfu_down");
+    const chatId = await createDirectChat(alice, bob);
+    const callId = await createRingAccept(alice, bob, chatId);
+    const result = await grant(bob, callId, ["microphone"]);
+    expect(result.status).toBe(503);
+    expect(JSON.stringify(result.body)).not.toMatch(/token|sfu unreachable|secret/i);
   });
 
   it("answers 503 when the media plane is not configured", async () => {

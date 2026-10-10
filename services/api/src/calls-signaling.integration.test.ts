@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LuxoraApp } from "./app.js";
+import type { LiveKitRoomClient } from "./services/livekit-room.js";
 import { buildApp } from "./app.js";
 import { establishAcceptedRelationship, testConfig } from "./test-helpers.js";
 
@@ -50,6 +51,7 @@ describe("calls signaling first slice", () => {
     const storageRoot = await mkdtemp(join(tmpdir(), "luxora-calls-"));
     temporaryRoots.push(storageRoot);
     app = await buildApp({
+      callRoomClient: { ensureRoom: async () => undefined } satisfies LiveKitRoomClient,
       config: testConfig({
         dataEncryptionKeys: { test: DATA_KEY },
         activeDataEncryptionKeyId: "test",
@@ -708,5 +710,37 @@ describe("calls signaling first slice", () => {
       headers: auth(alice)
     });
     expect(missingParam.statusCode).toBe(400);
+  });
+
+  it("publishes call.state.changed durably to participants only, with control state and no media material", async () => {
+    await boot();
+    const alice = await register(`call_rt_alice_${randomUUID().slice(0, 8).replace(/-/g, "")}`);
+    const bob = await register(`call_rt_bob_${randomUUID().slice(0, 8).replace(/-/g, "")}`);
+    const stranger = await register(`call_rt_eve_${randomUUID().slice(0, 8).replace(/-/g, "")}`);
+    const chatId = await createDirectChat(alice, bob);
+
+    const before = app!.luxora.store.getLatestSequence();
+    const created = await createCall(alice, chatId);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const after = app!.luxora.store.getLatestSequence();
+    const callId = (created.body as { call: CallPayload }).call.callId;
+
+    const bobEvents = app!.luxora.store.replayEvents(bob.id, before, after, 20)
+      .map((stored) => stored.event)
+      .filter((event) => event.type === "call.state.changed");
+    expect(bobEvents.length).toBeGreaterThan(0);
+    expect(bobEvents[0]).toMatchObject({
+      type: "call.state.changed",
+      callId,
+      chatId,
+      state: "created",
+      revision: 1
+    });
+    // Control state only: no room, SDP, ICE, TURN or grant material leaks into realtime.
+    const serialized = JSON.stringify(bobEvents);
+    expect(serialized).not.toMatch(/roomName|sdp|ice|turn|grant|livekit|token/i);
+
+    expect(app!.luxora.store.replayEvents(stranger.id, before, after, 20)
+      .filter((stored) => stored.event.type === "call.state.changed")).toEqual([]);
   });
 });

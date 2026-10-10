@@ -66,8 +66,9 @@ const DURABLE_EVENT_BOUNDARIES = [
   "relationship.request.accepted:participant_account",
   "relationship.request.expired:participant_account",
   "relationship.block.changed:actor_account",
-  "safety.report.submitted:actor_account"
-] as const;
+    "safety.report.submitted:actor_account",
+    "call.state.changed:member_account"
+  ] as const;
 
 interface Identity {
   id: string;
@@ -232,7 +233,7 @@ describe("complete realtime authorization matrix", () => {
     expect([...new Set([...realtimeEvents, ...identityEvents])].sort()).toEqual([
       ...new Set(DURABLE_EVENT_BOUNDARIES.map((entry) => entry.split(":")[0]))
     ].sort());
-    expect(DURABLE_EVENT_BOUNDARIES).toHaveLength(25);
+    expect(DURABLE_EVENT_BOUNDARIES).toHaveLength(26);
   });
 
   it("rejects every pre-authentication client command and invalid authenticate frame on both protocols", async () => {

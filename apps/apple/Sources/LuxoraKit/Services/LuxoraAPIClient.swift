@@ -4,10 +4,12 @@ import Foundation
 actor LuxoraAPIClient {
     static let maximumCursorPages = 1_000
 
-    private let configuration: LuxoraClientConfiguration
-    private let session: URLSession
-    private let decoder: JSONDecoder
-    private let encoder: JSONEncoder
+    // Module-internal (not private) so feature clients such as the calls
+    // client can share the same transport, timeouts and origin checks.
+    let configuration: LuxoraClientConfiguration
+    let session: URLSession
+    let decoder: JSONDecoder
+    let encoder: JSONEncoder
 
     init(configuration: LuxoraClientConfiguration, session: URLSession = .shared) {
         self.configuration = configuration
@@ -1490,7 +1492,7 @@ actor LuxoraAPIClient {
         return LuxoraAPIError.transport(error.localizedDescription)
     }
 
-    private static func sameOrigin(_ candidate: URL?, _ configuredBase: URL) -> Bool {
+    static func sameOrigin(_ candidate: URL?, _ configuredBase: URL) -> Bool {
         guard let candidate else { return false }
         return candidate.scheme?.lowercased() == configuredBase.scheme?.lowercased()
             && candidate.host?.lowercased() == configuredBase.host?.lowercased()
