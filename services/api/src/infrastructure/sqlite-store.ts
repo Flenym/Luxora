@@ -11009,6 +11009,7 @@ export class SqliteStore implements Store {
   #eventEntityId(event: DurableRealtimeEvent): string {
     switch (event.type) {
       case "chat.created": return event.chat.id;
+      case "call.state.changed": return event.callId;
       case "message.created":
       case "message.updated":
       case "message.deleted": return event.message.id;
@@ -11667,6 +11668,26 @@ export class SqliteStore implements Store {
         INSERT INTO call_rooms (room_name, call_id) VALUES (@roomName, @callId)
         ON CONFLICT(room_name) DO NOTHING
       `).run({ roomName: snapshot.roomName, callId: snapshot.callId });
+
+      // Durable realtime fan-out in the same transaction as the call mutation,
+      // so a state change is never persisted without its notification (or the
+      // reverse). Only control state is published; see the protocol schema.
+      const recipients = new Set(
+        snapshot.participants
+          .filter((participant) => participant.removedAtMs === null)
+          .map((participant) => participant.memberId)
+      );
+      const at = now;
+      for (const recipient of recipients) {
+        this.appendEvent(recipient, {
+          type: "call.state.changed",
+          callId: snapshot.callId,
+          chatId: snapshot.conversationId,
+          state: snapshot.state,
+          revision: snapshot.revision,
+          occurredAt: at
+        }, at);
+      }
     });
   }
 

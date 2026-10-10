@@ -131,6 +131,7 @@ interface RouteDependencies {
   accountDeletion: AccountDeletionService;
   calls: CallService;
   serverSearchConfigured: boolean;
+  callsConfigured?: boolean;
   authGuard: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
 }
 
@@ -239,6 +240,7 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     uploadChunkSizeBytes: dependencies.config.uploadChunkSizeBytes,
     uploadSessionTtlSeconds: dependencies.config.uploadSessionTtlMinutes * 60,
     serverSearchConfigured: dependencies.serverSearchConfigured,
+    callsConfigured: dependencies.callsConfigured ?? false,
     phoneAuthenticationAvailable: dependencies.phoneAuth.available
   }, dependencies.config.syncInvalidationEnabled));
 

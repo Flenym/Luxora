@@ -35,6 +35,7 @@ public struct LuxoraApplicationView: View {
             }
         }
         .environment(\.authenticatedAvatarImageCache, session.avatarImageCache)
+        .environment(\.callsStore, session.callsStore)
         .task { await restoreSession() }
     }
 

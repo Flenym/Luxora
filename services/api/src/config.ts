@@ -20,7 +20,7 @@ const ConfigSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(8080),
   DATABASE_PATH: z.string().min(1).default("./data/luxora.db"),
   JWT_SECRET: z.string().min(32),
-  CORS_ORIGINS: z.string().default("http://localhost:3000,http://localhost:5173"),
+  CORS_ORIGINS: z.string().default("http://localhost:3000,http://localhost:5173,http://localhost:4173"),
   TRUST_PROXY: z.enum(["0", "1", "false", "true"]).optional(),
   TRUSTED_PROXY_CIDRS: z.string().default(""),
   METRICS_TOKEN: z.string().min(20).optional(),

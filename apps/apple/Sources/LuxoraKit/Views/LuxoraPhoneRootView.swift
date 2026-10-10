@@ -2173,6 +2173,7 @@ private struct PhoneConversationRow: View {
 private struct PhoneDirectConversationView: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.callsStore) private var callsStore
     @Bindable var store: MessengerStore
     let conversation: Conversation
     let callsGate: FeatureGate
@@ -2480,6 +2481,9 @@ private struct PhoneDirectConversationView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
+                    if let callsStore {
+                        CallBanner(store: callsStore, title: conversation.title)
+                    }
                     // At accessibility Dynamic Type sizes this context belongs
                     // to the scrollable transcript. Keeping it in the fixed
                     // top inset can consume almost the whole viewport and hide
@@ -2730,11 +2734,19 @@ private struct PhoneDirectConversationView: View {
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
-                    presentedGate = callsGate
+                    if let callsStore {
+                        Task { await callsStore.startCall(chatID: conversation.id, mediaMode: "audio") }
+                    } else {
+                        presentedGate = callsGate
+                    }
                 } label: {
-                    LockedToolbarIcon(symbol: "phone.fill")
+                    if callsStore != nil {
+                        Image(systemName: "phone.fill")
+                    } else {
+                        LockedToolbarIcon(symbol: "phone.fill")
+                    }
                 }
-                .tint(.secondary)
+                .tint(callsStore == nil ? .secondary : .green)
                 .accessibilityLabel(phoneString("conversation.audio_call"))
                 .accessibilityIdentifier("conversation-audio-call")
                 Button {

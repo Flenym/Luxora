@@ -80,8 +80,8 @@ services:
       - --relay-ip=172.31.80.20
       - --external-ip=${TURN_PUBLIC_IP:-127.0.0.1}/172.31.80.20
       - --listening-port=${TURN_PORT:-3478}
-      - --min-port=49160
-      - --max-port=49200
+      - --min-port=${TURN_RELAY_MIN_PORT:-49160}
+      - --max-port=${TURN_RELAY_MAX_PORT:-49200}
       - --realm=${TURN_REALM:-calls.luxora.local}
       - --server-name=${TURN_REALM:-calls.luxora.local}
       - --use-auth-secret
@@ -107,7 +107,7 @@ services:
     ports:
       - "127.0.0.1:${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
       - "127.0.0.1:${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
-      - "127.0.0.1:49160-49200:49160-49200/udp"
+      - "127.0.0.1:${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}:${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}/udp"
       - "127.0.0.1:9641:9641/tcp"
     healthcheck:
       test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/${TURN_PORT:-3478}; exec 3>&-"]
@@ -126,6 +126,33 @@ services:
     networks:
       calls:
         ipv4_address: 172.31.80.20
+
+  # Local-only TLS terminator so CALLS_LIVEKIT_URL can be wss:// (required by
+  # the API). Self-signed internal CA; development harness only.
+  tls:
+    image: caddy:2.8-alpine
+    volumes:
+      - ./infra/calls/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "127.0.0.1:7443:7443/tcp"
+    depends_on:
+      sfu:
+        condition: service_started
+    networks:
+      calls:
+        ipv4_address: 172.31.80.30
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+
+volumes:
+  caddy-data:
+  caddy-config:
 
 networks:
   calls:

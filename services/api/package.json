@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@luxora/api",
   "version": "0.1.0",
   "description": "Luxora Beta-0.1 HTTP and realtime messaging API",
@@ -21,9 +21,9 @@
     "@fastify/swagger": "^9.5.1",
     "@fastify/swagger-ui": "^6.1.1",
     "@fastify/websocket": "^11.0.1",
+    "@luxora/call-control": "file:../../packages/call-control",
     "@luxora/passkey-domain": "file:../../packages/passkey-domain",
     "@luxora/protocol": "file:../../packages/protocol",
-    "@luxora/call-control": "file:../../packages/call-control",
     "@simplewebauthn/server": "13.3.2",
     "argon2": "^0.41.1",
     "better-sqlite3": "^11.8.1",
@@ -31,7 +31,7 @@
     "file-type": "^22.0.1",
     "jose": "^6.0.8",
     "libphonenumber-js": "1.13.10",
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "zod": "^3.24.2"
   },
   "devDependencies": {

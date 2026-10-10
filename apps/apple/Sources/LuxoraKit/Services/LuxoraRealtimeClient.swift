@@ -390,6 +390,7 @@ enum RealtimeV2Signal: Sendable {
     case chatPreferences(ChatPreferencesRealtimeDispatch)
     case chatFolders(ChatFoldersRealtimeDispatch)
     case chatDraft(ChatDraftRealtimeDispatch)
+    case callState(CallStateRealtimeDispatch)
     case syncInvalidated(RealtimeSyncInvalidationDispatch)
     case checkpoint(sequence: Int, cursor: String)
     case typing(conversationID: UUID, isTyping: Bool)
@@ -583,6 +584,12 @@ enum RealtimeV2FrameDecoder {
                     throw LuxoraAPIError.invalidResponse
                 }
                 return .chatDraft(draft)
+            }
+            if eventType == "call.state.changed" {
+                guard let call = try CallRealtimeFrameDecoder.decode(data) else {
+                    throw LuxoraAPIError.invalidResponse
+                }
+                return .callState(call)
             }
             if eventType == "sync.invalidated" {
                 guard Set(eventObject.keys) == [

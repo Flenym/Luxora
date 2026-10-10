@@ -806,6 +806,8 @@ describe("complete HTTP authorization matrix", () => {
       uploadSessionTtlSeconds: config.uploadSessionTtlMinutes * 60
     });
     expect(capabilities.features.serverSearchConfigured).toBe(false);
+    // No media plane configured in this fixture: calls must stay off.
+    expect(capabilities.features.calls).toBe(false);
 
     const openApi = (await app.inject({ method: "GET", url: "/openapi.json" })).json();
     expect(openApi.paths["/v1/capabilities"].get).toBeDefined();
@@ -834,6 +836,7 @@ describe("complete HTTP authorization matrix", () => {
       url: "/v1/capabilities"
     })).json());
     expect(configuredCapabilities.features.serverSearchConfigured).toBe(true);
+    expect(configuredCapabilities.features.calls).toBe(false);
     expect(configuredCapabilities.limits).toMatchObject({
       maxAttachmentBytes: configuredSearch.maxAttachmentBytes,
       userStorageQuotaBytes: configuredSearch.userStorageQuotaBytes,
