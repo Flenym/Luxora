@@ -400,5 +400,4 @@ private struct PhoneDeviceLinkSheet: View {
         #endif
     }
 }
-}
 #endif
