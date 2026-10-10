@@ -9,7 +9,7 @@ final class CallsStoreTests: XCTestCase {
     private let chatID = UUID()
 
     private func makeStore() -> CallsStore {
-        CallsStore(
+        let store = CallsStore(
             api: LuxoraAPIClient(
                 configuration: LuxoraClientConfiguration(
                     apiBaseURL: URL(string: "https://calls-store.invalid")!,
@@ -19,6 +19,8 @@ final class CallsStoreTests: XCTestCase {
             accountID: me,
             tokenProvider: { "token" }
         )
+        store.mediaEnabled = false
+        return store
     }
 
     private func call(
@@ -67,7 +69,15 @@ final class CallsStoreTests: XCTestCase {
 
         XCTAssertNil(store.incomingCall)
         XCTAssertNil(store.activeCall)
-        XCTAssertEqual(store.mediaState, .idle)
+    }
+
+    func testMediaJoinsOnlyWhenConnectingOrActive() {
+        // Voice is requested only once the server has connected the call.
+        XCTAssertFalse(CallsStore.mediaStates.contains(.created))
+        XCTAssertFalse(CallsStore.mediaStates.contains(.ringing))
+        XCTAssertTrue(CallsStore.mediaStates.contains(.connecting))
+        XCTAssertTrue(CallsStore.mediaStates.contains(.active))
+        XCTAssertFalse(CallsStore.mediaStates.contains(.ended))
     }
 
     func testAcceptedCalleeIsNotIncomingAnymore() {

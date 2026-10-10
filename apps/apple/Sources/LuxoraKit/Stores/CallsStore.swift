@@ -21,11 +21,14 @@ final class CallsStore {
     private(set) var activeCall: APICall?
     private(set) var incomingCall: APICall?
     private(set) var mediaState: MediaState = .idle
+    private(set) var remoteAudioCount = 0
     private(set) var errorMessage: String?
 
     @ObservationIgnored private let api: LuxoraAPIClient
     @ObservationIgnored private let accountID: UUID
     @ObservationIgnored private let tokenProvider: @Sendable () async throws -> String
+    @ObservationIgnored private var media: CallMediaSession?
+    @ObservationIgnored private var mediaCallID: UUID?
 
     init(
         api: LuxoraAPIClient,
@@ -36,6 +39,60 @@ final class CallsStore {
         self.accountID = accountID
         self.tokenProvider = tokenProvider
     }
+
+    /// Joins the LiveKit room for the active call once the server has moved it
+    /// to `connecting`/`active`. Only one media session exists at a time, and
+    /// it is torn down when the call ends.
+    private func syncMedia() async {
+        guard let call = activeCall, Self.mediaStates.contains(call.state) else {
+            await tearDownMedia()
+            return
+        }
+        guard mediaCallID != call.callId else { return }
+        await tearDownMedia()
+        mediaCallID = call.callId
+        mediaState = .joining
+        do {
+            let token = try await tokenProvider()
+            let grant = try await api.joinGrant(callID: call.callId, requestedSources: ["microphone"], token: token)
+            let session = CallMediaSession { [weak self] event in
+                self?.handleMedia(event)
+            }
+            media = session
+            try await session.start(serverURL: grant.serverUrl, token: grant.token)
+        } catch {
+            mediaState = .unavailable
+            errorMessage = Self.message(for: error)
+            mediaCallID = nil
+            media = nil
+        }
+    }
+
+    private func tearDownMedia() async {
+        let session = media
+        media = nil
+        mediaCallID = nil
+        remoteAudioCount = 0
+        mediaState = .idle
+        await session?.stop()
+    }
+
+    private func handleMedia(_ event: CallMediaSession.Event) {
+        switch event {
+        case .connected:
+            mediaState = .connected
+        case let .remoteAudioSubscribed(count):
+            remoteAudioCount = count
+        case let .disconnected(reason):
+            remoteAudioCount = 0
+            if mediaState != .idle {
+                mediaState = reason == nil ? .idle : .unavailable
+                errorMessage = reason == nil ? nil : LuxoraL10n.text("error.server_request_failed")
+            }
+        }
+    }
+
+    static let mediaStates: Set<CallStateValue> = [.connecting, .active, .reconnecting]
 
     /// Starts a call in a chat. The server rings the other participant; this
     /// call becomes `activeCall` in state `created`/`inviting`/`ringing`.
@@ -110,9 +167,15 @@ final class CallsStore {
             activeCall = call
         } else if activeCall?.callId == call.callId {
             activeCall = nil
-            mediaState = .idle
+        }
+        if mediaEnabled {
+            Task { await self.syncMedia() }
         }
     }
+
+    /// Media joins are a side effect the state rules must not depend on, so
+    /// tests construct the store with this off and assert the rules directly.
+    @ObservationIgnored var mediaEnabled = true
 
     private func transition(
         _ call: APICall,

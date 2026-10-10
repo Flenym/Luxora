@@ -296,6 +296,7 @@ public final class ApplicationSession {
     public private(set) var communityStore: CommunityStore?
     public private(set) var chatTopicsStore: ChatTopicsStore?
     public private(set) var globalSearchStore: GlobalSearchStore?
+    private(set) var callsStore: CallsStore?
     public private(set) var synchronizedDraftStore: SynchronizedChatDraftStore?
     public let avatarImageCache = AuthenticatedAvatarImageCache()
     public let attachmentImageCache = AuthenticatedAvatarImageCache(byteLimit: 128 * 1_024 * 1_024)
@@ -494,7 +495,7 @@ public final class ApplicationSession {
         communityStore = nil
         chatTopicsStore = nil
         chatTopicsStore = nil
-        globalSearchStore = nil
+        globalSearchStore = nil        callsStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
@@ -867,7 +868,7 @@ public final class ApplicationSession {
         communityStore = nil
         chatTopicsStore = nil
         chatTopicsStore = nil
-        globalSearchStore = nil
+        globalSearchStore = nil        callsStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
@@ -1812,6 +1813,13 @@ public final class ApplicationSession {
         }
         credentialCoordinator = coordinator
         currentUserID = user.id
+        callsStore = CallsStore(
+            api: api,
+            accountID: user.id,
+            tokenProvider: {
+                try await coordinator.withAccessToken { $0 }
+            }
+        )
         durableMessagingScope = durableScope
         messengerStore = store
         deviceSessionsStore = sessionsStore
@@ -2015,7 +2023,7 @@ public final class ApplicationSession {
         chatFoldersBinding = nil
         communityStore = nil
         chatTopicsStore = nil
-        globalSearchStore = nil
+        globalSearchStore = nil        callsStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
