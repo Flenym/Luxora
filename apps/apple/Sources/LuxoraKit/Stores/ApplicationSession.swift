@@ -2455,6 +2455,11 @@ public final class ApplicationSession {
                                 self.realtimeV2Sequence = dispatch.sequence
                             }
                             guard callStillOwned else { return }
+                            // Realtime is only a trigger: re-read the call so the
+                            // store can show an incoming call or end an active one.
+                            if let callsStore = self.callsStore {
+                                await callsStore.refresh(callID: dispatch.callID)
+                            }
 
                         case let .chatFolders(dispatch):
                             guard dispatch.sequence > (realtimeV2Sequence ?? 0),
