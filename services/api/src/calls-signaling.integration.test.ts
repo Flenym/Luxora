@@ -108,6 +108,12 @@ describe("calls signaling first slice", () => {
     return { status: response.statusCode, body: response.json() as unknown };
   }
 
+  it("advertises calls in capabilities only when the media plane is configured", async () => {
+    await boot();
+    const response = await app!.inject({ method: "GET", url: "/v1/capabilities" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().features.calls).toBe(true);
+  });
   it("creates, reads and cancels a 1:1 call with idempotent retry and no internal identifiers", async () => {
     await boot();
     const alice = await register("alice_call");

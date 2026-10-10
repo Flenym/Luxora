@@ -679,6 +679,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     calls,
     deviceLinks,
     serverSearchConfigured: searchHasher.available,
+    // Calls are advertised only when the media plane (LiveKit + TURN) is set.
+    callsConfigured: config.callsMediaPlane !== undefined,
     authGuard
   });
   if (config.passkeyInternalRoutesEnabled || config.passkeyInternalSignupRoutesEnabled) {

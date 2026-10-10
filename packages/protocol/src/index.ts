@@ -1974,7 +1974,9 @@ const CapabilitiesRuntimeLimitShape = {
 export const CapabilitiesRuntimeStateSchema = z.object({
   ...CapabilitiesRuntimeLimitShape,
   serverSearchConfigured: z.boolean(),
-  phoneAuthenticationAvailable: z.boolean()
+  phoneAuthenticationAvailable: z.boolean(),
+  // True only when the call media plane (LiveKit + TURN) is configured.
+  callsConfigured: z.boolean().default(false)
 })
   .strict()
   .refine((state) => state.userStorageQuotaBytes >= state.maxAttachmentBytes, {
@@ -2024,7 +2026,7 @@ export const CapabilitiesResponseV1Schema = z.object({
     drafts: z.boolean().default(false),
     mediaUploads: z.literal(true),
     serverSearchConfigured: z.boolean(),
-    calls: z.literal(false),
+    calls: z.boolean(),
     passkeys: z.literal(false),
     push: z.literal(false)
   }),
@@ -2071,6 +2073,7 @@ export function createCapabilitiesResponseV1(
   const {
     serverSearchConfigured,
     phoneAuthenticationAvailable,
+    callsConfigured,
     ...limits
   } = state;
   return CapabilitiesResponseV1Schema.parse({
@@ -2104,7 +2107,7 @@ export function createCapabilitiesResponseV1(
       drafts: true,
       mediaUploads: true,
       serverSearchConfigured,
-      calls: false,
+      calls: callsConfigured,
       passkeys: false,
       push: false
     },
