@@ -52,12 +52,21 @@ if ($LASTEXITCODE -ne 0) {
 
 # Trust the local TLS proxy certificate (for Node and the browser).
 $caFile = Join-Path $dataDir "caddy-root.crt"
+# docker cp reports success on stderr. With ErrorActionPreference=Stop, PowerShell
+# 5.1 treats that as a failure, so this step runs with Continue and checks the file.
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 for ($i = 0; $i -lt 30; $i++) {
-  docker cp luxora-calls-tls-1:/data/caddy/pki/authorities/local/root.crt $caFile 2>$null
+  cmd /c "docker cp luxora-calls-tls-1:/data/caddy/pki/authorities/local/root.crt `"$caFile`" >nul 2>&1"
   if ((Test-Path $caFile) -and ((Get-Item $caFile).Length -gt 0)) { break }
   Start-Sleep -Seconds 2
 }
-certutil -user -addstore Root $caFile | Out-Null
+$ErrorActionPreference = $previousPreference
+if (-not (Test-Path $caFile)) {
+  Say "Could not read the TLS proxy certificate. Check that the luxora-calls-tls-1 container is running."
+  exit 1
+}
+cmd /c "certutil -user -addstore Root `"$caFile`" >nul 2>&1"
 
 # 3. API with the calls media plane configured.
 cmd /c "npm --prefix packages/protocol run build" | Out-Null
