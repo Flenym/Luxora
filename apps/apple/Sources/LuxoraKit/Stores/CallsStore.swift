@@ -98,11 +98,13 @@ final class CallsStore {
     func apply(_ call: APICall) {
         let mine = call.participants.first { $0.memberId == accountID }
         let isLive = Self.liveStates.contains(call.state)
-        if isLive, call.creatorMemberId != accountID,
-           let mine, mine.status == "invited" || mine.status == "ringing" {
+        // Still ringing me: I am not the creator and my participant is not yet
+        // accepted. Once I accept, or the call ends, it stops being incoming.
+        let stillRingingMe = mine.map { $0.status == "invited" || $0.status == "ringing" } ?? false
+        if isLive, call.creatorMemberId != accountID, stillRingingMe {
             incomingCall = call
         } else if incomingCall?.callId == call.callId {
-            incomingCall = isLive ? call : nil
+            incomingCall = nil
         }
         if isLive {
             activeCall = call
