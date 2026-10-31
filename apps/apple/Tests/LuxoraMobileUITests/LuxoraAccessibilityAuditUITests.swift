@@ -9,6 +9,11 @@ final class LuxoraAccessibilityAuditUITests: XCTestCase {
     func testAuthenticationScalesAndExposesAStableVoiceOverContract() throws {
         let app = russianApp()
         app.launchEnvironment["LUXORA_UI_TEST_RESET_SESSION"] = "1"
+        // CI runs this test without a local API; an unreachable loopback URL
+        // keeps capability refresh deterministic instead of reaching a real
+        // server or the production default.
+        app.launchEnvironment["LUXORA_API_URL"] = "http://127.0.0.1:9"
+        app.launchEnvironment["LUXORA_REALTIME_URL"] = "ws://127.0.0.1:9/v1/realtime"
         app.launch()
 
         let welcome = app.descendants(matching: .any)["auth-welcome-screen"]

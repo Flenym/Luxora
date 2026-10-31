@@ -368,11 +368,12 @@ final class LuxoraMobileUITests: XCTestCase {
         search.tap()
         search.typeText("luxora-no-such-conversation")
 
-        let noResults = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "Нет результатов")
-        ).firstMatch
+        // The system ContentUnavailableView copy is localized by the OS, so the
+        // stable contract is the app's own empty-state identifier, not the
+        // localized title. The root empty state must not replace search results.
+        let noResults = app.descendants(matching: .any)["inbox-empty-search"]
         XCTAssertTrue(noResults.waitForExistence(timeout: 3))
-        XCTAssertFalse(app.staticTexts["Чатов пока нет"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["inbox-empty-root"].exists)
     }
 
     @MainActor
@@ -673,9 +674,6 @@ final class LuxoraMobileUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["message-forward-provenance"].exists)
     }
 
-    }
-
-
     @MainActor
     func testGlobalSearchUsesBottomScopesAndClosesBackToRussianRootShell() {
         let app = messengerApp(destination: "search")
@@ -841,7 +839,13 @@ final class LuxoraMobileUITests: XCTestCase {
         let privacy = messengerApp(destination: "you-privacy")
         privacy.launch()
         XCTAssertTrue(privacy.descendants(matching: .any)["you-privacy-screen"].waitForExistence(timeout: 8))
-        XCTAssertTrue(privacy.staticTexts["Luxora не заявляет о сквозном шифровании."].exists)
+        // The privacy screen grew; the cloud-preview honesty facts sit below the
+        // initial viewport, so scroll them into the accessibility tree first.
+        let unencryptedFact = privacy.staticTexts["Luxora не заявляет о сквозном шифровании."]
+        for _ in 0..<8 where !unencryptedFact.exists {
+            privacy.swipeUp()
+        }
+        XCTAssertTrue(unencryptedFact.exists)
         assertRootShellHidden(in: privacy)
         privacy.terminate()
 
