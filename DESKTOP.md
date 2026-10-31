@@ -2,7 +2,7 @@
 
 **Релиз:** Beta-0.1  
 **Владелец и разработчик:** Flenym  
-**Status:** macOS SwiftUI and Electron portability foundations; no full desktop client. The Electron shell loads the Web build — currently the public product site plus the developer-preview web messenger client at `/app`
+**Status:** Electron Windows/Linux shell runs the real web client (`luxora://app` + loopback API bridge) with a CI smoke gate; macOS SwiftUI remains a frozen portability probe; no signed/packaged desktop release
 
 ## 1. Sequencing
 
@@ -26,31 +26,42 @@ After unfreeze, macOS should use the proven Swift server/iPhone domain/sync/stor
 - drag/drop/files with privacy preview;
 - Keychain, sandbox entitlements, signed/notarized distribution and safe updater.
 
-## 3. Electron Windows/Linux foundation
+## 3. Electron Windows/Linux shell — real client mechanism (PR #110)
 
-`apps/desktop` packages the static Web build. The main process currently:
+`apps/desktop` now serves the packaged Web build through Electron instead of a
+`file://` URL, so the renderer has a stable, secure origin. The main process:
 
-- enables app sandbox;
-- uses context isolation, disables Node integration and insecure content;
-- disables DevTools in packaged mode;
-- limits navigation/new windows and allows external HTTPS only for selected Luxora hosts;
-- grants media/notification permission only to a trusted renderer URL;
-- injects a CSP for packaged content;
-- exposes a narrow preload bridge with release and menu actions;
-- provides New Message/Search desktop menu commands.
+- registers the custom secure scheme **`luxora://app`** and serves the packaged
+  `resources/web` tree through it (dev iteration can still point at a loopback
+  `LUXORA_WEB_URL`);
+- injects an in-handler **CSP** for that origin and keeps app sandbox, context
+  isolation, `nodeIntegration:false`, `webSecurity` and navigation/window limits;
+- exposes the API base URL through a **sandboxed CommonJS preload** (the previous
+  ESM preload never loaded): the preload passes a validated
+  `--luxora-api-base-url` value only for **loopback origins** (`127.0.0.1`,
+  `localhost`, `[::1]`), otherwise the default `http://127.0.0.1:2222`; the web
+  client honours the bridge only for loopback origins;
+- adds the explicit `luxora://app` CORS origin to the API allowlist used by the
+  desktop shell;
+- supports a **`LUXORA_DESKTOP_SMOKE=1`** smoke mode and keeps narrow menu
+  actions (New Message/Search) plus the external-host navigation allowlist.
 
-Renderer source selection (read from `src/main.ts`): a loopback-only
-`LUXORA_WEB_URL` in development, the packaged `resources/web/index.html`, and
-otherwise `apps/web/dist/index.html` next to the compiled shell. Today that
-renderer is the public product site plus the developer-preview `/app` web
-messenger client; loading the page does not make the desktop app a connected
-messenger.
+The renderer is the real web client (public site + `/app` messenger) talking to a
+loopback API; this is a working desktop shell, not a claim of desktop product
+availability. A `desktop` CI job builds the web app, compiles the shell and runs
+the smoke mode under Xvfb (ubuntu-24.04, 49 s), with an Electron CI-only
+`--no-sandbox` switch required by the hosted runner while the application keeps
+its sandbox/context-isolation/Node-integration protections.
 
-This is useful shell hardening, not proof that the renderer is a real messenger.
+Honest limits: packaged signed distribution (DMG/ZIP, NSIS, AppImage/deb),
+notarization, signed anti-rollback updater, OS credential vault, tray/background
+lifecycle and multi-window coordination are **not shipped**. The renderer origin
+is `luxora://app` and the API bridge is loopback-only; hosted/remote API
+deployments are not supported by this shell yet.
 
-## 4. Build commands
+## 4. Build, run and CI
 
-Build Web first because Electron packages `apps/web/dist`:
+Build the Web app first because Electron packages `apps/web/dist`:
 
 ```bash
 npm --prefix apps/web ci
@@ -60,7 +71,17 @@ npm --prefix apps/desktop run typecheck
 npm --prefix apps/desktop run start
 ```
 
-Packaging definitions exist for DMG/ZIP, NSIS/portable, AppImage and deb. Running `dist`, `dist:windows` or `dist:linux` produces unsigned/unreviewed artifacts unless signing infrastructure is configured; these are not public downloads.
+Smoke mode (used by the `desktop` CI job under Xvfb):
+
+```bash
+LUXORA_DESKTOP_SMOKE=1 npm --prefix apps/desktop run start
+```
+
+The desktop job also sets `LUXORA_API_URL` to a loopback API when one is running;
+without an API the shell still starts and its bridge keeps the loopback default.
+Packaging definitions exist for DMG/ZIP, NSIS/portable, AppImage and deb. Running
+`dist`, `dist:windows` or `dist:linux` produces unsigned/unreviewed artifacts
+unless signing infrastructure is configured; these are not public downloads.
 
 ## 5. Desktop target contract after unfreeze
 

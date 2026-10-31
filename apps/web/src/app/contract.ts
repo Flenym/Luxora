@@ -330,6 +330,8 @@ export type CallState = {
   incoming: Call | null;
   media: CallMediaState;
   mediaError: string | null;
+  /** Local microphone mute, only meaningful while media is connected. */
+  muted: boolean;
 };
 
 export type RequestsState = {
@@ -427,6 +429,8 @@ export type MessengerActions = {
   declineCall(): Promise<void>;
   hangupCall(): Promise<void>;
   dismissCall(): void;
+  /** Toggle the local microphone once the media plane is connected. */
+  toggleCallMute(): Promise<void>;
 
   updateProfile(patch: { displayName?: string; bio?: string }): Promise<void>;
   searchChats(query: string): Promise<Chat[]>;

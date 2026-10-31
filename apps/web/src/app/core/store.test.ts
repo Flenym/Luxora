@@ -395,7 +395,7 @@ describe("store — membership and calls", () => {
       endedAtMs: null
     };
     const state = baseState({
-      call: { active: call, incoming: null, media: "unavailable", mediaError: null }
+      call: { active: call, incoming: null, media: "unavailable", mediaError: null, muted: false }
     });
     const updated = applyDurableEvent(state, {
       type: "call.state.changed",

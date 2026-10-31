@@ -128,7 +128,9 @@ describe("chat invite links", () => {
       headers: auth(owner)
     });
     expect(listed.statusCode).toBe(200);
-    const links = ChatInviteLinkListResponseSchema.parse(listed.json());
+    // The list response also carries an additive opaque nextCursor; validate
+    // the item projection with the shared strict schema.
+    const links = ChatInviteLinkListResponseSchema.parse({ items: listed.json().items });
     expect(links.items).toHaveLength(1);
     expect(links.items[0]!.id).toBe(body.invite.id);
     expect(JSON.stringify(listed.json())).not.toContain(body.token);

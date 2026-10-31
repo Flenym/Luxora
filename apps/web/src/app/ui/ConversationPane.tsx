@@ -151,6 +151,7 @@ export function ConversationPane({ onNotify, onBack }: ConversationPaneProps) {
               <button
                 type="button"
                 className="icon-button icon-button--md icon-button--ghost"
+                data-testid="call-audio"
                 aria-label={callsEnabled ? s.conversation.audioCall : s.conversation.callAria(s.conversation.audioCall)}
                 title={callsEnabled ? s.conversation.audioCall : s.calls.mediaUnavailableNote}
                 onClick={() => attemptCall("audio")}
@@ -160,6 +161,7 @@ export function ConversationPane({ onNotify, onBack }: ConversationPaneProps) {
               <button
                 type="button"
                 className="icon-button icon-button--md icon-button--ghost"
+                data-testid="call-video"
                 aria-label={callsEnabled ? s.conversation.videoCall : s.conversation.callAria(s.conversation.videoCall)}
                 title={callsEnabled ? s.conversation.videoCall : s.calls.mediaUnavailableNote}
                 onClick={() => attemptCall("video")}

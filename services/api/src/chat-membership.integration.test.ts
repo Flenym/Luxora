@@ -174,7 +174,9 @@ describe("chat membership lifecycle", () => {
       headers: auth(invited)
     });
     expect(listed.statusCode).toBe(200);
-    const members = ChatMemberListResponseSchema.parse(listed.json());
+    // The list response also carries an additive opaque nextCursor; validate
+    // the item projection with the shared strict schema.
+    const members = ChatMemberListResponseSchema.parse({ items: listed.json().items });
     expect(members.items.map(({ membership }) => membership.userId).sort()).toEqual(
       [owner.id, existing.id, invited.id].sort()
     );

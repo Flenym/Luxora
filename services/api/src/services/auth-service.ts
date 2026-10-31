@@ -237,8 +237,12 @@ export class AuthService {
     };
   }
 
-  listSessions(principal: AuthenticatedPrincipal): Session[] {
-    return this.store.listSessions(principal.userId, principal.sessionId);
+  listSessions(
+    principal: AuthenticatedPrincipal,
+    limit: number,
+    cursor?: string
+  ): { items: Session[]; nextCursor: string | null } {
+    return this.store.listSessionsPage(principal.userId, principal.sessionId, limit, cursor);
   }
 
   revokeSession(principal: AuthenticatedPrincipal, sessionId: string): void {

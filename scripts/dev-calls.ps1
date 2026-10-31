@@ -11,6 +11,9 @@ $env:LIVEKIT_API_SECRET = "lkdevsecret-0123456789abcdef0123456789"
 $env:TURN_SHARED_SECRET = "turndevsecret-0123456789abcdef0123456789"
 $env:TURN_RELAY_MIN_PORT = "54000"
 $env:TURN_RELAY_MAX_PORT = "54040"
+# LiveKit delivers signed participant/room webhooks here (host API), which moves
+# the call from connecting to active and ends it on media-plane disconnects.
+$env:CALLS_WEBHOOK_URL = "http://host.docker.internal:8080/v1/internal/calls/livekit-webhook"
 
 Write-Host "==> Docker: LiveKit, coturn, Caddy"
 docker compose -f docker-compose.calls.yml up -d | Out-Null
@@ -56,6 +59,9 @@ $apiCmd = ($apiArgs -join " && ") + " && node services/api/dist/server.js"
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $apiCmd -WorkingDirectory $root -WindowStyle Minimized | Out-Null
 
 Write-Host "==> Web start (http://localhost:4173/app)"
+# The web client must talk to this API directly (port 8080): the Vite proxy
+# targets 127.0.0.1:2222, which is the calls-disabled QA instance.
+$env:VITE_LUXORA_API = "http://localhost:8080"
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "npm run dev -- --port 4173 --strictPort" -WorkingDirectory (Join-Path $root "apps\web") -WindowStyle Minimized | Out-Null
 
 Write-Host "==> Waiting for services"

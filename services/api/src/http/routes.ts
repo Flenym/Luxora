@@ -61,7 +61,6 @@ import {
   DeviceLinkRedeemRequestSchema,
   ScheduleAccountDeletionRequestSchema,
   CreateCallRequestSchema,
-  CallListQuerySchema,
   CancelCallRequestSchema,
   DeclineCallRequestSchema,
   InviteCallParticipantRequestSchema,
@@ -108,6 +107,24 @@ const UserSearchSchema = CursorQuerySchema.extend({ q: z.string().trim().min(1).
 const ChatMessagesQuerySchema = CursorQuerySchema.extend({ topicId: IdSchema.optional() });
 const FileSearchQuerySchema = CursorQuerySchema.extend({ q: z.string().trim().min(1).max(200) });
 const ChatSearchQuerySchema = CursorQuerySchema.extend({ q: z.string().trim().min(1).max(80) });
+
+// Lists that were previously returned in full now expose additive opaque-cursor
+// pagination. Their default page is the documented maximum (100) so existing
+// clients that never send `limit` keep receiving the same complete arrays for
+// every collection that can fit the page bound; larger collections must follow
+// `nextCursor`. The shared CursorQuerySchema default (30) is unchanged for the
+// endpoints that were already paginated.
+const AdditivePageQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  cursor: z.string().min(1).max(512).optional()
+});
+// API.md documents at most 50 calls per history page; keep 50 as the default so
+// the pre-pagination behavior is preserved while allowing explicit smaller pages.
+const CallListPageQuerySchema = z.object({
+  chatId: IdSchema,
+  limit: z.coerce.number().int().min(1).max(50).default(50),
+  cursor: z.string().min(1).max(512).optional()
+});
 
 interface RouteDependencies {
   config: AppConfig;
@@ -334,9 +351,10 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
     return reply.send({ tokens: await dependencies.auth.refresh(input.refreshToken) });
   });
 
-  app.get("/v1/auth/sessions", { preHandler: dependencies.authGuard }, async (request) => ({
-    items: dependencies.auth.listSessions(request.auth)
-  }));
+  app.get("/v1/auth/sessions", { preHandler: dependencies.authGuard }, async (request) => {
+    const query = AdditivePageQuerySchema.parse(request.query);
+    return dependencies.auth.listSessions(request.auth, query.limit, query.cursor);
+  });
 
   app.delete("/v1/auth/sessions/current", { preHandler: dependencies.authGuard }, async (request, reply) => {
     dependencies.auth.revokeSession(request.auth, request.auth.sessionId);
@@ -628,7 +646,8 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
 
   app.get("/v1/chats/:id/members", { preHandler: dependencies.authGuard }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
-    return dependencies.chats.listMembers(request.auth.userId, id);
+    const query = AdditivePageQuerySchema.parse(request.query);
+    return dependencies.chats.listMembers(request.auth.userId, id, query.limit, query.cursor);
   });
 
   app.post("/v1/chats/:id/members", {
@@ -669,7 +688,8 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
 
   app.get("/v1/chats/:id/invite-links", { preHandler: dependencies.authGuard }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
-    return dependencies.chats.listInviteLinks(request.auth.userId, id);
+    const query = AdditivePageQuerySchema.parse(request.query);
+    return dependencies.chats.listInviteLinks(request.auth.userId, id, query.limit, query.cursor);
   });
 
   app.delete("/v1/chats/:id/invite-links/:linkId", {
@@ -690,7 +710,8 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
 
   app.get("/v1/chats/:id/join-requests", { preHandler: dependencies.authGuard }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
-    return dependencies.chats.listJoinRequests(request.auth.userId, id);
+    const query = AdditivePageQuerySchema.parse(request.query);
+    return dependencies.chats.listJoinRequests(request.auth.userId, id, query.limit, query.cursor);
   });
 
   app.post("/v1/chats/:id/join-requests/:requestId/approve", {
@@ -799,7 +820,8 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
 
   app.get("/v1/messages/:messageId/history", { preHandler: dependencies.authGuard }, async (request) => {
     const { messageId } = MessageIdParamSchema.parse(request.params);
-    return { items: dependencies.chats.getMessageHistory(request.auth.userId, messageId) };
+    const query = AdditivePageQuerySchema.parse(request.query);
+    return dependencies.chats.getMessageHistory(request.auth.userId, messageId, query.limit, query.cursor);
   });
 
   app.post("/v1/messages/:messageId/forward", { preHandler: dependencies.authGuard }, async (request, reply) => {
@@ -811,9 +833,7 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   app.get("/v1/chats/:id/pins", { preHandler: dependencies.authGuard }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
     return { items: dependencies.chats.listPins(request.auth.userId, id) };
-  });
-
-  app.put("/v1/chats/:id/pins/:messageId", { preHandler: dependencies.authGuard }, async (request) => {
+  });  app.put("/v1/chats/:id/pins/:messageId", { preHandler: dependencies.authGuard }, async (request) => {
     const { id, messageId } = ChatMessageParamSchema.parse(request.params);
     return { pin: dependencies.chats.pinMessage(request.auth.userId, id, messageId) };
   });
@@ -826,7 +846,8 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
 
   app.get("/v1/chats/:id/topics", { preHandler: dependencies.authGuard }, async (request) => {
     const { id } = IdParamSchema.parse(request.params);
-    return { items: dependencies.chats.listTopics(request.auth.userId, id) };
+    const query = AdditivePageQuerySchema.parse(request.query);
+    return dependencies.chats.listTopics(request.auth.userId, id, query.limit, query.cursor);
   });
 
   app.post("/v1/chats/:id/topics", { preHandler: dependencies.authGuard }, async (request, reply) => {
@@ -1078,8 +1099,13 @@ export function registerHttpRoutes(app: FastifyInstance, dependencies: RouteDepe
   });
 
   app.get("/v1/calls", { preHandler: dependencies.authGuard }, async (request) => {
-    const query = CallListQuerySchema.parse(request.query);
-    return { calls: dependencies.calls.listCalls(request.auth.userId, query.chatId) };
+    const query = CallListPageQuerySchema.parse(request.query);
+    return dependencies.calls.listCalls(
+      request.auth.userId,
+      query.chatId,
+      query.limit,
+      query.cursor
+    );
   });
 
   app.post("/v1/calls/:id/cancel", {

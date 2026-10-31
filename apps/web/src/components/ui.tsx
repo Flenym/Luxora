@@ -137,7 +137,7 @@ export function Reveal({ children, delay = 0, className = "" }: { children: Reac
   }, []);
 
   return (
-    <div ref={ref} className={`reveal ${shown ? "in" : ""} ${className}`} style={{ transitionDelay: `${delay}ms` }}>
+    <div ref={ref} className={`reveal ${shown ? "in" : ""} ${className}`} style={{ animationDelay: `${delay}ms` }}>
       {children}
     </div>
   );

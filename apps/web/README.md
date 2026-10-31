@@ -39,7 +39,27 @@ npm test         # Vitest: 49 unit-тестов (api 17, realtime 13, store 19)
 npm run preview
 ```
 
-## Что реализовано в `/app`
+## Route-level code splitting
+
+`src/App.tsx` lazy-loads the whole messenger (`/app`: data layer, livekit client and
+`app.css`) and the heavier public routes (docs, download, security, FAQ, about, blog,
+status, contact, legal, 404) with `React.lazy`/`Suspense`. The landing page stays eager
+because it is the initial route (its Three.js hero was already lazy). Lazy routes show an
+honest `RouteLoader` ("Loading…", and a full-screen branded loader for `/app`); no
+spinner pretends to be progress the client cannot measure.
+
+## Honest PWA shell (public assets only)
+
+`public/manifest.webmanifest` + `public/sw.js` + `public/logo-512.png`,
+`apple-touch-icon.png`, `icon-maskable-512.png` provide a minimal installable shell for the
+**public** site: the marketing/app shell can start from cache when the network is down.
+The service worker caches only same-origin public shell/static assets. It **never** caches
+`/v1`, `/v2` or `/health` traffic — no messages, attachments, sessions or profile data — so
+there is no offline messenger and no private data in Cache Storage. Registration in
+`src/main.tsx` is production-HTTPS-only, so dev, `vite preview` and the headless E2E harness
+never install the worker. This is not a push/offline feature claim: Web Push and offline
+message access are still honest gaps (below).
+
 
 Auth (username+password, device name, session boot из `sessionStorage`,
 single-flight refresh, sign-out); sidebar (server+local search, All/Unread/Archived,
@@ -57,12 +77,18 @@ refresh token только в `sessionStorage`.
 ## Честные gaps (не заявлять как готовое)
 
 - нет server-synced drafts/folders UI (drafts/folders — локальные);
-- нет видео/screen share, PWA/service worker/Web Push, offline-кэша сообщений;
-- calls media не проверено end-to-end: без медиаплана `features.calls:false`,
-  адаптер остаётся `unavailable`, звук не имитируется;
+- нет Web Push и offline-доступа к сообщениям: PWA-кэш содержит только публичные
+  shell/static-ассеты и не кэширует API/сообщения;
+- calls media проверено локально против реального Docker media plane (browser
+  harness 18/18: оба peer с bidirectional media, call active через signed webhook,
+  mute в обе стороны, hangup очищает overlays; API media-plane probe 14/14);
+  это cloud-preview server media plane без E2EE, а в CI media-стек не
+  поднимается — без медиаплана `features.calls:false` и адаптер `unavailable`;
 - presence приблизительный и только realtime;
-- формального WCAG-аудита `/app` и hosting CSP/headers ещё нет; refresh в
-  `sessionStorage` — предмет отдельного review до production-хостинга;
+- axe-core аудит ключевых экранов (auth, shell, conversation, dialogs и ключевые
+  публичные страницы) в CI; ручная NVDA/VoiceOver-сессия и hosted CSP/headers
+  остаются до production-хостинга, refresh в `sessionStorage` — предмет отдельного
+  review;
 - публичный сайт объявляет canonical origin `https://luxora.app`, но деплой и
   заголовки этим репозиторием не поставляются.
 
@@ -71,7 +97,7 @@ refresh token только в `sessionStorage`.
 `tools/web-e2e` гоняет два изолированных Chrome-контекста против реального API и
 временной SQLite (генерируемые dev-секреты и CSPRNG-аккаунты, `vite preview`,
 system-Chrome autodetect, process-tree cleanup) и входит в `web-e2e` job
-`.github/workflows/node.yml` — **16/16 user-observable checks PASS в GitHub
+`.github/workflows/node.yml` — **17/17 checks PASS (functional + axe a11y) в GitHub
 Actions**. Локально:
 
 ```bash

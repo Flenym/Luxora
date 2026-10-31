@@ -360,9 +360,18 @@ export class ChatService {
     return result.preferences;
   }
 
-  listMembers(userId: string, chatId: string): { items: ChatMember[] } {
+  listMembers(
+    userId: string,
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatMember[]; nextCursor: string | null } {
     this.#requireMember(chatId, userId);
-    return { items: this.store.listChatMembers(chatId).map((member) => this.#memberView(member)) };
+    const page = this.store.listChatMembersPage(chatId, limit, cursor);
+    return {
+      items: page.items.map((member) => this.#memberView(member)),
+      nextCursor: page.nextCursor
+    };
   }
 
   addMember(
@@ -653,16 +662,20 @@ export class ChatService {
 
   listInviteLinks(
     actorUserId: string,
-    chatId: string
-  ): { items: ChatInviteLink[] } {
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatInviteLink[]; nextCursor: string | null } {
     const actor = this.#requireMember(chatId, actorUserId);
     const chat = this.store.findChatRecord(chatId);
     if (chat === null) throw notFound("Chat not found");
     if (actor.role !== "owner" && actor.role !== "admin") {
       throw forbidden("Only chat administrators can manage invite links");
     }
+    const page = this.store.listChatInviteLinksPage(chatId, limit, cursor);
     return {
-      items: this.store.listChatInviteLinks(chatId).slice(0, 100).map((link) => this.#inviteView(link))
+      items: page.items.map((link) => this.#inviteView(link)),
+      nextCursor: page.nextCursor
     };
   }
 
@@ -781,11 +794,15 @@ export class ChatService {
 
   listJoinRequests(
     actorUserId: string,
-    chatId: string
-  ): { items: ChatJoinRequest[] } {
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatJoinRequest[]; nextCursor: string | null } {
     this.#requireChatManager(chatId, actorUserId);
+    const page = this.store.listChatJoinRequestsPage(chatId, limit, cursor);
     return {
-      items: this.store.listChatJoinRequests(chatId).slice(0, 200).map((request) => this.#joinRequestView(request))
+      items: page.items.map((request) => this.#joinRequestView(request)),
+      nextCursor: page.nextCursor
     };
   }
 
@@ -1491,10 +1508,15 @@ export class ChatService {
     return result.message;
   }
 
-  getMessageHistory(userId: string, messageId: string): MessageVersion[] {
+  getMessageHistory(
+    userId: string,
+    messageId: string,
+    limit: number,
+    cursor?: string
+  ): { items: MessageVersion[]; nextCursor: string | null } {
     const message = this.#requireVisibleMessage(messageId, userId, "Message not found");
     if (message.deletedAt !== null) throw notFound("Message not found");
-    return this.store.listMessageVersions(messageId);
+    return this.store.listMessageVersionsPage(messageId, limit, cursor);
   }
 
   forwardMessage(userId: string, sourceMessageId: string, input: ForwardMessageRequest): Message {
@@ -1636,9 +1658,14 @@ export class ChatService {
     return result.removed;
   }
 
-  listTopics(userId: string, chatId: string): Topic[] {
+  listTopics(
+    userId: string,
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: Topic[]; nextCursor: string | null } {
     this.#requireMember(chatId, userId);
-    return this.store.listTopics(chatId);
+    return this.store.listTopicsPage(chatId, limit, cursor);
   }
 
   createTopic(userId: string, chatId: string, input: CreateTopicRequest): Topic {

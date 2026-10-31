@@ -128,7 +128,7 @@ export function AuthScreen() {
   const errorText = useMemo(() => submitError ?? "", [submitError]);
 
   return (
-    <div className="auth">
+    <main className="auth">
       <div className="auth__aurora" aria-hidden="true" />
       <section className="auth__brandside" aria-label={s.app.name}>
         <div className="brand brand--large">
@@ -215,11 +215,13 @@ export function AuthScreen() {
 
           <p className="auth-card__lead">{mode === "signin" ? s.auth.signInLead : s.auth.signUpLead}</p>
 
-          <form
-            ref={formRef}
+          <div
             id="auth-form-panel"
             role="tabpanel"
             aria-labelledby={mode === "signin" ? "auth-tab-signin" : "auth-tab-signup"}
+          >
+          <form
+            ref={formRef}
             className="auth-form"
             onSubmit={handleSubmit}
             noValidate
@@ -385,6 +387,7 @@ export function AuthScreen() {
               )}
             </button>
           </form>
+          </div>
 
           <p className="auth-card__session">{s.auth.sessionNote}</p>
           <p className="auth-card__trust">
@@ -396,6 +399,6 @@ export function AuthScreen() {
           {localeCopy} · {s.app.beta}
         </p>
       </section>
-    </div>
+    </main>
   );
 }

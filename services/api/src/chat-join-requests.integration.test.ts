@@ -151,7 +151,9 @@ describe("chat join request approval", () => {
       headers: auth(owner)
     });
     expect(queue.statusCode).toBe(200);
-    const requests = ChatJoinRequestListResponseSchema.parse(queue.json());
+    // The list response also carries an additive opaque nextCursor; validate
+    // the item projection with the shared strict schema.
+    const requests = ChatJoinRequestListResponseSchema.parse({ items: queue.json().items });
     expect(requests.items).toHaveLength(1);
     expect(requests.items[0]!.id).toBe(parsed.request.id);
 

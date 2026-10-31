@@ -99,7 +99,8 @@ jobs:
   # the tool spawns the API on 127.0.0.1:2222 with a fresh SQLite DB and
   # per-run dev secrets, serves the built app through `vite preview` on 4173
   # (same-origin proxy for /v1,/v2,/health), drives two isolated Chrome contexts
-  # through the core user journeys and tears everything down.
+  # through the core user journeys and runs the axe accessibility audit (WCAG
+  # 2.x A/AA; critical/serious fail the run), then tears everything down.
   web-e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -142,13 +143,107 @@ jobs:
           npm --prefix apps/web run build
       - name: Install web E2E tool
         run: npm --prefix tools/web-e2e ci --no-audit --no-fund
-      - name: Run web messenger browser E2E
+      - name: Run web messenger browser E2E + accessibility audit (axe)
         run: npm --prefix tools/web-e2e test
-      - name: Upload web E2E artifacts on failure
+      - name: Upload web E2E and accessibility artifacts on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: web-e2e-artifacts
           path: tools/web-e2e/artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Headless smoke gate for the Electron desktop shell. The shell serves the
+  # built web messenger from the secure custom scheme `luxora://app`, injects
+  # the validated loopback API origin through the sandboxed preload and must
+  # reach a rendered web app (bridge value present, React mounted into #root)
+  # under Xvfb. This catches renderer/CSP/preload regressions without a GUI.
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.2
+          cache: npm
+          cache-dependency-path: |
+            packages/protocol/package-lock.json
+            packages/passkey-domain/package-lock.json
+            packages/call-control/package-lock.json
+            services/api/package-lock.json
+            apps/web/package-lock.json
+            apps/desktop/package-lock.json
+      - name: Install and build protocol
+        run: |
+          set -euo pipefail
+          npm --prefix packages/protocol ci --no-audit --no-fund
+          npm --prefix packages/protocol run build
+      - name: Install and build domain packages required by the API
+        run: |
+          set -euo pipefail
+          npm --prefix packages/passkey-domain ci --no-audit --no-fund
+          npm --prefix packages/passkey-domain run build
+          npm --prefix packages/call-control ci --no-audit --no-fund
+          npm --prefix packages/call-control run build
+      - name: Install and build API
+        run: |
+          set -euo pipefail
+          npm --prefix services/api ci --no-audit --no-fund
+          npm --prefix services/api run build
+      - name: Install and build web messenger
+        run: |
+          set -euo pipefail
+          npm --prefix apps/web ci --no-audit --no-fund
+          npm --prefix apps/web run build
+      - name: Install, type-check and compile desktop shell
+        run: |
+          set -euo pipefail
+          npm --prefix apps/desktop ci --no-audit --no-fund
+          npm --prefix apps/desktop run typecheck
+          npm --prefix apps/desktop run compile
+      # GitHub-hosted Linux runners ship no setuid chrome-sandbox and restrict
+      # unprivileged user namespaces, so Chromium refuses to start its OS sandbox
+      # under Xvfb ("The SUID sandbox helper binary was found, but is not
+      # configured correctly"). Electron's built-in startup switch below maps
+      # ELECTRON_DISABLE_SANDBOX to Chromium's --no-sandbox for this smoke
+      # process only (electron_main_delegate.cc: BasicStartupComplete appends
+      # sandbox::policy::switches::kNoSandbox). The desktop app itself still calls
+      # app.enableSandbox() and keeps sandbox:true, contextIsolation:true and
+      # nodeIntegration:false; delete the variable if the runner ever provides a
+      # usable sandbox.
+      - name: Smoke-test desktop shell under Xvfb
+        working-directory: apps/desktop
+        env:
+          LUXORA_DESKTOP_SMOKE: "1"
+          ELECTRON_DISABLE_SANDBOX: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/data/desktop-smoke"
+          log="$GITHUB_WORKSPACE/data/desktop-smoke/smoke.log"
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            sudo apt-get update --quiet
+            sudo apt-get install --yes --quiet xvfb
+          fi
+          set +e
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" \
+            ./node_modules/.bin/electron . >"$log" 2>&1
+          status=$?
+          set -e
+          cat "$log"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Desktop shell smoke exited with status $status"
+            exit "$status"
+          fi
+          grep -E "^LUXORA_DESKTOP_SMOKE_OK luxora://app/$" "$log"
+      - name: Upload desktop smoke artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-smoke
+          path: data/desktop-smoke
           if-no-files-found: ignore
           retention-days: 7

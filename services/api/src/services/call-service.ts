@@ -169,14 +169,25 @@ export class CallService {
    * push/ringing delivery lands). Unknown chats and non-members share one
    * 404; ended calls are included so clients can render missed-call history.
    */
-  listCalls(userId: string, chatId: string): ProtocolCallResponse[] {
+  listCalls(
+    userId: string,
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { calls: ProtocolCallResponse[]; nextCursor: string | null } {
     const chat = this.#store.findChatRecord(chatId);
     if (chat === null || this.#store.getChatMember(chatId, userId) === null) {
       throw notFound("Call not found");
     }
-    return this.#store.listCallsForChat(chatId, 50)
-      .filter((snapshot) => snapshot.participants.some((participant) => participant.memberId === userId))
-      .map(projectCall);
+    const page = this.#store.listCallsForChatPage(chatId, limit, cursor);
+    return {
+      calls: page.items
+        .filter((snapshot) => snapshot.participants.some((participant) => participant.memberId === userId))
+        .map(projectCall),
+      // Cursor follows the last scanned storage row, so participants who joined
+      // after older non-participant calls still page forward without gaps.
+      nextCursor: page.nextCursor
+    };
   }
 
   async cancelCall(userId: string, sessionId: string, callId: string, expectedRevision: number): Promise<ProtocolCallResponse> {

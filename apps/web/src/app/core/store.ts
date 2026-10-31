@@ -52,7 +52,7 @@ export function createInitialState(serverUrl = ""): MessengerState {
     presence: {},
     outbox: {},
     requests: { incoming: [], outgoing: [], loading: false, error: null },
-    call: { active: null, incoming: null, media: "unavailable", mediaError: null },
+    call: { active: null, incoming: null, media: "unavailable", mediaError: null, muted: false },
     error: null,
     notice: null
   };

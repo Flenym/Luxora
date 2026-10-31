@@ -1,0 +1,120 @@
+/* Loading fallbacks for lazily loaded routes. Only static presentation: no
+   network, no storage, no message data. */
+
+.route-loader--full {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  text-align: center;
+  color: var(--text, #f4f3fb);
+  background:
+    radial-gradient(800px 500px at 50% 10%, rgba(55, 58, 191, 0.24), transparent 62%),
+    linear-gradient(180deg, #0b0b1a, #090914 60%, #07070f);
+}
+
+.route-loader__glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(420px 280px at 50% 42%, rgba(124, 72, 212, 0.18), transparent 70%);
+  filter: blur(10px);
+}
+
+.route-loader__logo,
+.route-loader__name,
+.route-loader__bar,
+.route-loader__text,
+.route-loader__hint {
+  position: relative;
+}
+
+.route-loader__logo {
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(72, 48, 216, 0.4);
+}
+
+.route-loader__name {
+  margin: 4px 0 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.route-loader__bar {
+  width: min(240px, 60vw);
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.route-loader__bar span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #373abf 0%, #7c48d4 58%, #a999ed 100%);
+  animation: lux-route-indeterminate 1.5s cubic-bezier(0.2, 0.7, 0.2, 1) infinite;
+}
+
+@keyframes lux-route-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.route-loader__text {
+  margin: 0;
+  color: var(--text-2, #b3b0c9);
+  font-size: 0.9rem;
+}
+
+.route-loader__hint {
+  margin: 0;
+  color: var(--muted, #807da0);
+  font-size: 0.74rem;
+}
+
+.route-loader--inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 45vh;
+  padding: 40px 20px;
+  color: var(--text-2, #b3b0c9);
+  font-size: 0.92rem;
+}
+
+.route-loader__spinner {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-top-color: #c0c2f7;
+  animation: lux-route-spin 0.9s linear infinite;
+}
+
+@keyframes lux-route-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-loader__bar span,
+  .route-loader__spinner {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

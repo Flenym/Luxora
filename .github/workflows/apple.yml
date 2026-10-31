@@ -77,3 +77,137 @@ jobs:
           -derivedDataPath "$RUNNER_TEMP/LuxoraDerivedData"
           CODE_SIGNING_ALLOWED=NO
           build
+
+  ui-tests:
+    # Real runtime gate for the iPhone UI-test target. The selected tests are
+    # bounded and offline: they mount the DEBUG in-app fixture scenario
+    # (LUXORA_UI_TEST_SCENARIO=messenger) or exercise the authentication and
+    # session-loader surfaces against an unreachable loopback API URL. No live
+    # server is required, so the job stays deterministic; the opt-in live-device
+    # suites (LUXORA_LIVE_*) are not selected here.
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain identity
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+      - name: Install pinned XcodeGen
+        env:
+          XCODEGEN_VERSION: "2.46.0"
+          XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          install_dir="$RUNNER_TEMP/xcodegen-${XCODEGEN_VERSION}"
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
+            --output "$archive"
+          printf '%s  %s\n' "$XCODEGEN_SHA256" "$archive" | shasum -a 256 --check
+          ditto -x -k "$archive" "$install_dir"
+          "$install_dir/xcodegen/bin/xcodegen" --version
+          echo "$install_dir/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Generate project reproducibly
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+          cp -R Luxora.xcodeproj "$RUNNER_TEMP/Luxora.first.xcodeproj"
+          xcodegen generate --spec project.yml
+          diff -ru "$RUNNER_TEMP/Luxora.first.xcodeproj" Luxora.xcodeproj
+      - name: Select and boot an iPhone simulator
+        run: |
+          set -euo pipefail
+          # The macos-26 image ships iOS Simulator runtimes with Xcode, but the
+          # exact device names change between image releases. Pick the first
+          # available iPhone instead of pinning a name like "iPhone 17 Pro".
+          UDID="$(xcrun simctl list devices available | awk -F'[()]' '/iPhone/ {print $2; exit}')"
+          if [ -z "${UDID:-}" ]; then
+            echo "::error::No available iPhone simulator device was found on this runner image."
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "Selected simulator UDID: $UDID"
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b
+          echo "UI_TEST_SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
+          # Pin the accessibility environment so the UI-test audits measure the
+          # same Dynamic Type size and appearance on every run instead of a
+          # runner-dependent default (this removes cross-run sampling flakiness).
+          xcrun simctl ui "$UDID" content_size medium
+          xcrun simctl ui "$UDID" appearance light
+          # Prefer the software keyboard so keyboard-adjacent actions behave like
+          # a physical iPhone (the host may otherwise expose a hardware keyboard).
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false || true
+      - name: Show available destinations
+        working-directory: apps/apple
+        run: |
+          # Diagnostic only: the booted simulator UDID below is the real
+          # destination. Share the test build's derived-data path so package
+          # resolution/caches are reused by the test build instead of resolved
+          # twice (this step alone took ~3 minutes before).
+          xcodebuild \
+            -project Luxora.xcodeproj \
+            -scheme LuxoraMobile \
+            -derivedDataPath "$RUNNER_TEMP/LuxoraUITestDerivedData" \
+            -showdestinations || true
+      - name: Run bounded UI-test subset (unsigned, Simulator)
+        working-directory: apps/apple
+        run: |
+          set -euo pipefail
+          # Bounded, deterministic subset: launch/auth, root tab navigation,
+          # chats search empty state, settings/device-session scaffolding,
+          # session loader, local navigation actions and the accessibility audit
+          # of the authentication surface. Long media/draft/community flows are
+          # intentionally excluded from this first runtime gate.
+          only_tests=(
+            -only-testing:LuxoraMobileUITests/LuxoraMobileUITests/testProductionLaunchUsesRussianPhoneAuthenticationAndNoFixtureEntry
+            -only-testing:LuxoraMobileUITests/LuxoraMobileUITests/testRussianFourTabShellAndSeparateSearchKeepSpacesInsideChats
+            -only-testing:LuxoraMobileUITests/LuxoraMobileUITests/testChatsUsesNoResultsStateOnlyForANonemptyQuery
+            -only-testing:LuxoraMobileUITests/LuxoraMobileUITests/testSettingsInventoryDevicesAndDetailsUseRussianTruthStatesWithoutShellOverlap
+            -only-testing:LuxoraMobileUITests/LuxoraSessionLoaderUITests/testContourLoaderHasOneStableRussianAccessibilityStatus
+            -only-testing:LuxoraMobileUITests/LuxoraNavigationUITests/testOwnProfileCopyAndQRButtonsOpenRealLocalActions
+            -only-testing:LuxoraMobileUITests/LuxoraNavigationUITests/testContactProfileSearchOpensOnlyTheLoadedMessageIndex
+            -only-testing:LuxoraMobileUITests/LuxoraAccessibilityAuditUITests/testAuthenticationScalesAndExposesAStableVoiceOverContract
+          )
+          xcodebuild test \
+            -project Luxora.xcodeproj \
+            -scheme LuxoraMobile \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${UI_TEST_SIMULATOR_UDID}" \
+            -derivedDataPath "$RUNNER_TEMP/LuxoraUITestDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/LuxoraUITests.xcresult" \
+            -parallel-testing-enabled NO \
+            -maximum-concurrent-test-simulator-destinations 1 \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 240 \
+            -maximum-test-execution-time-allowance 600 \
+            "${only_tests[@]}" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            | tee "$RUNNER_TEMP/ui-tests.log"
+      - name: Capture UI-test failure diagnostics
+        if: failure()
+        run: |
+          set +e
+          xcrun simctl io "$UI_TEST_SIMULATOR_UDID" screenshot "$RUNNER_TEMP/ui-tests-failure.png"
+          if [ -d "$RUNNER_TEMP/LuxoraUITests.xcresult" ]; then
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/LuxoraUITests.xcresult"
+            xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/LuxoraUITests.xcresult"
+          fi
+          tail -n 400 "$RUNNER_TEMP/ui-tests.log" || true
+      - name: Upload UI-test evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: LuxoraMobile-ui-tests
+          path: |
+            ${{ runner.temp }}/LuxoraUITests.xcresult
+            ${{ runner.temp }}/ui-tests.log
+            ${{ runner.temp }}/ui-tests-failure.png
+          if-no-files-found: warn
+          retention-days: 7
+

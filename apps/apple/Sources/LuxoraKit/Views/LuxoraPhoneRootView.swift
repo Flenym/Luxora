@@ -1368,7 +1368,17 @@ private struct PhoneInboxView: View {
     let chatFoldersStore: ChatFoldersStore?
     let updateChatPreferences: (UUID, ChatPreferencesPatch) async -> Bool
 
-    @State private var query = ""
+    // DEBUG-only test hook: seeds the inbox query at view construction (not in
+    // a task that races the searchable controller) so the "no results for a
+    // non-empty query" contract can be exercised deterministically. Production
+    // always starts with an empty query and never reads the environment.
+    @State private var query: String = {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["LUXORA_UI_TEST_INITIAL_QUERY"] ?? ""
+        #else
+        return ""
+        #endif
+    }()
     @State private var isComposing = false
     @State private var presentedGate: FeatureGate?
     @State private var preferenceOperations: Set<UUID> = []
@@ -1628,8 +1638,15 @@ private struct PhoneInboxView: View {
             }
             .accessibilityIdentifier("inbox-load-failed")
         } else if !normalizedQuery.isEmpty {
-            ContentUnavailableView.search(text: normalizedQuery)
-                .accessibilityIdentifier("inbox-empty-search")
+            // App-owned copy keeps the empty-search surface observable and
+            // consistently Russian. The system `search` variant is localized by
+            // the OS and does not expose a stable accessibility surface.
+            ContentUnavailableView(
+                "Ничего не найдено",
+                systemImage: "magnifyingglass",
+                description: Text("Попробуйте изменить запрос.")
+            )
+            .accessibilityIdentifier("inbox-empty-search")
         } else if store.conversations.isEmpty {
             ContentUnavailableView(
                 "Чатов пока нет",

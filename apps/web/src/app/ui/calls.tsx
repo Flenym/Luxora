@@ -2,7 +2,7 @@
  *  Signaling is real; media is never faked. `call.media` and capabilities decide
  *  what is displayed, and the mute control is explicitly unavailable because the
  *  contract exposes no mute action. */
-import { MicOff, Phone, PhoneOff, Video, X } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff, Video, X } from "lucide-react";
 import type { Call, Chat } from "../contract";
 import { useMessenger } from "../messenger";
 import { useStrings } from "./copy";
@@ -111,12 +111,23 @@ export function ActiveCallOverlay({ onNotify }: { onNotify: Notify }) {
         <div className="call-card__controls">
           <button
             type="button"
-            className="call-control"
+            className={`call-control${media === "connected" ? " call-control--live" : ""}`}
+            data-testid="call-mute"
             aria-label={s.calls.mute}
-            title={s.calls.muteUnavailable}
-            disabled
+            aria-pressed={api.call.muted}
+            title={
+              media === "connected"
+                ? api.call.muted
+                  ? s.calls.unmuteToggle
+                  : s.calls.muteToggle
+                : s.calls.muteUnavailable
+            }
+            disabled={media !== "connected"}
+            onClick={() => {
+              void api.toggleCallMute();
+            }}
           >
-            <MicOff size={19} aria-hidden="true" />
+            {api.call.muted ? <MicOff size={19} aria-hidden="true" /> : <Mic size={19} aria-hidden="true" />}
             <span>{s.calls.mute}</span>
           </button>
           <button
@@ -131,7 +142,15 @@ export function ActiveCallOverlay({ onNotify }: { onNotify: Notify }) {
             <span>{s.calls.hangup}</span>
           </button>
         </div>
-        <p className="call-card__honest">{s.calls.mediaUnavailableNote}</p>
+        <p className="call-card__honest">
+          {media === "connected"
+            ? s.calls.mediaCloudPreviewNote
+            : media === "failed"
+              ? s.calls.mediaFailedNote(api.call.mediaError ?? s.toasts.errorTitle)
+              : media === "connecting"
+                ? s.calls.mediaConnectingNote
+                : s.calls.mediaUnavailableNote}
+        </p>
       </div>
     </div>
   );

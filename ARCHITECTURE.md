@@ -30,7 +30,7 @@ Swift Testing and `ios-compile` PASS), while full iPhone product work still wait
 for server stability. The public product site is a static, truthful surface
 shipped ahead of the client work, and the `/app` web messenger client is a
 developer preview against the real API and realtime gateway (49 unit tests and a
-committed browser E2E CI gate with 16/16 checks). All other client feature
+committed browser E2E CI gate with 17/17 checks (functional + axe-core accessibility audit)). All other client feature
 expansion remains frozen; their existing code is a portability/design probe.
 
 ## 2. Current runtime topology
@@ -112,10 +112,10 @@ The global SQLite sequence may contain gaps for a given user. Clients track the 
 
 | Client | Current data source | Current role | Network status |
 | --- | --- | --- | --- |
-| iPhone/iPad/macOS SwiftUI | local preview or `ApplicationSession` + in-memory `MessengerStore` + `CallsStore` + `SafetyReportsStore`/`AccountDataStore` | Design foundation and thin server integration harness; call surface (history/log/overlay with honest mute), LiveKit voice, community management, safety reports and account export/deletion UI (Apple CI verified) | Partial: auth/chat load/send/message realtime/calls/community/safety/account-data; no real-device evidence |
+| iPhone/iPad/macOS SwiftUI | local preview or `ApplicationSession` + in-memory `MessengerStore` + `CallsStore` + `SafetyReportsStore`/`AccountDataStore` | Design foundation and thin server integration harness; call surface (history/log/overlay with honest mute), LiveKit voice, community management, safety reports and account export/deletion UI (Apple CI verified) | Partial: auth/chat load/send/message realtime/calls/community/safety/account-data; media is server-side cloud-preview (no E2EE); no real-device evidence |
 | Android Compose | `MessengerState.demo()` | Portability/layout foundation | Not connected |
-| Web React (`/app`) | real HTTP + realtime v2; access token in memory, refresh credential in `sessionStorage` | Developer-preview messenger client: `src/app/core` (REST, realtime, store helpers, call-media adapters) + `src/app/messenger.tsx` seam + `src/app/ui`; marketing site is a separate static route tree | Connected preview: auth/chats/history/send/attachments/receipts/realtime/call signalling; call media unavailable without a configured server media plane; committed browser E2E CI gate (16/16 checks) |
-| Electron Windows/Linux | Packaged Web build (`apps/web/dist`) | Hardened shell/packaging probe | No messaging integration of its own |
+| Web React (`/app`) | real HTTP + realtime v2; access token in memory, refresh credential in `sessionStorage` | Developer-preview messenger client: `src/app/core` (REST, realtime, store helpers, call-media adapters) + `src/app/messenger.tsx` seam + `src/app/ui`; marketing site is a separate static route tree | Connected preview: auth/chats/history/send/attachments/receipts/realtime/call signalling; call media verified locally against the Docker media plane (mute both ways, cloud-preview/no E2EE) and unavailable without a configured media plane; committed browser E2E + axe accessibility CI gate (17/17 checks); honest PWA shell (public assets only); route-level code splitting |
+| Electron Windows/Linux | Packaged Web build served via `luxora://app`; loopback API bridge | Real Electron shell running the web client (custom scheme + in-handler CSP, sandboxed preload, `LUXORA_DESKTOP_SMOKE` mode) | Loopback API + browser CORS origin `luxora://app`; `desktop` CI smoke job passes; no signed packaged release |
 
 During the server phase, a thin iPhone integration harness establishes and continuously verifies the canonical client boundaries:
 

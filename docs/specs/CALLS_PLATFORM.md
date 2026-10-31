@@ -17,10 +17,16 @@ signed webhook reconciliation, durable `call.state.changed` realtime, a local
 LiveKit/TURN/Caddy harness, and client previews: iPhone call banner/voice, a
 call surface with recent-calls history, per-chat call log, in-call overlay with
 honest microphone mute and call-back (audio only, capability-gated; verified by
-Apple CI — ios-compile fix in `df39703`), plus a web signalling UI and a
-diagnostic fallback page. It still has
+Apple CI), plus a web signalling UI with mute/unmute through the media connection
+and a diagnostic fallback page. **Call media is now verified end-to-end locally
+against the real Docker media plane** (PR #110): media joining only happens once a
+call is joinable (after accept, not while ringing), signed LiveKit webhooks move
+the call `connecting → active` and end it on departures, and the web client can
+mute/unmute over the media connection; browser harness 18/18 and API media-plane
+probe 14/14. It still has
 **no** push/CallKit ringing, video or screen-share client media, production
-SFU/TURN capacity evidence, media-E2EE or independent call security review.
+SFU/TURN capacity evidence, media-E2EE or independent call security review — the
+media plane is a cloud preview with no E2EE.
 `docker-compose.calls.yml` and `start.bat` remain a local infrastructure
 harness, and `GET /v1/capabilities` advertises `features.calls` only while the
 full `CALLS_LIVEKIT_*`/`CALLS_TURN_*` configuration is present (otherwise
@@ -224,12 +230,14 @@ be copied to production.
 
 Configuration validation or healthy metrics proves process wiring only. The
 implemented preview (31 October 2026) proves the control plane, grant issuance,
-webhook reconciliation, realtime refresh trigger, a client LiveKit voice join
-against the local harness, and iPhone/web call surfaces that fall back to a
-locked/honest state whenever `features.calls` is false. A production Luxora call
-additionally requires push/CallKit ringing, video/screen-share clients,
-real-device quality evidence, production SFU/TURN capacity and all gates in §12;
-until then no surface may present a call as protected, E2EE or production-ready.
+webhook reconciliation, realtime refresh trigger, real bidirectional media
+against the local Docker media plane (join only after accept, signed webhooks move
+the call to `active`, web mute both ways; browser harness 18/18 + API media-plane
+probe 14/14), and iPhone/web call surfaces that fall back to a locked/honest state
+whenever `features.calls` is false. A production Luxora call additionally requires
+push/CallKit ringing, video/screen-share clients, real-device quality evidence,
+production SFU/TURN capacity, media-E2EE and all gates in §12; until then no
+surface may present a call as protected, E2EE or production-ready.
 
 ## 14. Primary references
 

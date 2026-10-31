@@ -4,44 +4,53 @@
 **Владелец и разработчик:** Flenym  
 **Обновлено:** 31 октября 2026
 
-> **Текущий checkpoint 2026-10-31 (PR #109, ветка `feature/iphone-safety-and-e2e`, head `beb6ca7`; PR #83 уже смержен в `main` — `919d0f6`):**
-> **iPhone safety + account data shipped и проверены CI:** `LuxoraSafetyAPIClient` (safety reports
-> list/submit; data export request/status/range download; account deletion status/schedule/cancel —
-> strict decode, sanitized errors), `SafetyReportsStore` (own-report cursor pagination,
-> nonce-idempotent submit), `AccountDataStore` (bounded export polling, download verified по size+SHA-256
-> через CryptoKit до ShareLink, deletion state machine по серверному 7-дневному grace; cancel
-> отклоняется после deadline без сетевых вызовов), `PhoneSafetyAndDataViews` (report sheet with exact
-> category picker/comment/alsoBlock и явным cloud-preview server-readable consent; «Мои жалобы»;
-> account-data screen с typed «УДАЛИТЬ» confirmation + grace deadline + honest
-> executing/completed/failed), wiring в `ApplicationSession`, settings-маршруты «Жалобы и отчёты»
-> (privacy) и «Экспорт и удаление аккаунта» (data), «Пожаловаться» в message menu для чужих сообщений;
-> 26 новых contract/store тестов; honest limits — no instant-deletion/E2EE claims.
-> Также в `main` (PR #83): calls product surface, community management, calls signaling 1–7 + durable
-> `call.state.changed`, `features.calls` по медиаплану, медиастек (dev TURN из `tools/coturn/Dockerfile`
-> на pinned Alpine 3.24.3, brotli CVE-2026-111497), публичный сайт (14 маршрутов, 22 docs-страницы),
-> web messenger client `/app` (49 Vitest), CORS mutation fix, direct-chat relationship guard, CodeQL
-> re-enabled.
-> **Web E2E теперь committed CI gate:** `tools/web-e2e` (pinned `puppeteer-core` 25.16.0, CSPRNG-аккаунты,
-> реальный API + temp SQLite, `vite preview`, system-Chrome autodetect/`CHROME_PATH`, screenshots/report
-> artifact при падении, process-tree cleanup) + job `web-e2e` в `.github/workflows/node.yml`
-> (ubuntu-24.04, 15-мин кап): **PASS в GitHub Actions, 16/16 checks**.
-> **Evidence (head `beb6ca7`, все проверки SUCCESS):** Apple Swift swift-package — **455 XCTest executed,
-> 6 skipped, 0 failures** + **20 Swift Testing** в 3 suite (включая calls/community и новые
-> safety/account-data тесты), ios-compile PASS (4m32s); Node/Web/Desktop verify PASS (API **103/749**,
-> web build + **49/49 vitest**); `web-e2e` PASS (16/16 checks); Security and container PASS
-> (filesystem Trivy, dependency-review, codeql, API/OTP images, internal `luxora-turn`, `make calls-smoke`
-> incl. TURN auth accept/reject); required «CodeQL» check SUCCESS.
-> **Статус:** PR #109 **не смержен** — Lead коммитит docs и мержит. `main` содержит merge PR #83 (`919d0f6`).
+> **Текущий checkpoint 2026-10-31 (PR #110, ветка `feature/completeness-pass`, head `ef57595`, 11 коммитов ahead of `main` — все проверки зелёные; PR #109 уже смержен в `main` — `0fda88a`):**
+> **Calls media — реальное и проверенное локально end-to-end:** media join теперь только когда звонок
+> joinable (после accept, а не во время ringing); локальный Docker media plane (LiveKit + TURN + Caddy)
+> доставляет подписанные webhooks на `/v1/internal/calls/livekit-webhook`, поэтому call идёт
+> `connecting→active` и завершается на departures; `scripts/dev-calls.ps1` задаёт webhook URL и
+> корректный `VITE_LUXORA_API` для calls API на 8080; web mute/unmute через media-соединение
+> (contract+store+UI) и honest cloud-preview copy. Evidence: browser harness против real media plane
+> **18/18** (bidirectional media, call active via webhook, mute в обе стороны, hangup clears both
+> overlays, no unexpected console errors; screenshots в ignored `data/qa/calls-shots`), API media-plane
+> probe **14/14** (JWT join grant + TURN creds через TLS). Honest limits: cloud-preview media plane,
+> нет E2EE; real-device/CallKit/APNs открыты.
+> **Server cursor pagination завершена:** аддитивная cursor pagination для device sessions, chat members,
+> topics, invite links, join requests (убрано silent 100/200 truncation), message edit history и call
+> history (старый hard 50 cap → page size); default page 100 для шести ранее-unbounded списков, sessions
+> ordering `created_at DESC, id DESC`, calls default/max 50. Evidence: FULL API **104 файла / 759 тестов**
+> green; `scripts/qa-api-smoke.mjs` **45 PASS + 1 SKIP** (46-step matrix, SKIP только без server-log path).
+> **Desktop:** Electron shell сервит packaged web build через `luxora://app` с in-handler CSP; loopback
+> `LUXORA_API_URL` через sandboxed CommonJS preload (старый ESM preload не загружался); web honors bridge
+> только для loopback origins; explicit CORS origin `luxora://app`; `LUXORA_DESKTOP_SMOKE=1`; новый CI
+> job `desktop` **PASS (49 s)** под Xvfb (CI-only sandbox switch, sandbox/contextIsolation/nodeIntegration
+> сохранены).
+> **Web a11y + performance + PWA:** axe-core 4.14 WCAG 2.x A/AA аудит часть committed E2E gate (9 states,
+> fail on critical/serious, пустой baseline, JSON/markdown artifacts; CI **PASS 17/17**); web-ui исправил
+> все findings — **0 critical/serious/moderate/minor** на 22 dev + 21 production-preview states;
+> keyboard checks 11/11; route-level code splitting: initial marketing payload 606.33 kB raw / 170.60 kB
+> gzip → **287.99 kB raw / 89.73 kB gzip (−52.5% / −47.4%)**; honest PWA shell (manifest + icons + `sw.js`
+> кэширует только public shell/static, никогда `/v1`, `/v2`, `/health` или сообщения; production-HTTPS-only
+> registration; 0 регистраций в dev/preview).
+> **iPhone UI-test gate:** новый `ui-tests` job — bounded offline subset существующих UI test suites на
+> симуляторе, unsigned, xcresult/log/screenshot artifacts при failure; stale UI-test ожидания исправлены
+> статическим аудитом. **Первый зелёный: `ef57595` — 8/8 selected UI tests, 14m32s, unsigned, artifacts; bounded offline subset, не полное UI-покрытие.**
+> **CI на head `ef57595` — ALL GREEN:** verify PASS (API **104/759**, web **49/49**), web-e2e PASS
+> (**17/17**, functional+axe), desktop PASS (37–49 s), Security and container PASS (filesystem Trivy,
+> dependency-review, codeql, images, calls-smoke incl. TURN auth accept/reject), required «CodeQL» PASS;
+> swift-package PASS; ios-compile PASS; **ui-tests PASS — 8/8 selected simulator UI tests, 14m32s,
+> unsigned, artifacts; bounded offline subset, не полное UI-покрытие.**
+> **Остаётся только merge PR #110.**
 >
 > **Текущая рабочая очередь (31 октября 2026):**
-> 1. **Смержить PR #109** после коммита docs (head `beb6ca7` уже all-green).
-> 2. **iPhone remaining (planned/next, НЕ shipped):** real APNs push/CallKit, E2EE, video/screen-share,
->    durable outbox/cache, pagination, file download/share, video playback, real-device media/QoS и
->    release-гейты.
-> 3. **Web follow-up:** hosting CSP/headers + решение sessionStorage vs HttpOnly, desktop shell wiring,
->    server-synced drafts/folders UI — отдельные фичи; WCAG-аудит `/app`.
-> 4. **Public site residuals:** deployment/hosting, `/status` и `/download` честность, финальный ручной
->    SEO/a11y pass; `apps/web/README.md` обновлён.
+> 1. **Смержить PR #110** — все проверки на `ef57595` зелёные (включая ui-tests 8/8/14m32s).
+> 2. **Follow-ups:** optional calls media E2E в CI (с поднимаемым media stack; сейчас 18/18 локальный
+>    ignored harness), packaged desktop release/signing/updater, hosted web с CSP/headers, API.md/protocol
+>    pagination docs (API.md обновлён в этом docs-проходе).
+> 3. **iPhone remaining (НЕ shipped):** real APNs push/CallKit, E2EE, durable outbox/cache, pagination,
+>    file download/share, video playback, real-device media/QoS, release-гейты; подтвердить первый
+>    зелёный `ui-tests`.
+> 4. **Public site residuals:** deployment/hosting, `/status`/`/download` честность, ручной SEO/a11y pass.
 > 5. **Server remainders** — push-доставка (внешний блок), contact discovery без upload,
 >    media transcode/quarantine, production DB/DR, production calls capacity/review; E2EE — отдельная
 >    аудируемая программа.
@@ -267,8 +276,8 @@
 > **Дополнение 2026-10-31 (финальные коммиты PR #83, head `df39703`):**
 > `380881f` CI-watchdog timeouts + web/docs truth; `29060bf` Swift community-management tests compile/type fix; `b811985` backend security fix — `POST /v1/chats` non-self Direct теперь требует accepted unblocked relationship (закрыт обход через `messageRequests:"nobody"`), новый `direct-chat-relationship.integration.test.ts`, boundary fixtures, smoke **42/42**, FULL API **103 файла / 749 тестов** green; `b682d99`+`d0a7a8f`+`8ceb57c`+`32e0d62` dev TURN relay собран из `tools/coturn/Dockerfile` на pinned Alpine 3.24.3 (upstream coturn alpine-теги везут brotli CVE-2026-111497) и работает от непривилегированного пользователя — **Security and container полный PASS на `32e0d62` и `df39703`** (filesystem Trivy, dependency-review, CodeQL job, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject); `df39703` iOS fix — unwrap community participant-resolver + explicit calls copy; Apple Swift swift-package green на `b682d99`/`d0a7a8f`/`32e0d62`/`df39703` (396 XCTest + 6 expected skips + 20 Swift Testing, включая `CallHistoryTests`/`CommunityManagementStoreTests`), ios-compile PASSED на `380881f`, FAILED на `d0a7a8f` и fixed в `df39703` — **финальный прогон `df39703` полностью SUCCESS**. Web: 49/49 Vitest (api 17, realtime 13, store 19), browser E2E локально 13–14/14 шагов (не CI). PR #83 смержен в `main` коммитом `919d0f6`.
 >
-> **Дополнение 2026-10-31 (PR #109, head `beb6ca7` — iPhone safety/account data + web E2E в CI):**
-> `92e7f7b` iPhone safety/account data surfaces: `LuxoraSafetyAPIClient`, `SafetyReportsStore`, `AccountDataStore`, `PhoneSafetyAndDataViews`, 26 новых contract/store тестов; `92a789a` web messenger browser E2E suite в GitHub Actions (`tools/web-e2e` + job `web-e2e`, pinned puppeteer-core 25.16.0, CSPRNG test accounts, real API + temp SQLite, vite preview, system-Chrome autodetect, screenshots/report artifact, process-tree cleanup); `956ab39` test fix + CodeQL findings clean в E2E tool; `beb6ca7` — ApplicationSession/settings wiring safety & account data. **Evidence:** swift-package **455 XCTest executed / 6 skipped / 0 failures + 20 Swift Testing**, ios-compile PASS (4m32s), verify PASS (API 103/749, web 49/49), `web-e2e` **16/16 checks PASS**, Security полный PASS, required «CodeQL» check PASS — все на `beb6ca7`.
+> **Дополнение 2026-10-31 (PR #110, head `ef57595` — calls media, pagination, desktop, a11y/PWA, UI-test gate; все проверки зелёные):**
+> `5b81933`/`a0e9d52`/`ef57595` green the simulator UI-test gate: contrast audit fix (dismiss auto-focused keyboard before phone-screen audit; auth footnote strengthened to conforming secondary 0.78 white on black), app-owned deterministic Russian no-results surface («Ничего не найдено» / «Попробуйте изменить запрос.») with stable `inbox-empty-search` instead of system `ContentUnavailableView`, strict `#if DEBUG` initial-state seed instead of racing `.searchable`, shared derived-data path in CI — **ui-tests 8/8 PASS 14m32s on `ef57595`**; `8e663f8` real calls media end-to-end (join only after accept, web mute/unmute, honest cloud-preview copy; local Docker media plane webhooks move `connecting→active`; `scripts/dev-calls.ps1` webhook URL + correct `VITE_LUXORA_API`); `fe1c057` desktop Electron client (custom `luxora://app` scheme + in-handler CSP, loopback `LUXORA_API_URL` via sandboxed CJS preload, explicit CORS origin, smoke mode); `a0e7447` iPhone bounded offline `ui-tests` simulator job; `23d2ef7` web a11y fixes + route-level code splitting + honest PWA shell + axe audit in committed E2E; `7a67848` server cursor pagination for 7 previously-unbounded lists; `e0ec65f` a11y markdown reporting fix; `260857f` desktop CI-only sandbox switch. **Evidence:** browser calls harness **18/18** vs real media plane, API media-plane probe **14/14**; FULL API **104/759**, smoke **45 PASS + 1 SKIP**; verify PASS, web-e2e **17/17**, desktop PASS (49 s), Security PASS, required «CodeQL» PASS; axe **0 findings** across 22 dev + 21 production-preview states, keyboard 11/11, code splitting −52.5% raw/−47.4% gzip; swift-package PASS; ios-compile + ui-tests pending at write time.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, обновлено 2026-10-31)
 
@@ -277,12 +286,17 @@
 
 ### CRITICAL
 
-- [x] **Зелёный CI на PR #109 head `beb6ca7`:** swift-package SUCCESS (455 XCTest executed, 6 skipped, 0 failures + 20 Swift Testing; включая calls/community и новые safety/account-data тесты), ios-compile SUCCESS, Node/Web/Desktop verify SUCCESS (API 103/749, web build + 49/49 vitest), **web-e2e job SUCCESS (16/16 checks)**, Security and container SUCCESS (filesystem Trivy, dependency-review, codeql, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject), required «CodeQL» check SUCCESS. PR #83 уже смержен в `main` (`919d0f6`)
+- [x] **CI на PR #110 head `ef57595` — ALL GREEN:** verify PASS (API **104/759**, web build + 49/49 vitest), `web-e2e` PASS (**17/17** functional+axe), `desktop` PASS (37–49 s), Security and container PASS + required «CodeQL» PASS, swift-package PASS, ios-compile PASS, **`ui-tests` PASS (8/8 selected simulator UI tests, 14m32s, unsigned, artifacts)**. PR #109 (`beb6ca7`) уже смержен в `main` (`0fda88a`); остаётся merge docs+PR #110
 - [x] Truth-аудит: фейковых E2EE/call/presence/download/sync UI нет — gates/locked-кнопки; публичный сайт помечает planned-функции; web-клиент медиа звонков честно `unavailable`; safety report содержит явное cloud-preview consent, удаление — typed «УДАЛИТЬ» + серверный grace
 - [ ] Полный локальный suite + CI перед каждым пушем (без исключений)
 - [x] CodeQL re-enabled (advanced setup в Security workflow); Security-прогоны `32e0d62` и `beb6ca7` прошли полностью, включая CodeQL job и required check
 - [x] Backend security fix `b811985`: non-self Direct требует accepted, unblocked relationship (ранее обход при `messageRequests:"nobody"`), новый `direct-chat-relationship.integration.test.ts`, boundary fixtures, smoke 42/42, FULL API 103/749; browser E2E доказывает 403 → message-request → accept → direct → realtime
-- [x] Browser E2E — committed CI gate: `tools/web-e2e` + job `web-e2e` в `.github/workflows/node.yml` (ubuntu-24.04, 15-мин кап), **16/16 checks PASS в GitHub Actions**; 2 изолированных Chrome-контекста, реальный API + temp SQLite, honest gating, artifacts при failure, process-tree cleanup
+- [x] Browser E2E — committed CI gate: `tools/web-e2e` + job `web-e2e`; **PR #110: 17/17 checks PASS, включая axe-core WCAG 2.x A/AA audit (9 states, fail on critical/serious, empty baseline)**; 2 изолированных Chrome-контекста, реальный API + temp SQLite, honest gating, artifacts при failure, process-tree cleanup
+- [x] Calls media — реальное и проверенное локально end-to-end: media join только после accept, signed LiveKit webhook `connecting→active`, web mute/unmute через media-соединение; browser harness **18/18**, API media-plane probe **14/14** (JWT join grant + TURN credentials через TLS); honest limits — cloud-preview, no E2EE, real-device/CallKit/APNs open
+- [x] Cursor pagination завершена: 7 endpoints (sessions, members, topics, invite links, join requests, message edit history, call history) с `{items|calls, nextCursor}`; default 100 (calls 50), sessions ordering `created_at DESC, id DESC`; FULL API **104/759**, smoke **45 PASS + 1 SKIP** (46-step matrix, SKIP только без server-log path)
+- [x] Desktop client: Electron shell сервит packaged web build через `luxora://app` + in-handler CSP; loopback `LUXORA_API_URL` через sandboxed CommonJS preload; explicit CORS origin `luxora://app`; `LUXORA_DESKTOP_SMOKE=1`; CI job `desktop` PASS (49 s, Xvfb, sandbox/contextIsolation сохранены)
+- [x] Web a11y/perf/PWA: axe-core 4.14 в committed E2E gate (**17/17** in CI); 0 findings across 22 dev + 21 production-preview states; keyboard 11/11; route-level code splitting (606.33/170.60 → 287.99/89.73 kB raw/gzip, −52.5%/−47.4%); honest PWA shell кэширует только public shell (никогда `/v1`,`/v2`,`/health`, сообщения), production-HTTPS-only registration, 0 dev/preview registrations
+- [x] iPhone `ui-tests` job — **verified green on `ef57595`: 8/8 selected simulator UI tests passed, 14m32s, unsigned, artifacts**; bounded offline subset (Russian launch/auth, four-tab shell + chat spaces, chats no-results, settings inventory/device fallback/privacy, navigation profile actions/contact-profile message search, session-loader accessibility status, auth accessibility audit incl. contrast/dynamic-type/hit-region) — не полное UI-покрытие, contrast audit — не conformance proof; stale expectations исправлены статическим аудитом + app-owned no-results surface («Ничего не найдено» / «Попробуйте изменить запрос.», `inbox-empty-search`) и strict `#if DEBUG` initial state
 
 ### HIGH
 
@@ -300,7 +314,8 @@
 - [x] iPhone voice: запись (таймер/уровни/отмена/стоп), recording bar, playback с waveform, consent-тумблер и отправка транскрипта
 - [x] **Публичный продуктовый сайт завершён**: 14 маршрутов, 22 docs-страницы RU/EN, canonical/OG/JSON-LD/sitemap/robots, а11y, lazy 3D hero, честные download/status/security копии; mojibake исправлен
 - [x] **Web messenger client `/app` реализован**: auth/session boot/sign-out, shell/search/filters/new chat/message requests/profile, conversation (cursor history, optimistic same-nonce retry, reply/edit/delete, reactions, pins, честные delivered/read, attachments/thumbnails/download, typing, local drafts, read receipts on open/focus, day separators/load-older/new-messages divider), realtime `/v2` resume/sync.required/backoff/close-codes, call signalling UI с honest `unavailable` media; **49/49 Vitest** (api 17, realtime 13, store 19), typecheck PASS, build green в CI; **browser E2E теперь committed CI gate (16/16 checks)**
-- [ ] **Web follow-up:** hosting CSP/headers + sessionStorage/HttpOnly review, desktop shell wiring, server-synced drafts/folders UI, WCAG-аудит `/app`
+- [ ] **Web follow-up:** hosting CSP/headers + sessionStorage/HttpOnly review, server-synced drafts/folders UI, manual WCAG/assistive-technology audit (axe — floor, not conformance proof)
+- [ ] **Calls/desktop follow-ups:** optional calls media E2E в CI (поднимаемый media stack; сейчас 18/18 локальный ignored harness), packaged desktop release/signing/updater, hosted web CSP/headers
 - [x] **iPhone calls product surface** — **проверен Apple CI**: вкладка истории звонков (real history), per-chat call log, call-back, in-call overlay с серверно-заякоренным таймером и honest mute (только при подключённом медиа), locked/limited gating; video locked (join-grant выдаёт только микрофон). В финальном `beb6ca7` общий swift-package зелёный (455 XCTest / 6 skipped / 0 failures + 20 Swift Testing)
 - [x] **iPhone community management UI** — **проверен Apple CI**: invite links shown-once + revoke, join-request approval queue, ownership-transfer ceremony, join-by-link; входит в зелёный swift-package `beb6ca7` (455 XCTest / 6 skipped / 0 failures + 20 Swift Testing)
 - [x] **iPhone safety reports + account data (export/deletion) — SHIPPED и проверен CI (PR #109):** `LuxoraSafetyAPIClient` (reports list/submit; export request/status/range download; deletion status/schedule/cancel — strict decode, sanitized errors), `SafetyReportsStore` (own-report cursor pagination, nonce-idempotent submit), `AccountDataStore` (bounded export polling, size+SHA-256 verify через CryptoKit до ShareLink, deletion state machine по серверному 7-дневному grace, cancel без сетевых вызовов после deadline), `PhoneSafetyAndDataViews` (report sheet: category/comment/alsoBlock + явный cloud-preview consent; «Мои жалобы»; account-data screen с typed «УДАЛИТЬ» + grace deadline + honest executing/completed/failed), wiring в `ApplicationSession`, settings-маршруты privacy/data, «Пожаловаться» в message menu; **26 новых contract/store тестов**; honest limits — no instant-deletion/E2EE claims
@@ -343,10 +358,12 @@
 
 - [x] Only `Beta-0.1` appears as visible release metadata; only Flenym as owner/developer; repo-wide classified metadata gate passes while excluding internal package/API/platform versions.
 - [ ] All simulated call, E2EE, delivery, presence, download and sync UI is removed or clearly labelled demo/roadmap.
-- [x] Node/Web/Desktop CI green on PR #109: verify SUCCESS (API 103/749, web build + 49/49 vitest) + **web-e2e job SUCCESS (16/16 checks)** на `beb6ca7`. Локально `bash infra/validate-public-metadata.sh` печатает PASS.
-- [x] Security and container CI green: dependency-review, filesystem/image, codeql, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject — PASS на `beb6ca7` (и `32e0d62`).
-- [x] Apple Swift CI green: swift-package **455 XCTest (6 skipped, 0 failures) + 20 Swift Testing** и ios-compile PASS на `beb6ca7`; на PR #83 финальный `df39703` был all-green.
-- [x] CodeQL: re-enabled (advanced setup, `javascript-typescript`); required «CodeQL» check SUCCESS на `beb6ca7`.
+- [x] Node/Web/Desktop CI green on PR #110: verify SUCCESS (API **104/759**, web build + 49/49 vitest) + **web-e2e job SUCCESS (17/17 checks incl. axe)** + **desktop job SUCCESS (37–49 s)** на `ef57595`. Локально `bash infra/validate-public-metadata.sh` печатает PASS.
+- [x] Apple `ios-compile` + new `ui-tests` job — PASS on `ef57595` (**ui-tests 8/8, 14m32s, unsigned, artifacts**); swift-package PASS.
+- [x] Security and container CI green: dependency-review, filesystem/image, codeql, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject — PASS на `ef57595`, `260857f`, `beb6ca7` и `32e0d62`; required «CodeQL» check PASS.
+- [x] Apple Swift: **455 XCTest (6 skipped, 0 failures) + 20 Swift Testing** (merged checkpoint; PR #110 не меняет count); PR #83 `df39703` и PR #109 `beb6ca7` были all-green. На `ef57595`: swift-package PASS, ios-compile PASS, **ui-tests PASS (8/8, 14m32s)** — все проверки зелёные.
+- [x] CodeQL: re-enabled (advanced setup, `javascript-typescript`); required «CodeQL» check SUCCESS на `ef57595`/`260857f`/`beb6ca7`.
+- [x] Server cursor pagination completed: 7 additive-paginated endpoints, garbage-cursor 400, limit bounds; tested through `pagination.integration.test.ts` and 46-step smoke (45 PASS + 1 optional SKIP).
 - [x] Browser CORS boundary: preflight всех mutation-методов + exposed headers по exact-allowlist, regression test и live smoke harness (`7867abb`).
 - [x] Root editor/ignore/Make/Compose conventions exist.
 - [x] Node, Apple, Android and security/container CI definitions exist.

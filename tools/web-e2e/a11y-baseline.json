@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "Accessibility baseline allowlist for the Luxora web E2E axe audit. EMPTY by policy: the E2E gate fails on every critical/serious WCAG 2.x A/AA violation. Add an exception only with Lead approval and always include a reason, e.g. {\"state\": \"app-conversation\", \"rule\": \"color-contrast\", \"selector\": \"[data-testid=...]\", \"reason\": \"large display text meets 3:1 per WCAG 1.4.3 exception\"}. Matching: rule is required; state and selector are optional (selector = substring of an axe target).",
+  "exceptions": []
+}

@@ -1431,16 +1431,26 @@ textarea.input {
   color: var(--text-2);
 }
 
-/* Reveal on scroll */
+/* Reveal on scroll.
+   Transform-only motion: opacity fades on ancestors make automated contrast
+   audits sample a mid-fade colour (real content, false failure), and fully
+   transparent content is unreadable until JS runs. The rise animation keeps the
+   intended rhythm while text stays at full opacity at every frame. */
 .reveal {
-  opacity: 0;
   transform: translateY(18px);
-  transition: opacity 0.8s var(--ease), transform 0.8s var(--ease);
 }
 
 .reveal.in {
-  opacity: 1;
-  transform: none;
+  animation: reveal-rise 0.8s var(--ease) both;
+}
+
+@keyframes reveal-rise {
+  from {
+    transform: translateY(18px);
+  }
+  to {
+    transform: none;
+  }
 }
 
 /* ---------- Spacing & rhythm ---------- */
@@ -1994,5 +2004,6 @@ textarea.input {
   .reveal {
     opacity: 1;
     transform: none;
+    animation: none !important;
   }
 }

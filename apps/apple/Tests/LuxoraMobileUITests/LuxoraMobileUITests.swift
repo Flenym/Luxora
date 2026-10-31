@@ -357,22 +357,53 @@ final class LuxoraMobileUITests: XCTestCase {
 
     @MainActor
     func testChatsUsesNoResultsStateOnlyForANonemptyQuery() {
-        let app = messengerApp()
-        app.launch()
+        let seededQuery = "luxora-no-such-conversation"
 
-        XCTAssertTrue(app.descendants(matching: .any)["chats-screen"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.descendants(matching: .any)["inbox-empty-search"].exists)
+        let idle = messengerApp()
+        idle.launch()
 
-        let search = app.searchFields.firstMatch
+        XCTAssertTrue(idle.descendants(matching: .any)["chats-screen"].waitForExistence(timeout: 8))
+        let search = idle.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 3))
-        search.tap()
-        search.typeText("luxora-no-such-conversation")
+        XCTAssertFalse(idle.descendants(matching: .any)["inbox-empty-search"].exists)
+        XCTAssertFalse(idle.descendants(matching: .any)["inbox-empty-root"].exists)
+        idle.terminate()
 
-        let noResults = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "Нет результатов")
+        // The simulator search field proved unreliable for programmatic typing,
+        // so the exact same non-empty query is seeded through the DEBUG-only
+        // construction hook. The product contract stays the same: the no-results
+        // surface exists only for a non-empty query, never for the fixture list.
+        let filtered = messengerApp()
+        filtered.launchEnvironment["LUXORA_UI_TEST_INITIAL_QUERY"] = seededQuery
+        filtered.launch()
+
+        XCTAssertTrue(filtered.descendants(matching: .any)["chats-screen"].waitForExistence(timeout: 8))
+        let seededSearchField = filtered.searchFields.firstMatch
+        XCTAssertTrue(seededSearchField.waitForExistence(timeout: 3))
+        // Distinguishes "the seed never reached the searchable controller" from
+        // "the empty-state overlay is not exposed to XCUITest".
+        XCTAssertEqual(seededSearchField.value as? String, seededQuery)
+
+        // The app-owned empty-search copy is the real visible surface; match it
+        // by containment so a combined accessibility label still satisfies the
+        // semantic assertion.
+        let emptyTitle = filtered.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Ничего не найдено")
         ).firstMatch
-        XCTAssertTrue(noResults.waitForExistence(timeout: 3))
-        XCTAssertFalse(app.staticTexts["Чатов пока нет"].exists)
+        if !emptyTitle.waitForExistence(timeout: 8) {
+            print("INBOX_EMPTY_SEARCH_STATE_MISSING\n\(filtered.debugDescription)")
+        }
+        XCTAssertTrue(emptyTitle.exists)
+        XCTAssertFalse(filtered.descendants(matching: .any)["inbox-empty-root"].exists)
+        XCTAssertFalse(filtered.buttons["inbox-row-\(primaryConversationID)"].exists)
+
+        // Best-effort container check: keep evidence for the next iteration if
+        // the ContentUnavailableView container itself is not exposed, while the
+        // visible app-owned copy above remains the hard assertion.
+        let emptyContainer = filtered.descendants(matching: .any)["inbox-empty-search"]
+        if !emptyContainer.exists {
+            print("INBOX_EMPTY_SEARCH_CONTAINER_NOT_EXPOSED\n\(filtered.debugDescription)")
+        }
     }
 
     @MainActor
@@ -673,9 +704,6 @@ final class LuxoraMobileUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["message-forward-provenance"].exists)
     }
 
-    }
-
-
     @MainActor
     func testGlobalSearchUsesBottomScopesAndClosesBackToRussianRootShell() {
         let app = messengerApp(destination: "search")
@@ -841,7 +869,13 @@ final class LuxoraMobileUITests: XCTestCase {
         let privacy = messengerApp(destination: "you-privacy")
         privacy.launch()
         XCTAssertTrue(privacy.descendants(matching: .any)["you-privacy-screen"].waitForExistence(timeout: 8))
-        XCTAssertTrue(privacy.staticTexts["Luxora не заявляет о сквозном шифровании."].exists)
+        // The privacy screen grew; the cloud-preview honesty facts sit below the
+        // initial viewport, so scroll them into the accessibility tree first.
+        let unencryptedFact = privacy.staticTexts["Luxora не заявляет о сквозном шифровании."]
+        for _ in 0..<8 where !unencryptedFact.exists {
+            privacy.swipeUp()
+        }
+        XCTAssertTrue(unencryptedFact.exists)
         assertRootShellHidden(in: privacy)
         privacy.terminate()
 

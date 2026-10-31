@@ -116,7 +116,12 @@ $env:PHONE_AUTH_DEVELOPMENT_CODE = $secrets["LUXORA_DEV_OTP_CODE"]
 $env:PHONE_AUTH_RECOVERY_DELAY_SECONDS = "0"
 $env:PHONE_AUTH_RECOVERY_TTL_SECONDS = "86400"
 $env:ADMIN_TOKEN = $secrets["LUXORA_ADMIN_TOKEN"]
-$corsOrigins = @("http://localhost:4173", "http://localhost:4174", "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:4173", "http://127.0.0.1:4174")
+# The Electron desktop shell serves the web build from the secure custom scheme
+# origin `luxora://app` (its renderer CSP contacts the API from that origin), and
+# the Vite dev/preview servers on loopback are used by browser development.
+# Desktop therefore needs `luxora://app` in addition to the loopback http
+# origins. Keep every entry exact; never use "*" here.
+$corsOrigins = @("luxora://app", "http://localhost:4173", "http://localhost:4174", "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:4173", "http://127.0.0.1:4174")
 # Public CloudPub origins (written by scripts/start-all.ps1) are added here so the
 # browser can call the API from the published web address.
 $publicOriginsFile = Join-Path $dataDir "public-origins.txt"

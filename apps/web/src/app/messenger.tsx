@@ -101,6 +101,7 @@ const RECEIPT_LOAD_LIMIT = 20;
 const RECEIPT_LOAD_CONCURRENCY = 4;
 const CALLS_NOT_CONNECTED_NOTICE = "Звонки не подключены в этой сборке Beta-0.1 — медиаплоскость не настроена";
 const CALLS_MEDIA_UNAVAILABLE = "Медиаплоскость звонков не настроена на сервере";
+const CALLS_MUTE_NOT_CONNECTED_NOTICE = "Микрофон станет доступен, когда медиа подключится";
 
 type DraftMap = Record<Id, { text: string; replyToMessageId: Id | null }>;
 
@@ -202,6 +203,7 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
   const apiRef = useRef<LuxoraApiClient | null>(null);
   const realtimeRef = useRef<RealtimeClient | null>(null);
   const callMediaRef = useRef<CallMediaConnection | null>(null);
+  const mediaConnectInFlightRef = useRef<Id | null>(null);
   const typingRef = useRef<Map<Id, { lastSentAt: number; stopTimer: ReturnType<typeof setTimeout> | null }>>(new Map());
   const outboxInputsRef = useRef<Map<Id, SendMessageInput>>(new Map());
   const uploadedAttachmentsRef = useRef<Map<Id, Attachment>>(new Map());
@@ -359,12 +361,17 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
   const disconnectCallMedia = useCallback((): void => {
     const connection = callMediaRef.current;
     callMediaRef.current = null;
+    mediaConnectInFlightRef.current = null;
     if (connection !== null) void connection.disconnect().catch(() => undefined);
   }, []);
 
   const connectCallMedia = useCallback(async (call: Call): Promise<void> => {
     const api = apiRef.current;
     if (api === null) return;
+    // Idempotent: the realtime state.changed stream and the local accept action
+    // can both ask for media; only one connection is ever created per call.
+    if (callMediaRef.current !== null || mediaConnectInFlightRef.current === call.callId) return;
+    mediaConnectInFlightRef.current = call.callId;
     const capabilities = stateRef.current.capabilities;
     if (capabilities?.features.calls !== true) {
       // Honest: the server does not run a media plane, so it is never "connected".
@@ -404,6 +411,8 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
             : describeError(normalized)
         }
       }));
+    } finally {
+      if (mediaConnectInFlightRef.current === call.callId) mediaConnectInFlightRef.current = null;
     }
   }, [apply]);
 
@@ -456,10 +465,20 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
       } else if (current.incoming?.callId === call.callId) {
         apply((previous) => ({ ...previous, call: { ...previous.call, incoming: call } }));
       }
+      // The creator must not request media while the call is still ringing: the
+      // server only issues join grants once a participant accepted (403 before
+      // that). Join media when the call reaches a joinable state, from either
+      // participant, once.
+      const joinable =
+        stateRef.current.capabilities?.features.calls === true &&
+        mine !== undefined &&
+        callMediaRef.current === null &&
+        (call.state === "connecting" || call.state === "active");
+      if (joinable) void connectCallMedia(call);
     } catch {
       // The call projection is pollable; the next state.changed or user action retries.
     }
-  }, [apply, disconnectCallMedia]);
+  }, [apply, connectCallMedia, disconnectCallMedia]);
 
   /* ------------------------------------------------------------ sync reload */
 
@@ -1218,8 +1237,9 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
           ...previous.call,
           active,
           incoming: null,
-          media: "unavailable",
-          mediaError: mediaPlane ? null : CALLS_MEDIA_UNAVAILABLE
+          media: mediaPlane ? "connecting" : "unavailable",
+          mediaError: mediaPlane ? null : CALLS_MEDIA_UNAVAILABLE,
+          muted: false
         }
       }));
       if (!mediaPlane) {
@@ -1233,7 +1253,8 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
           apply((previous) => setError(previous, describeError(error)));
         }
       }
-      if (mediaPlane) void connectCallMedia(active);
+      // Media is joined from handleCallStateChanged once a participant accepts;
+      // requesting a join grant while ringing is rejected by the server.
     } catch (error) {
       const normalized = asLuxoraApiError(error);
       apply((previous) => setError(previous, describeError(normalized)));
@@ -1241,7 +1262,7 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
         apply((previous) => setNotice(previous, CALLS_NOT_CONNECTED_NOTICE));
       }
     }
-  }, [apply, connectCallMedia]);
+  }, [apply]);
 
   const acceptCall = useCallback(async (): Promise<void> => {
     const api = apiRef.current;
@@ -1257,7 +1278,8 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
           incoming: null,
           active: accepted,
           media: mediaPlane ? "connecting" : "unavailable",
-          mediaError: mediaPlane ? null : CALLS_MEDIA_UNAVAILABLE
+          mediaError: mediaPlane ? null : CALLS_MEDIA_UNAVAILABLE,
+          muted: false
         }
       }));
       await connectCallMedia(accepted);
@@ -1274,7 +1296,7 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
       await api.declineCall(incoming.callId, incoming.revision, "declined");
       apply((previous) => ({
         ...previous,
-        call: { ...previous.call, incoming: null, media: "unavailable", mediaError: null }
+        call: { ...previous.call, incoming: null, media: "unavailable", mediaError: null, muted: false }
       }));
     } catch (error) {
       apply((previous) => setError(previous, describeError(error)));
@@ -1295,10 +1317,25 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
       disconnectCallMedia();
       apply((previous) => ({
         ...previous,
-        call: { active: null, incoming: null, media: "unavailable", mediaError: null }
+        call: { active: null, incoming: null, media: "unavailable", mediaError: null, muted: false }
       }));
     }
   }, [apply, disconnectCallMedia]);
+
+  const toggleCallMute = useCallback(async (): Promise<void> => {
+    const connection = callMediaRef.current;
+    if (connection === null || stateRef.current.call.active === null) {
+      apply((previous) => setNotice(previous, CALLS_MUTE_NOT_CONNECTED_NOTICE));
+      return;
+    }
+    const nextMuted = !stateRef.current.call.muted;
+    try {
+      await connection.setMuted(nextMuted);
+      apply((previous) => ({ ...previous, call: { ...previous.call, muted: nextMuted } }));
+    } catch (error) {
+      apply((previous) => setError(previous, describeError(asLuxoraApiError(error))));
+    }
+  }, [apply]);
 
   const dismissCall = useCallback((): void => {
     disconnectCallMedia();
@@ -1310,7 +1347,8 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
         active: previous.call.active?.state === "ended" ? null : previous.call.active,
         incoming: previous.call.incoming?.state === "ended" ? null : previous.call.incoming,
         media: "unavailable",
-        mediaError: null
+        mediaError: null,
+        muted: false
       }
     }));
   }, [apply, disconnectCallMedia]);
@@ -1447,6 +1485,7 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
     declineCall,
     hangupCall,
     dismissCall,
+    toggleCallMute,
     updateProfile,
     searchChats
   }), [
@@ -1482,6 +1521,7 @@ export function MessengerProvider({ children }: MessengerProviderProps): ReactNo
     signUp,
     startCall,
     startDirectChat,
+    toggleCallMute,
     toggleReaction,
     updateProfile,
     uploadFile

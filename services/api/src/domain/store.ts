@@ -994,6 +994,13 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   isSessionActive(sessionId: string, userId: string, now: string): boolean;
   touchSession(sessionId: string, at: string): void;
   listSessions(userId: string, currentSessionId: string): Session[];
+  /** Opaque-cursor page ordered by immutable session creation (newest first). */
+  listSessionsPage(
+    userId: string,
+    currentSessionId: string,
+    limit: number,
+    cursor?: string
+  ): { items: Session[]; nextCursor: string | null };
 
   findChatRecord(id: string): ChatRecord | null;
   findDirectChat(directKey: string): ChatRecord | null;
@@ -1001,6 +1008,12 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   addChatMember(chatId: string, userId: string, role: ChatRole, joinedAt: string): void;
   getChatMember(chatId: string, userId: string): ChatMemberRecord | null;
   listChatMembers(chatId: string): ChatMemberRecord[];
+  /** Opaque-cursor page in stable join order (`joined_at`, then `user_id`). */
+  listChatMembersPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatMemberRecord[]; nextCursor: string | null };
   listChatMemberIds(chatId: string): string[];
   countChatMembers(chatId: string): number;
   createChatMember(chatId: string, userId: string, role: Exclude<ChatRole, "owner">, at: string): ChatMemberRecord | null;
@@ -1027,6 +1040,12 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   findChatInviteLinkByDigest(tokenDigest: string): ChatInviteLinkRecord | null;
   findChatInviteLinkByCreatorNonce(createdBy: string, clientNonce: string): ChatInviteLinkRecord | null;
   listChatInviteLinks(chatId: string): ChatInviteLinkRecord[];
+  /** Opaque-cursor page in stable creation order (`created_at`, then `id`). */
+  listChatInviteLinksPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatInviteLinkRecord[]; nextCursor: string | null };
   revokeChatInviteLink(id: string, at: string): ChatInviteLinkRecord | null;
   consumeChatInviteLink(id: string, now: string): ChatInviteLinkRecord | null;
   createChatJoinRequest(request: ChatJoinRequestRecord): ChatJoinRequestRecord;
@@ -1034,6 +1053,12 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   findPendingChatJoinRequest(chatId: string, userId: string): ChatJoinRequestRecord | null;
   findChatJoinRequestByRequesterNonce(userId: string, clientNonce: string): ChatJoinRequestRecord | null;
   listChatJoinRequests(chatId: string): ChatJoinRequestRecord[];
+  /** Opaque-cursor page in stable creation order (`created_at`, then `id`). */
+  listChatJoinRequestsPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatJoinRequestRecord[]; nextCursor: string | null };
   decideChatJoinRequest(
     id: string,
     state: Exclude<ChatJoinRequestRecord["state"], "pending">,
@@ -1147,6 +1172,12 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   listMessageAttachmentIds(messageId: string): string[];
   addMessageVersion(messageId: string, revision: number, body: string | null, editorUserId: string, at: string): void;
   listMessageVersions(messageId: string): MessageVersion[];
+  /** Opaque-cursor page ordered by immutable per-message revision (newest first). */
+  listMessageVersionsPage(
+    messageId: string,
+    limit: number,
+    cursor?: string
+  ): { items: MessageVersion[]; nextCursor: string | null };
   deleteMessageVersions(messageId: string): void;
   pinMessage(chatId: string, messageId: string, userId: string, at: string): MessagePin;
   unpinMessage(chatId: string, messageId: string): boolean;
@@ -1167,6 +1198,12 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   findTopicRecord(id: string): TopicRecord | null;
   getTopic(id: string): Topic | null;
   listTopics(chatId: string): Topic[];
+  /** Opaque-cursor page in stable creation order (`created_at`, then `id`). */
+  listTopicsPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: Topic[]; nextCursor: string | null };
   updateTopic(id: string, title: string | undefined, closed: boolean | undefined, at: string): TopicRecord;
 
   createUploadSession(session: NewUploadSession): UploadSessionRecord;
@@ -1289,7 +1326,12 @@ export interface Store extends PasskeyCeremonyStore, ChallengeSecretVault {
   loadCallAggregate(callId: string): CallAggregate | null;
   findCallIdByRoomName(roomName: string): string | null;
   listLiveCallsForChat(chatId: string): CallAggregate[];
-  listCallsForChat(chatId: string, limit: number): CallAggregate[];
+  /** Opaque-cursor page ordered `updated_at DESC, call_id DESC` (documented order). */
+  listCallsForChatPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: CallAggregate[]; nextCursor: string | null };
   listStaleReconnectingCalls(beforeIso: string, limit: number): CallAggregate[];  findCallCommandReceipt(scope: string): CommandReceipt | null;
   findCallCreationReceipt(scope: string): CreationReceipt | null;
   commitCallMutation(input: PersistCallMutation): void;

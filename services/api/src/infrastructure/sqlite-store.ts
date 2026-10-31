@@ -250,6 +250,15 @@ interface SessionRow {
   revoked_at: string | null;
 }
 
+interface MessageVersionRow {
+  id: string;
+  message_id: string;
+  revision: number;
+  body_ciphertext: string | null;
+  editor_user_id: string;
+  created_at: string;
+}
+
 interface RefreshRow {
   token_id: string;
   token_session_id: string;
@@ -8442,14 +8451,52 @@ export class SqliteStore implements Store {
       WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
       ORDER BY last_seen_at DESC, id DESC
     `).all(userId, new Date().toISOString()) as SessionRow[];
-    return rows.map((row) => ({
+    return rows.map((row) => this.#mapSession(row, currentSessionId));
+  }
+
+  listSessionsPage(
+    userId: string,
+    currentSessionId: string,
+    limit: number,
+    cursor?: string
+  ): { items: Session[]; nextCursor: string | null } {
+    const decoded = decodeCursor(cursor);
+    const rows = this.#db.prepare(`
+      SELECT * FROM device_sessions
+      WHERE user_id = @userId
+        AND revoked_at IS NULL
+        AND expires_at > @now
+        AND (@cursorValue IS NULL OR created_at < @cursorValue
+          OR (created_at = @cursorValue AND id < @cursorId))
+      ORDER BY created_at DESC, id DESC
+      LIMIT @take
+    `).all({
+      userId,
+      now: new Date().toISOString(),
+      cursorValue: decoded?.value ?? null,
+      cursorId: decoded?.id ?? null,
+      take: limit + 1
+    }) as SessionRow[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map((row) => this.#mapSession(row, currentSessionId)),
+      nextCursor: hasMore && last !== undefined
+        ? encodeCursor({ value: last.created_at, id: last.id })
+        : null
+    };
+  }
+
+  #mapSession(row: SessionRow, currentSessionId: string): Session {
+    return {
       id: row.id,
       deviceName: row.device_name,
       createdAt: row.created_at,
       lastSeenAt: row.last_seen_at,
       expiresAt: row.expires_at,
       current: row.id === currentSessionId
-    }));
+    };
   }
 
   findChatRecord(id: string): ChatRecord | null {
@@ -8506,6 +8553,38 @@ export class SqliteStore implements Store {
       ORDER BY joined_at ASC, user_id ASC
     `).all(chatId) as ChatMemberRow[];
     return rows.map(mapChatMember);
+  }
+
+  listChatMembersPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatMemberRecord[]; nextCursor: string | null } {
+    const decoded = decodeCursor(cursor);
+    const rows = this.#db.prepare(`
+      SELECT chat_id, user_id, role, membership_revision, joined_at,
+             COALESCE(membership_updated_at, joined_at) AS membership_updated_at
+      FROM chat_members
+      WHERE chat_id = @chatId
+        AND (@cursorValue IS NULL OR joined_at > @cursorValue
+          OR (joined_at = @cursorValue AND user_id > @cursorId))
+      ORDER BY joined_at ASC, user_id ASC
+      LIMIT @take
+    `).all({
+      chatId,
+      cursorValue: decoded?.value ?? null,
+      cursorId: decoded?.id ?? null,
+      take: limit + 1
+    }) as ChatMemberRow[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map(mapChatMember),
+      nextCursor: hasMore && last !== undefined
+        ? encodeCursor({ value: last.joined_at, id: last.user_id })
+        : null
+    };
   }
 
   listChatMemberIds(chatId: string): string[] {
@@ -8714,6 +8793,36 @@ export class SqliteStore implements Store {
     return rows.map(mapChatInviteLink);
   }
 
+  listChatInviteLinksPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatInviteLinkRecord[]; nextCursor: string | null } {
+    const decoded = decodeCursor(cursor);
+    const rows = this.#db.prepare(`
+      SELECT * FROM chat_invite_links
+      WHERE chat_id = @chatId
+        AND (@cursorValue IS NULL OR created_at > @cursorValue
+          OR (created_at = @cursorValue AND id > @cursorId))
+      ORDER BY created_at ASC, id ASC
+      LIMIT @take
+    `).all({
+      chatId,
+      cursorValue: decoded?.value ?? null,
+      cursorId: decoded?.id ?? null,
+      take: limit + 1
+    }) as ChatInviteLinkRow[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map(mapChatInviteLink),
+      nextCursor: hasMore && last !== undefined
+        ? encodeCursor({ value: last.created_at, id: last.id })
+        : null
+    };
+  }
+
   revokeChatInviteLink(id: string, at: string): ChatInviteLinkRecord | null {
     this.#db.prepare(`
       UPDATE chat_invite_links SET revoked_at = ?
@@ -8782,6 +8891,36 @@ export class SqliteStore implements Store {
       SELECT * FROM chat_join_requests WHERE chat_id = ? ORDER BY created_at, id
     `).all(chatId) as ChatJoinRequestRow[];
     return rows.map(mapChatJoinRequest);
+  }
+
+  listChatJoinRequestsPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: ChatJoinRequestRecord[]; nextCursor: string | null } {
+    const decoded = decodeCursor(cursor);
+    const rows = this.#db.prepare(`
+      SELECT * FROM chat_join_requests
+      WHERE chat_id = @chatId
+        AND (@cursorValue IS NULL OR created_at > @cursorValue
+          OR (created_at = @cursorValue AND id > @cursorId))
+      ORDER BY created_at ASC, id ASC
+      LIMIT @take
+    `).all({
+      chatId,
+      cursorValue: decoded?.value ?? null,
+      cursorId: decoded?.id ?? null,
+      take: limit + 1
+    }) as ChatJoinRequestRow[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map(mapChatJoinRequest),
+      nextCursor: hasMore && last !== undefined
+        ? encodeCursor({ value: last.created_at, id: last.id })
+        : null
+    };
   }
 
   decideChatJoinRequest(
@@ -9752,28 +9891,55 @@ export class SqliteStore implements Store {
     const rows = this.#db.prepare(`
       SELECT id, message_id, revision, body_ciphertext, editor_user_id, created_at
       FROM message_versions WHERE message_id = ? ORDER BY revision DESC
-    `).all(messageId) as Array<{
-      id: string;
-      message_id: string;
-      revision: number;
-      body_ciphertext: string | null;
-      editor_user_id: string;
-      created_at: string;
-    }>;
-    return rows.map((row) => {
-      const editor = this.findUserById(row.editor_user_id);
-      if (editor === null) throw new Error("Message version editor is missing");
-      return {
-        id: row.id,
-        messageId: row.message_id,
-        revision: row.revision,
-        body: row.body_ciphertext === null
-          ? null
-          : this.contentCipher.decrypt(row.body_ciphertext, `message-version:${row.id}`),
-        editor: publicUser(editor),
-        createdAt: row.created_at
-      };
-    });
+    `).all(messageId) as MessageVersionRow[];
+    return rows.map((row) => this.#mapMessageVersion(row));
+  }
+
+  listMessageVersionsPage(
+    messageId: string,
+    limit: number,
+    cursor?: string
+  ): { items: MessageVersion[]; nextCursor: string | null } {
+    const decoded = decodeCursor(cursor);
+    const cursorRevision = decoded === null ? null : Number(decoded.value);
+    const rows = this.#db.prepare(`
+      SELECT id, message_id, revision, body_ciphertext, editor_user_id, created_at
+      FROM message_versions
+      WHERE message_id = @messageId
+        AND (@cursorRevision IS NULL OR revision < @cursorRevision)
+      ORDER BY revision DESC
+      LIMIT @take
+    `).all({
+      messageId,
+      cursorRevision: cursorRevision === null || !Number.isSafeInteger(cursorRevision)
+        ? null
+        : cursorRevision,
+      take: limit + 1
+    }) as MessageVersionRow[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map((row) => this.#mapMessageVersion(row)),
+      nextCursor: hasMore && last !== undefined
+        ? encodeCursor({ value: String(last.revision), id: last.message_id })
+        : null
+    };
+  }
+
+  #mapMessageVersion(row: MessageVersionRow): MessageVersion {
+    const editor = this.findUserById(row.editor_user_id);
+    if (editor === null) throw new Error("Message version editor is missing");
+    return {
+      id: row.id,
+      messageId: row.message_id,
+      revision: row.revision,
+      body: row.body_ciphertext === null
+        ? null
+        : this.contentCipher.decrypt(row.body_ciphertext, `message-version:${row.id}`),
+      editor: publicUser(editor),
+      createdAt: row.created_at
+    };
   }
 
   deleteMessageVersions(messageId: string): void {
@@ -9846,6 +10012,36 @@ export class SqliteStore implements Store {
     const rows = this.#db.prepare("SELECT id FROM chat_topics WHERE chat_id = ? ORDER BY created_at ASC, id ASC")
       .all(chatId) as Array<{ id: string }>;
     return rows.map((row) => this.getTopic(row.id)).filter((topic): topic is Topic => topic !== null);
+  }
+
+  listTopicsPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: Topic[]; nextCursor: string | null } {
+    const decoded = decodeCursor(cursor);
+    const rows = this.#db.prepare(`
+      SELECT id, created_at FROM chat_topics
+      WHERE chat_id = @chatId
+        AND (@cursorValue IS NULL OR created_at > @cursorValue
+          OR (created_at = @cursorValue AND id > @cursorId))
+      ORDER BY created_at ASC, id ASC
+      LIMIT @take
+    `).all({
+      chatId,
+      cursorValue: decoded?.value ?? null,
+      cursorId: decoded?.id ?? null,
+      take: limit + 1
+    }) as Array<{ id: string; created_at: string }>;
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map((row) => this.getTopic(row.id)).filter((topic): topic is Topic => topic !== null),
+      nextCursor: hasMore && last !== undefined
+        ? encodeCursor({ value: last.created_at, id: last.id })
+        : null
+    };
   }
 
   updateTopic(id: string, title: string | undefined, closed: boolean | undefined, at: string): TopicRecord {
@@ -11541,14 +11737,34 @@ export class SqliteStore implements Store {
     return rows.map((row) => this.#mapCallAggregate(row.snapshot_json));
   }
 
-  listCallsForChat(chatId: string, limit: number): CallAggregate[] {
+  listCallsForChatPage(
+    chatId: string,
+    limit: number,
+    cursor?: string
+  ): { items: CallAggregate[]; nextCursor: string | null } {
+    const decoded = decodeCursor(cursor);
     const rows = this.#db.prepare(`
-      SELECT snapshot_json FROM calls
+      SELECT snapshot_json, updated_at, call_id FROM calls
       WHERE chat_id = @chatId
+        AND (@cursorValue IS NULL OR updated_at < @cursorValue
+          OR (updated_at = @cursorValue AND call_id < @cursorId))
       ORDER BY updated_at DESC, call_id DESC
-      LIMIT @limit
-    `).all({ chatId, limit }) as Array<{ snapshot_json: string }>;
-    return rows.map((row) => this.#mapCallAggregate(row.snapshot_json));
+      LIMIT @take
+    `).all({
+      chatId,
+      cursorValue: decoded?.value ?? null,
+      cursorId: decoded?.id ?? null,
+      take: limit + 1
+    }) as Array<{ snapshot_json: string; updated_at: string; call_id: string }>;
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map((row) => this.#mapCallAggregate(row.snapshot_json)),
+      nextCursor: hasMore && last !== undefined
+        ? encodeCursor({ value: last.updated_at, id: last.call_id })
+        : null
+    };
   }
 
   listStaleReconnectingCalls(beforeIso: string, limit: number): CallAggregate[] {
