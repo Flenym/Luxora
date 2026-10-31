@@ -297,6 +297,8 @@ public final class ApplicationSession {
     public private(set) var communityManagementStore: CommunityManagementStore?
     public private(set) var chatTopicsStore: ChatTopicsStore?
     public private(set) var globalSearchStore: GlobalSearchStore?
+    public private(set) var safetyReportsStore: SafetyReportsStore?
+    public private(set) var accountDataStore: AccountDataStore?
     private(set) var callsStore: CallsStore?
     public private(set) var synchronizedDraftStore: SynchronizedChatDraftStore?
     public let avatarImageCache = AuthenticatedAvatarImageCache()
@@ -466,6 +468,8 @@ public final class ApplicationSession {
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
         communityManagementStore?.cancelRemoteOperations()
+        safetyReportsStore?.resetForSessionReplacement()
+        accountDataStore?.resetForSessionReplacement()
         chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
@@ -496,6 +500,8 @@ public final class ApplicationSession {
         chatFoldersBinding = nil
         communityStore = nil
         communityManagementStore = nil
+        safetyReportsStore = nil
+        accountDataStore = nil
         chatTopicsStore = nil
         chatTopicsStore = nil
         globalSearchStore = nil        callsStore = nil
@@ -838,6 +844,8 @@ public final class ApplicationSession {
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
         communityManagementStore?.cancelRemoteOperations()
+        safetyReportsStore?.resetForSessionReplacement()
+        accountDataStore?.resetForSessionReplacement()
         chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
@@ -871,6 +879,8 @@ public final class ApplicationSession {
         chatFoldersBinding = nil
         communityStore = nil
         communityManagementStore = nil
+        safetyReportsStore = nil
+        accountDataStore = nil
         chatTopicsStore = nil
         chatTopicsStore = nil
         globalSearchStore = nil        callsStore = nil
@@ -1814,6 +1824,61 @@ public final class ApplicationSession {
             }
         )
 
+        let safetyStore = SafetyReportsStore()
+        safetyStore.configureRemote(
+            submitter: { submission in
+                try await coordinator.withAccessToken { token in
+                    try await api.submitSafetyReport(
+                        subjectAccountID: submission.subjectAccountID,
+                        category: submission.category,
+                        evidenceMessageIDs: submission.evidenceMessageIDs,
+                        comment: submission.comment,
+                        alsoBlock: submission.alsoBlock,
+                        clientNonce: submission.clientNonce,
+                        token: token
+                    )
+                }
+            },
+            pageLoader: { limit, cursor in
+                try await coordinator.withAccessToken { token in
+                    try await api.listSafetyReports(limit: limit, cursor: cursor, token: token)
+                }
+            }
+        )
+        let accountStore = AccountDataStore()
+        accountStore.configureRemote(
+            exportRequester: {
+                try await coordinator.withAccessToken { token in
+                    try await api.requestDataExport(token: token)
+                }
+            },
+            exportStatusLoader: { exportID in
+                try await coordinator.withAccessToken { token in
+                    try await api.dataExportStatus(id: exportID, token: token)
+                }
+            },
+            exportDownloader: { exportID in
+                try await coordinator.withAccessToken { token in
+                    try await api.downloadDataExport(id: exportID, token: token).data
+                }
+            },
+            deletionStatusLoader: {
+                try await coordinator.withAccessToken { token in
+                    try await api.accountDeletionStatus(token: token)
+                }
+            },
+            deletionScheduler: {
+                try await coordinator.withAccessToken { token in
+                    try await api.scheduleAccountDeletion(token: token)
+                }
+            },
+            deletionCanceller: {
+                try await coordinator.withAccessToken { token in
+                    try await api.cancelAccountDeletion(token: token)
+                }
+            }
+        )
+
         let topicsStore = ChatTopicsStore()
         topicsStore.configureRemote(
             loader: { chatID in
@@ -1882,6 +1947,8 @@ public final class ApplicationSession {
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
         communityManagementStore?.cancelRemoteOperations()
+        safetyReportsStore?.resetForSessionReplacement()
+        accountDataStore?.resetForSessionReplacement()
         chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
@@ -1938,6 +2005,8 @@ public final class ApplicationSession {
         chatFoldersBinding = foldersBinding
         communityStore = communitiesStore
         communityManagementStore = managementStore
+        safetyReportsStore = safetyStore
+        accountDataStore = accountStore
         chatTopicsStore = topicsStore
         globalSearchStore = searchStore
         synchronizedDraftStore = draftsStore
@@ -2109,6 +2178,8 @@ public final class ApplicationSession {
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
         communityManagementStore?.cancelRemoteOperations()
+        safetyReportsStore?.resetForSessionReplacement()
+        accountDataStore?.resetForSessionReplacement()
         chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
@@ -2129,6 +2200,8 @@ public final class ApplicationSession {
         chatFoldersBinding = nil
         communityStore = nil
         communityManagementStore = nil
+        safetyReportsStore = nil
+        accountDataStore = nil
         chatTopicsStore = nil
         globalSearchStore = nil        callsStore = nil
         synchronizedDraftStore = nil
@@ -2151,6 +2224,8 @@ public final class ApplicationSession {
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
         communityManagementStore?.cancelRemoteOperations()
+        safetyReportsStore?.resetForSessionReplacement()
+        accountDataStore?.resetForSessionReplacement()
         chatTopicsStore?.cancelRemoteOperations()
         synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()

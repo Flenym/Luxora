@@ -61,11 +61,26 @@ refresh token только в `sessionStorage`.
 - calls media не проверено end-to-end: без медиаплана `features.calls:false`,
   адаптер остаётся `unavailable`, звук не имитируется;
 - presence приблизительный и только realtime;
-- browser E2E (13–14/14 локальных шагов) не входит в CI;
 - формального WCAG-аудита `/app` и hosting CSP/headers ещё нет; refresh в
   `sessionStorage` — предмет отдельного review до production-хостинга;
 - публичный сайт объявляет canonical origin `https://luxora.app`, но деплой и
   заголовки этим репозиторием не поставляются.
+
+## Browser E2E (committed CI gate)
+
+`tools/web-e2e` гоняет два изолированных Chrome-контекста против реального API и
+временной SQLite (генерируемые dev-секреты и CSPRNG-аккаунты, `vite preview`,
+system-Chrome autodetect, process-tree cleanup) и входит в `web-e2e` job
+`.github/workflows/node.yml` — **16/16 user-observable checks PASS в GitHub
+Actions**. Локально:
+
+```bash
+npm --prefix tools/web-e2e ci
+npm --prefix tools/web-e2e test                  # self-contained: API :2222 + preview :4173
+node tools/web-e2e/runner.mjs --attach            # против уже запущенных серверов
+```
+
+Подробности — `tools/web-e2e/README.md`.
 
 Правила truth и release-гейты — в корневых `WEB.md`, `SECURITY.md` и
 `PROJECT_STATE.md`. Никаких заявлений E2EE, real push или production-звонков:

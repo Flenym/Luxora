@@ -23,15 +23,15 @@ delivery, production call capacity/review, the full conversation/community and
 media-processing model, gated key management/E2EE, moderation/jobs, production
 storage, backups, monitoring and DR. A thin iPhone integration harness may
 verify real contracts during this phase; it now carries a call surface (history,
-per-chat log, in-call overlay with honest mute — audio only) and LiveKit voice,
-both verified by Apple CI (swift-package green including `CallHistoryTests`;
-ios-compile fix in `df39703` awaiting its final workflow run), while full iPhone
-product work still waits for server stability. The public product site is a
-static, truthful surface shipped ahead
-of the client work, and the `/app` web messenger client is a developer preview
-against the real API and realtime gateway (49 unit tests, no CI E2E yet). All
-other client feature expansion remains frozen; their existing code is a
-portability/design probe.
+per-chat log, in-call overlay with honest mute — audio only), LiveKit voice,
+community management, safety reports and account export/deletion UI, all verified
+by Apple CI (PR #109 head `beb6ca7`: 455 XCTest / 6 skipped / 0 failures + 20
+Swift Testing and `ios-compile` PASS), while full iPhone product work still waits
+for server stability. The public product site is a static, truthful surface
+shipped ahead of the client work, and the `/app` web messenger client is a
+developer preview against the real API and realtime gateway (49 unit tests and a
+committed browser E2E CI gate with 16/16 checks). All other client feature
+expansion remains frozen; their existing code is a portability/design probe.
 
 ## 2. Current runtime topology
 
@@ -112,9 +112,9 @@ The global SQLite sequence may contain gaps for a given user. Clients track the 
 
 | Client | Current data source | Current role | Network status |
 | --- | --- | --- | --- |
-| iPhone/iPad/macOS SwiftUI | local preview or `ApplicationSession` + in-memory `MessengerStore` + `CallsStore` | Design foundation and thin server integration harness; call surface (history/log/overlay with honest mute) and LiveKit voice when the media plane is configured | Partial: auth/chat load/send/message realtime/call signaling+voice |
+| iPhone/iPad/macOS SwiftUI | local preview or `ApplicationSession` + in-memory `MessengerStore` + `CallsStore` + `SafetyReportsStore`/`AccountDataStore` | Design foundation and thin server integration harness; call surface (history/log/overlay with honest mute), LiveKit voice, community management, safety reports and account export/deletion UI (Apple CI verified) | Partial: auth/chat load/send/message realtime/calls/community/safety/account-data; no real-device evidence |
 | Android Compose | `MessengerState.demo()` | Portability/layout foundation | Not connected |
-| Web React (`/app`) | real HTTP + realtime v2; access token in memory, refresh credential in `sessionStorage` | Developer-preview messenger client: `src/app/core` (REST, realtime, store helpers, call-media adapters) + `src/app/messenger.tsx` seam + `src/app/ui`; marketing site is a separate static route tree | Connected preview: auth/chats/history/send/attachments/receipts/realtime/call signalling; call media unavailable without a configured server media plane; no CI E2E |
+| Web React (`/app`) | real HTTP + realtime v2; access token in memory, refresh credential in `sessionStorage` | Developer-preview messenger client: `src/app/core` (REST, realtime, store helpers, call-media adapters) + `src/app/messenger.tsx` seam + `src/app/ui`; marketing site is a separate static route tree | Connected preview: auth/chats/history/send/attachments/receipts/realtime/call signalling; call media unavailable without a configured server media plane; committed browser E2E CI gate (16/16 checks) |
 | Electron Windows/Linux | Packaged Web build (`apps/web/dist`) | Hardened shell/packaging probe | No messaging integration of its own |
 
 During the server phase, a thin iPhone integration harness establishes and continuously verifies the canonical client boundaries:

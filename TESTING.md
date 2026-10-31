@@ -8,7 +8,7 @@
 
 Luxora optimizes for risk coverage and reproducible evidence, not a decorative coverage percentage. Messaging correctness requires adversarial retries, ordering, authorization, offline and partial failure—not only happy-path snapshots.
 
-Current tests prove the runnable messaging/media foundation, IA-1 identity boundary, provider-gated phone-authentication slice, calls preview (signaling, grants, webhook, realtime call state, iPhone LiveKit voice) and local client-state behavior. They do not prove the full server platform, real SMS delivery, E2EE, production calls/push, production scale, accessibility or cross-platform availability.
+Current tests prove the runnable messaging/media foundation, IA-1 identity boundary, provider-gated phone-authentication slice, calls preview (signaling, grants, webhook, realtime call state, iPhone LiveKit voice), the iPhone safety-reports/account-data stores and the web messenger (unit suite plus a committed two-context browser E2E gate). They do not prove the full server platform, real SMS delivery, E2EE, production calls/push, production scale, accessibility or cross-platform availability.
 
 ## 2. Existing automated tests
 
@@ -204,9 +204,43 @@ database/blob/upload bytes. Negative probes require tamper detection and reject
 restore over an existing destination. This proves only the offline local-preview
 script path, not production recovery.
 
+### Web messenger unit suite and committed browser E2E gate
+
+The web messenger (`apps/web/src/app`) has two committed layers of automated
+evidence:
+
+- **49 Vitest unit tests** (`api` 17, `realtime` 13, `store` 19) run by the
+  `verify` job; they cover strict API decoding/token policy, realtime cursor,
+  `sync.required` recovery/backoff/close codes, and pure state merge rules that
+  never overclaim receipts.
+- **Browser E2E gate** — `tools/web-e2e` (added in PR #109) drives two isolated
+  Chrome contexts through the real UI against a real API and a temporary SQLite
+  database. It generates CSPRNG test accounts/passwords and development secrets
+  in memory, spawns the API and `vite preview`, auto-detects system Chrome
+  (`CHROME_PATH` overrides), and tears the process tree down. It is wired as the
+  `web-e2e` job in `.github/workflows/node.yml` (ubuntu-24.04, 15-minute cap) and
+  passed in GitHub Actions with **16/16 user-observable checks**: auth error,
+  sign-in, stranger-Direct guard → message request → accept, chat reopen/open,
+  realtime delivery, reply, honest delivery tick, image upload/render, honest
+  call gating, profile, sign-out and zero unexpected console errors. Screenshots
+  and an `e2e-report.json` are uploaded as artifacts only on failure.
+
+Run it locally:
+
+```powershell
+npm --prefix tools/web-e2e ci
+npm --prefix tools/web-e2e test          # self-contained: API :2222 + preview :4173
+node tools/web-e2e/runner.mjs --attach   # against already-running API + preview
+node tools/web-e2e/runner.mjs --api-only-check  # API spawn/env self-check on :2232
+```
+
+This is end-to-end **product-journey** evidence, not a WCAG/accessibility audit
+and not a performance/load gate; hosting headers/CSP are verified at deployment,
+which this repository does not provide.
+
 ### Missing current suites
 
-- No automated Web component/E2E/accessibility tests.
+- No automated Web component-level or accessibility-audit suite (the Web messenger now has unit tests and a committed browser E2E gate, but no automated WCAG audit).
 - No Electron integration/packaging security tests.
 - No complete iOS release UI suite, durable-persistence or comprehensive network-journey matrix; the opt-in live phone test covers only the narrow successful new-account path listed above.
 - No Android network/persistence/instrumentation journey tests.
@@ -258,7 +292,7 @@ Tests use synthetic data and isolated temporary/in-memory databases. Never point
 
 | Workflow | Runner | Current checks |
 | --- | --- | --- |
-| Node, Web and Desktop | Ubuntu 24.04, Node 22 | protocol, passkey/call domains and API type+tests+build; Web build, desktop typecheck, truth scan |
+| Node, Web and Desktop | Ubuntu 24.04, Node 22 | protocol, passkey/call domains and API type+tests+build; Web build + 49 Vitest, **`web-e2e` browser gate (16/16 checks)**, desktop typecheck, truth scan |
 | Apple Swift | macOS 26 | Swift package tests; reproducible XcodeGen generation and iPhone-only `LuxoraMobile` generic Simulator build without signing |
 | Android Gradle | Ubuntu 24.04, JDK 17 | unit, lint and debug APK assemble |
 | Security and container | Ubuntu 24.04 | dependency review, JS/TS CodeQL, Trivy filesystem/image, Docker build |
@@ -392,6 +426,14 @@ Use documented build, region, dataset, payload, concurrency, device and network.
 No current metric in docs is a public promise until this evidence exists.
 
 ## 13. Test evidence
+
+Recorded snapshots (2026-10-31, PR #109 head `beb6ca7`): Apple `swift-package`
+**455 XCTest executed / 6 skipped / 0 failures + 20 Swift Testing** and
+`ios-compile` PASS; API full suite **103 files / 749 tests**; Web **49/49
+Vitest**; committed browser E2E **16/16 checks** in GitHub Actions; Security and
+container full PASS (filesystem Trivy, dependency-review, CodeQL, images,
+calls-smoke incl. TURN auth accept/reject). These are CI/local-preview evidence,
+not production-scale, real-device, accessibility-audit or capacity proof.
 
 Each release report records commit/build/image digest, exact command/toolchain, sanitized config profile, timestamp, raw report, known limitations, owner/approver and rollback/runbook. CI URL alone is insufficient if artifacts expire; retain required reports according to release policy.
 
