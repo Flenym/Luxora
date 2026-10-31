@@ -2,6 +2,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import { ScrollToTop } from "./components/ScrollToTop";
+import MessengerApp from "./app/MessengerApp";
 import Home from "./pages/Home";
 import Download from "./pages/Download";
 import Security from "./pages/Security";
@@ -37,6 +38,9 @@ function Layout() {
 export default function App() {
   return (
     <Routes>
+      {/* Authenticated messenger: full-screen, intentionally outside the marketing layout. */}
+      <Route path="app" element={<MessengerApp />} />
+      <Route path="app/*" element={<MessengerApp />} />
       <Route element={<Layout />}>
         <Route index element={<Home />} />
         <Route path="download" element={<Download />} />

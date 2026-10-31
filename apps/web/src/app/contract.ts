@@ -126,22 +126,36 @@ export type ReactionSummary = {
   reactedByMe: boolean;
 };
 
+/** Server receipt projection (`GET /v1/messages/:id/receipts`): one row per recipient. */
 export type MessageReceipt = {
   userId: Id;
-  messageId: Id;
-  deliveredAt: IsoTimestamp | null;
+  deliveredAt: IsoTimestamp;
   readAt: IsoTimestamp | null;
 };
 
+/**
+ * `complete` means the client has the full recipient set for the message
+ * (authoritative GET), so the UI may render Delivered/Read ticks. While
+ * incomplete, only the honest single "sent" tick is allowed; realtime updates
+ * never upgrade an incomplete projection beyond what the server proved.
+ */
+export type MessageReceiptState = {
+  items: MessageReceipt[];
+  complete: boolean;
+};
+
+/** Server `MessageRequestProjectionSchema` (discriminated by direction). */
 export type MessageRequest = {
   id: Id;
-  senderId: Id;
-  recipientId: Id;
-  chatId: Id | null;
-  state: "pending" | "accepted" | "expired" | "dismissed";
-  text: string | null;
+  body: string;
   createdAt: IsoTimestamp;
-  updatedAt: IsoTimestamp;
+  expiresAt: IsoTimestamp;
+  direction: "incoming" | "outgoing";
+  state: "pending" | "accepted" | "expired" | "recipient_dismissed";
+  /** Present when direction = "incoming". */
+  sender?: PublicProfile;
+  /** Present when direction = "outgoing". */
+  recipient?: PublicProfile;
 };
 
 export type Call = {
@@ -342,6 +356,7 @@ export type MessengerState = {
   messages: Record<Id, UiMessage[]>;
   pages: Record<Id, ChatPageState>;
   reactions: Record<Id, ReactionSummary[]>;
+  receipts: Record<Id, MessageReceiptState>;
   drafts: Record<Id, { text: string; replyToMessageId: Id | null }>;
   typing: Record<Id, TypingEntry[]>;
   presence: Record<Id, Presence>;
@@ -392,6 +407,13 @@ export type MessengerActions = {
   setTyping(chatId: Id, typing: boolean): void;
 
   uploadFile(file: File, progress?: UploadProgress): Promise<Attachment>;
+
+  /**
+   * Authenticated binary GET for `/v1/attachments/:id/content` and
+   * `/v1/attachments/:id/thumbnail` paths (also avatar `avatarPath`). The
+   * caller owns the resulting object URL and must revoke it.
+   */
+  authBlob(path: string): Promise<Blob>;
 
   lookupUser(username: string): Promise<PublicProfile | null>;
   startDirectChat(userId: Id): Promise<Chat>;
