@@ -357,6 +357,8 @@ final class LuxoraMobileUITests: XCTestCase {
 
     @MainActor
     func testChatsUsesNoResultsStateOnlyForANonemptyQuery() {
+        let seededQuery = "luxora-no-such-conversation"
+
         let idle = messengerApp()
         idle.launch()
 
@@ -367,23 +369,36 @@ final class LuxoraMobileUITests: XCTestCase {
         XCTAssertFalse(idle.descendants(matching: .any)["inbox-empty-root"].exists)
         idle.terminate()
 
-        // Typing into the simulator search field proved flaky in CI (the query
-        // was not committed), so seed the exact same non-empty query through the
-        // DEBUG-only launch hook and assert the real empty-search surface. The
-        // product contract stays the same: "no results" exists only for a
-        // non-empty query, never for the loaded fixture conversations.
+        // The simulator search field proved unreliable for programmatic typing,
+        // so the exact same non-empty query is seeded through the DEBUG-only
+        // construction hook. The product contract stays the same: the no-results
+        // surface exists only for a non-empty query, never for the fixture list.
         let filtered = messengerApp()
-        filtered.launchEnvironment["LUXORA_UI_TEST_INITIAL_QUERY"] = "luxora-no-such-conversation"
+        filtered.launchEnvironment["LUXORA_UI_TEST_INITIAL_QUERY"] = seededQuery
         filtered.launch()
 
         XCTAssertTrue(filtered.descendants(matching: .any)["chats-screen"].waitForExistence(timeout: 8))
-        XCTAssertTrue(filtered.searchFields.firstMatch.exists)
-        // The system ContentUnavailableView copy is localized by the OS, so the
-        // stable contract is the app's own empty-state identifier.
-        let noResults = filtered.descendants(matching: .any)["inbox-empty-search"]
-        XCTAssertTrue(noResults.waitForExistence(timeout: 8))
+        let seededSearchField = filtered.searchFields.firstMatch
+        XCTAssertTrue(seededSearchField.waitForExistence(timeout: 3))
+        // Distinguishes "the seed never reached the searchable controller" from
+        // "the empty-state overlay is not exposed to XCUITest".
+        XCTAssertEqual(seededSearchField.value as? String, seededQuery)
+
+        let emptyTitle = filtered.staticTexts["Ничего не найдено"]
+        if !emptyTitle.waitForExistence(timeout: 8) {
+            print("INBOX_EMPTY_SEARCH_STATE_MISSING\n\(filtered.debugDescription)")
+        }
+        XCTAssertTrue(emptyTitle.exists)
         XCTAssertFalse(filtered.descendants(matching: .any)["inbox-empty-root"].exists)
         XCTAssertFalse(filtered.buttons["inbox-row-\(primaryConversationID)"].exists)
+
+        // Best-effort container check: keep evidence for the next iteration if
+        // the ContentUnavailableView container itself is not exposed, while the
+        // visible app-owned copy above remains the hard assertion.
+        let emptyContainer = filtered.descendants(matching: .any)["inbox-empty-search"]
+        if !emptyContainer.exists {
+            print("INBOX_EMPTY_SEARCH_CONTAINER_NOT_EXPOSED\n\(filtered.debugDescription)")
+        }
     }
 
     @MainActor
