@@ -247,7 +247,10 @@ export function evaluateA11yGate(records, baseline) {
 }
 
 function markdownCell(value) {
-  return String(value).replace(/\|/gu, "\\|");
+  // Markdown table cells: encode `|` as an HTML entity instead of a backslash
+  // escape. This keeps the summary readable without any manual escaping /
+  // backslash construction (CodeQL js/incomplete-sanitization class).
+  return String(value).replace(/\|/gu, "&#124;").replace(/\r?\n/gu, " ");
 }
 
 /** Write artifacts/a11y/a11y-report.json and a readable summary markdown. */
