@@ -4,9 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#090914" />
     <meta name="author" content="Flenym" />
     <meta name="application-name" content="Luxora" />
+    <meta name="apple-mobile-web-app-title" content="Luxora" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
 
     <title>Luxora — A better way to communicate</title>
@@ -46,7 +50,11 @@
 
     <link rel="icon" type="image/png" sizes="32x32" href="/logo-32.png" />
     <link rel="icon" type="image/png" sizes="64x64" href="/logo-64.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/logo-192.png" />
+    <!-- Honest PWA shell: public marketing/app-shell assets only. Message and
+         API data are never cached (see /sw.js); the messenger stays online-only. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
 
     <script type="application/ld+json">
       {

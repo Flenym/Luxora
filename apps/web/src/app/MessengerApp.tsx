@@ -119,14 +119,14 @@ function MessengerShell() {
   return (
     <div className={`app${api.activeChatId ? " app--chat-open" : ""}`} data-testid="app-shell">
       <div className="app__aurora" aria-hidden="true" />
-      <div className="app__shell">
+      <main className="app__shell">
         <Sidebar
           onNewChat={() => setNewChatOpen(true)}
           onRequests={() => setRequestsOpen(true)}
           onProfile={() => setProfileOpen(true)}
         />
         <ConversationPane onNotify={toasts.notify} onBack={closeChat} />
-      </div>
+      </main>
 
       {offline ? (
         <div className="connection-banner" role="status" aria-live="polite">

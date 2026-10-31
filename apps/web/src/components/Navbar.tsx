@@ -134,7 +134,7 @@ export default function Navbar() {
             <button
               className={`lang-btn ${locale === "en" ? "active" : ""}`}
               aria-pressed={locale === "en"}
-              aria-label={c.switchToEn}
+              aria-label={`EN — ${c.switchToEn}`}
               lang="en"
               onClick={() => setLocale("en")}
             >
@@ -144,7 +144,7 @@ export default function Navbar() {
             <button
               className={`lang-btn ${locale === "ru" ? "active" : ""}`}
               aria-pressed={locale === "ru"}
-              aria-label={c.switchToRu}
+              aria-label={`RU — ${c.switchToRu}`}
               lang="ru"
               onClick={() => setLocale("ru")}
             >

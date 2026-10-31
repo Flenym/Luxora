@@ -24,7 +24,7 @@
  *
  * Never logs tokens or passwords. Set CHROME_PATH to override Chrome detection.
  */
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import puppeteer from "puppeteer-core";
@@ -49,9 +49,23 @@ import {
   waitForWebReady,
   warn
 } from "./lib/environment.mjs";
+import {
+  A11Y_TAGS,
+  auditPage,
+  evaluateA11yGate,
+  loadA11yBaseline,
+  printA11ySummary,
+  readAxeVersion,
+  writeA11yArtifacts
+} from "./lib/a11y.mjs";
 
 const HONEST_CALLS_PATTERN = /(calls? (are )?not connected|not connected|звонк[а-яё]* не подключен)/iu;
 const MAX_CONSOLE_ERRORS_REPORTED = 5;
+const PUBLIC_A11Y_PAGES = [
+  { path: "/", state: "site-home" },
+  { path: "/docs/introduction", state: "site-docs-introduction" },
+  { path: "/security", state: "site-security" }
+];
 
 /* --------------------------------------------------------------- CLI args */
 
@@ -66,6 +80,8 @@ function argValue(name) {
 
 const attachMode = argv.includes("--attach");
 const apiOnlyCheck = argv.includes("--api-only-check");
+const a11yOnly = argv.includes("--a11y-only");
+const skipA11y = process.env["E2E_SKIP_A11Y"] === "1";
 const keepTemp = argv.includes("--keep-temp") || process.env["E2E_KEEP_TEMP"] === "1";
 const explicitApiBase = argValue("--api-base");
 const explicitWebBase = argValue("--web-base");
@@ -326,6 +342,8 @@ let browser = null;
 let pageA = null;
 let pageB = null;
 let cleanedUp = false;
+let a11ySummary = null;
+const a11yConsoleErrors = [];
 
 async function cleanup() {
   if (cleanedUp) return;
@@ -383,7 +401,9 @@ async function runApiOnlyCheck() {
 
 /* ------------------------------------------------------------------- suite */
 
-async function runBrowserSuite({ apiBase, webBase, accountA, accountB }) {
+/** Launch Chrome once and reuse it for the functional suite and a11y phase. */
+async function ensureBrowser() {
+  if (browser !== null) return browser;
   const chromePath = findChromeExecutable();
   log(`Chrome: ${chromePath}`);
   browser = await puppeteer.launch({
@@ -393,6 +413,11 @@ async function runBrowserSuite({ apiBase, webBase, accountA, accountB }) {
     protocolTimeout: 120_000
   });
   log(`Chrome version: ${await browser.version()}`);
+  return browser;
+}
+
+async function runBrowserSuite({ apiBase, webBase, accountA, accountB }) {
+  await ensureBrowser();
 
   const contextA = await browser.createBrowserContext();
   const contextB = await browser.createBrowserContext();
@@ -597,6 +622,184 @@ async function runBrowserSuite({ apiBase, webBase, accountA, accountB }) {
   await screenshot(pageA, "17-signed-out");
 }
 
+/* --------------------------------------------------------- accessibility */
+
+function fixtureNonce() {
+  return randomUUID();
+}
+
+/** Ensure the audit has an open Direct conversation and one pending request. */
+async function ensureA11yFixtures({ apiBase, accountA, accountB, tokenA, tokenB }) {
+  const chats = await apiRequest(apiBase, "GET", "/v1/chats", { token: tokenA });
+  assert(chats.status === 200, `a11y fixture: list chats answered HTTP ${chats.status}`);
+  const hasDirect = (chats.json?.items ?? []).some(
+    (chat) => chat.kind === "direct" && chat.title === accountB.displayName
+  );
+  if (!hasDirect) {
+    const created = await apiRequest(apiBase, "POST", "/v1/message-requests", {
+      token: tokenA,
+      body: {
+        recipientUserId: accountB.userId,
+        body: "A11y audit fixture conversation.",
+        clientNonce: fixtureNonce()
+      }
+    });
+    assert(created.status === 201, `a11y fixture: create request answered HTTP ${created.status}`);
+    const accepted = await apiRequest(apiBase, "POST", `/v1/message-requests/${created.json.request.id}/accept`, {
+      token: tokenB
+    });
+    assert(accepted.status === 200, `a11y fixture: accept request answered HTTP ${accepted.status}`);
+  }
+  const incoming = await apiRequest(apiBase, "GET", "/v1/message-requests?direction=incoming&limit=50", {
+    token: tokenA
+  });
+  assert(incoming.status === 200, `a11y fixture: list requests answered HTTP ${incoming.status}`);
+  const hasPending = (incoming.json?.items ?? []).some((request) => request.state === "pending");
+  if (!hasPending) {
+    // The A<->B relationship is already accepted by now, so a reverse request
+    // would conflict; use a fresh throw-away account for the pending row that
+    // makes the requests-dialog state non-empty.
+    const accountC = {
+      username: makeUsername("e2e", `${accountA.stamp}c`),
+      displayName: "E2E Carol",
+      password: randomPassword()
+    };
+    const registrationC = await registerAccount(apiBase, accountC);
+    const tokenC = registrationC?.tokens?.accessToken;
+    assert(typeof tokenC === "string", "a11y fixture: third account registration did not return an access token");
+    const pending = await apiRequest(apiBase, "POST", "/v1/message-requests", {
+      token: tokenC,
+      body: {
+        recipientUserId: accountA.userId,
+        body: "A11y audit pending request (do not accept).",
+        clientNonce: fixtureNonce()
+      }
+    });
+    assert(pending.status === 201, `a11y fixture: pending request answered HTTP ${pending.status}`);
+  }
+}
+
+/**
+ * axe audit phase: anonymous auth screen, signed-in shell, open conversation,
+ * new-chat / requests / profile dialogs and the public marketing pages.
+ * Writes artifacts/a11y/{a11y-report.json,a11y-summary.md}, prints a summary and
+ * records the gate check (critical/serious fail; moderate/minor warn-only).
+ */
+async function runA11ySuite({ apiBase, webBase, accountA, accountB, tokenA, tokenB }) {
+  log("accessibility phase: axe-core audits (WCAG 2.x A/AA)");
+  await ensureA11yFixtures({ apiBase, accountA, accountB, tokenA, tokenB });
+  const activeBrowser = await ensureBrowser();
+  const context = await activeBrowser.createBrowserContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(30_000);
+  page.setDefaultNavigationTimeout(60_000);
+  await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+  page.on("pageerror", (error) => {
+    a11yConsoleErrors.push(`a11y pageerror: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  page.on("console", (message) => {
+    if (message.type() === "error") a11yConsoleErrors.push(`a11y console: ${message.text()}`);
+  });
+
+  const records = [];
+  const audit = async (state) => {
+    await sleep(250); // let fonts/layout settle before measuring contrast
+    const record = await auditPage(page, { state });
+    records.push(record);
+    await screenshot(page, `a11y-${state}`);
+    log(
+      `[a11y] ${state}: critical=${record.counts.critical} serious=${record.counts.serious} `
+      + `moderate=${record.counts.moderate} minor=${record.counts.minor} (${record.ruleCount} rule groups)`
+    );
+    return record;
+  };
+
+  try {
+    // Anonymous auth screen.
+    await gotoAuth(page, webBase);
+    await audit("app-auth");
+
+    // Signed-in shell, then an open conversation with a real message.
+    await signIn(page, accountA);
+    await waitForSelector(page, '[data-testid="app-shell"]', 40_000);
+    await audit("app-shell");
+    const chatRow = await openChatRow(page, accountB.displayName);
+    assert(chatRow !== null, "a11y phase: direct chat row not found in the sidebar");
+    await waitForSelector(page, '[data-testid="message-input"]', 30_000);
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-testid^="message-row-"]').length > 0,
+      { timeout: 20_000, polling: 200 }
+    ).catch(() => undefined);
+    await audit("app-conversation");
+
+    // New-chat dialog.
+    await clickTestId(page, "new-chat-button");
+    await waitForSelector(page, '[data-testid="new-chat-dialog"]', 20_000);
+    await audit("app-new-chat-dialog");
+    await page.keyboard.press("Escape");
+    await waitForSelectorAbsent(page, '[data-testid="new-chat-dialog"]', 15_000);
+
+    // Requests dialog (contains at least one pending incoming request).
+    await clickTestId(page, "requests-button");
+    await waitForSelector(page, '[data-testid="requests-dialog"]', 20_000);
+    await audit("app-requests-dialog");
+    await page.keyboard.press("Escape");
+    await waitForSelectorAbsent(page, '[data-testid="requests-dialog"]', 15_000);
+
+    // Profile dialog.
+    await clickTestId(page, "profile-menu");
+    await waitForSelector(page, '[data-testid="profile-dialog"]', 20_000);
+    await audit("app-profile-dialog");
+    await page.keyboard.press("Escape");
+    await waitForSelectorAbsent(page, '[data-testid="profile-dialog"]', 15_000);
+
+    // Public marketing/docs pages (same browser; no auth required).
+    for (const entry of PUBLIC_A11Y_PAGES) {
+      await page.goto(`${webBase}${entry.path}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await page.waitForSelector("main h1, h1", { timeout: 30_000 }).catch(() => undefined);
+      await audit(entry.state);
+    }
+  } finally {
+    await context.close().catch(() => undefined);
+  }
+
+  const baseline = loadA11yBaseline();
+  const axeVersion = readAxeVersion();
+  const gate = evaluateA11yGate(records, baseline);
+  const artifacts = writeA11yArtifacts({
+    artifactsDir: runDirectories.artifactsDir,
+    records,
+    gate,
+    baseline,
+    axeVersion,
+    tags: A11Y_TAGS
+  });
+  printA11ySummary(gate);
+  log(`a11y JSON: ${artifacts.reportPath}`);
+  log(`a11y summary: ${artifacts.summaryPath}`);
+  const relevantConsoleErrors = a11yConsoleErrors.filter(
+    (entry) => !/favicon|404 \(Not Found\)|401 \(Unauthorized\)|403 \(Forbidden\)|net::ERR_ABORTED/iu.test(entry)
+  );
+  if (relevantConsoleErrors.length > 0) {
+    warn(`a11y phase logged ${relevantConsoleErrors.length} unexpected console error(s)`);
+  }
+  a11ySummary = {
+    gate: { failed: gate.failed, totals: gate.totals },
+    axeVersion,
+    reportPath: artifacts.reportPath,
+    summaryPath: artifacts.summaryPath,
+    baselineExceptions: baseline.exceptions.length,
+    consoleErrors: relevantConsoleErrors.slice(0, MAX_CONSOLE_ERRORS_REPORTED)
+  };
+  record(
+    "accessibility audit: no critical/serious WCAG 2.x A/AA violations",
+    !gate.failed,
+    `critical=${gate.totals.critical} serious=${gate.totals.serious} moderate=${gate.totals.moderate} `
+    + `minor=${gate.totals.minor} over ${gate.states} states; see a11y-summary.md`
+  );
+  return a11ySummary;
+}
+
 /* --------------------------------------------------------------- main flow */
 
 async function main() {
@@ -660,9 +863,24 @@ async function main() {
     displayName: "E2E Bob",
     password: randomPassword()
   };
-  await registerAccount(apiBase, accountA);
-  await registerAccount(apiBase, accountB);
+  const registrationA = await registerAccount(apiBase, accountA);
+  const registrationB = await registerAccount(apiBase, accountB);
+  accountA.userId = registrationA?.user?.id;
+  accountB.userId = registrationB?.user?.id;
+  const tokenA = registrationA?.tokens?.accessToken;
+  const tokenB = registrationB?.tokens?.accessToken;
+  assert(typeof accountA.userId === "string" && typeof accountB.userId === "string", "registration did not return account ids");
+  assert(typeof tokenA === "string" && typeof tokenB === "string", "registration did not return access tokens");
   record("E2E accounts registered against a live API", true, "fresh A/B accounts (credentials never logged)");
+
+  if (a11yOnly) {
+    if (skipA11y) {
+      log("accessibility phase skipped because E2E_SKIP_A11Y=1");
+      return;
+    }
+    await runA11ySuite({ apiBase, webBase, accountA, accountB, tokenA, tokenB });
+    return;
+  }
 
   await runBrowserSuite({ apiBase, webBase, accountA, accountB });
 
@@ -676,6 +894,12 @@ async function main() {
       && !/net::ERR_ABORTED/iu.test(entry);
   });
   record("no unexpected page/console errors", nonNoise.length === 0, nonNoise.slice(0, MAX_CONSOLE_ERRORS_REPORTED).join(" | "));
+
+  if (skipA11y) {
+    log("accessibility phase skipped because E2E_SKIP_A11Y=1");
+  } else {
+    await runA11ySuite({ apiBase, webBase, accountA, accountB, tokenA, tokenB });
+  }
 }
 
 async function writeReport(extra = {}) {
@@ -695,6 +919,7 @@ async function writeReport(extra = {}) {
     results,
     consoleErrors,
     screenshots,
+    ...(a11ySummary === null ? {} : { a11y: a11ySummary }),
     ...(extra.fatalError === undefined ? {} : { fatalError: extra.fatalError })
   };
   try {

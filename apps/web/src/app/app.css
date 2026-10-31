@@ -709,9 +709,16 @@
 }
 
 .sidebar__foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   padding: 10px;
   border-top: 1px solid var(--lux-line);
   background: rgba(9, 7, 20, 0.4);
+}
+
+.sidebar__foot .connection-pill {
+  padding: 2px 10px;
 }
 
 .profile-button {

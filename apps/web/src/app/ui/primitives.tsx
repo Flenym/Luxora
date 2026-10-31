@@ -249,6 +249,8 @@ export function Popover({ open, x, y, onClose, label, children }: PopoverProps) 
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = window.requestAnimationFrame(() => {
       const panel = panelRef.current;
       const first = panel?.querySelector<HTMLElement>("[role='menuitem'], button:not([disabled])");
@@ -258,6 +260,14 @@ export function Popover({ open, x, y, onClose, label, children }: PopoverProps) 
       window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown, true);
+      // Restore focus to the control that opened the menu once it is unmounted.
+      window.requestAnimationFrame(() => {
+        const active = document.activeElement;
+        const focusIsLost = active === null || active === document.body;
+        if (previouslyFocused !== null && document.contains(previouslyFocused) && focusIsLost) {
+          previouslyFocused.focus({ preventScroll: true });
+        }
+      });
     };
   }, [open]);
 

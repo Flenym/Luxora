@@ -183,6 +183,7 @@ export function Sidebar({ onNewChat, onRequests, onProfile }: SidebarProps) {
 
   return (
     <aside className="sidebar" aria-label={s.sidebar.chatsAria}>
+      <h1 className="sr-only">{s.sidebar.chatsAria}</h1>
       <div className="sidebar__brandrow">
         <div className="brand">
           <img className="brand__mark" src="/logo.png" alt="" width={30} height={30} />
@@ -325,37 +326,39 @@ export function Sidebar({ onNewChat, onRequests, onProfile }: SidebarProps) {
           type="button"
           className="profile-button"
           data-testid="profile-menu"
-          aria-label={s.sidebar.profileButton}
+          title={s.sidebar.profileButton}
           aria-haspopup="dialog"
           onClick={onProfile}
         >
-          <Avatar
-            name={api.user?.displayName ?? s.conversation.you}
-            path={api.user?.avatarPath ?? null}
-            size="sm"
-            presence={api.connection === "online" ? "online" : "offline"}
-          />
+          <span aria-hidden="true">
+            <Avatar
+              name={api.user?.displayName ?? s.conversation.you}
+              path={api.user?.avatarPath ?? null}
+              size="sm"
+              presence={api.connection === "online" ? "online" : "offline"}
+            />
+          </span>
           <span className="profile-button__text">
             <span className="profile-button__name">{api.user?.displayName ?? s.conversation.you}</span>
-            <span
-              className={`connection-pill connection-pill--${connectionTone}`}
-              data-testid="app-connection-banner"
-              role="status"
-              aria-live="polite"
-              aria-label={s.app.connectionAria(connectionLabel)}
-              title={
-                api.connection === "offline"
-                  ? s.connection.offlineHint
-                  : api.connection === "reconnecting"
-                    ? s.connection.reconnectingHint
-                    : connectionLabel
-              }
-            >
-              <span className="connection-pill__dot" aria-hidden="true" />
-              {connectionLabel}
-            </span>
           </span>
         </button>
+        <span
+          className={`connection-pill connection-pill--${connectionTone}`}
+          data-testid="app-connection-banner"
+          role="status"
+          aria-live="polite"
+          aria-label={s.app.connectionAria(connectionLabel)}
+          title={
+            api.connection === "offline"
+              ? s.connection.offlineHint
+              : api.connection === "reconnecting"
+                ? s.connection.reconnectingHint
+                : connectionLabel
+          }
+        >
+          <span className="connection-pill__dot" aria-hidden="true" />
+          {connectionLabel}
+        </span>
       </div>
     </aside>
   );
