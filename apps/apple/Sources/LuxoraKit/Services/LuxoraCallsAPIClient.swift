@@ -10,6 +10,9 @@ struct APICallParticipant: Decodable, Equatable, Sendable {
     let memberId: UUID
     let role: String
     let status: String
+    /// Server time this participant accepted the call. Nil until the invitee
+    /// accepts; used only to derive an answered duration, never invented.
+    let acceptedAtMs: Int?
 }
 
 struct APICall: Decodable, Equatable, Sendable {
@@ -23,6 +26,12 @@ struct APICall: Decodable, Equatable, Sendable {
     let creatorMemberId: UUID
     let participants: [APICallParticipant]
     let endReason: String?
+    /// Server timestamps of the call record. They come from the projected
+    /// call response, so relative labels and durations are always derived from
+    /// server truth instead of a client clock guess.
+    let createdAtMs: Int
+    let updatedAtMs: Int
+    let endedAtMs: Int?
 }
 
 struct APICallEnvelope: Decodable, Sendable {

@@ -27,7 +27,12 @@ final class CallsStoreTests: XCTestCase {
         state: CallStateValue,
         creator: UUID,
         myStatus: String,
-        revision: Int = 1
+        revision: Int = 1,
+        endReason: String? = nil,
+        myAcceptedAtMs: Int? = nil,
+        createdAtMs: Int = 1_700_000_000_000,
+        updatedAtMs: Int = 1_700_000_100_000,
+        endedAtMs: Int? = nil
     ) -> APICall {
         APICall(
             callId: callID,
@@ -39,10 +44,25 @@ final class CallsStoreTests: XCTestCase {
             epoch: 1,
             creatorMemberId: creator,
             participants: [
-                APICallParticipant(membershipId: UUID(), memberId: creator, role: "host", status: "accepted"),
-                APICallParticipant(membershipId: UUID(), memberId: me, role: "member", status: myStatus),
+                APICallParticipant(
+                    membershipId: UUID(),
+                    memberId: creator,
+                    role: "host",
+                    status: "accepted",
+                    acceptedAtMs: nil
+                ),
+                APICallParticipant(
+                    membershipId: UUID(),
+                    memberId: me,
+                    role: "member",
+                    status: myStatus,
+                    acceptedAtMs: myAcceptedAtMs
+                ),
             ],
-            endReason: nil
+            endReason: endReason,
+            createdAtMs: createdAtMs,
+            updatedAtMs: updatedAtMs,
+            endedAtMs: endedAtMs
         )
     }
 

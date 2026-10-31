@@ -5,8 +5,12 @@ import SwiftUI
 /// Only renders when the call store has something to show, so a conversation
 /// without calls looks exactly as before. Every action goes through the store,
 /// which re-reads the call from the server after each transition.
+///
+/// The ring state label and the media status text are derived from server call
+/// state and the published `mediaState`; the banner never implies that audio is
+/// connected before it is.
 struct CallBanner: View {
-    @Bindable var store: CallsStore
+    let store: CallsStore
     let title: String
 
     var body: some View {
@@ -16,9 +20,10 @@ struct CallBanner: View {
                     .foregroundStyle(.green)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.headline)
-                    Text("Входящий звонок")
+                    Text(CallHistoryDerivation.incomingRingLabel(state: incoming.state))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("call-incoming-state")
                 }
                 Spacer()
                 Button("Отклонить", role: .destructive) {
@@ -43,10 +48,11 @@ struct CallBanner: View {
                     .foregroundStyle(.green)
                     .symbolEffect(.variableColor.iterative, isActive: store.mediaState == .connected)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(stateTitle(active.state)).font(.headline)
-                    Text(mediaDetail)
+                    Text(CallHistoryDerivation.callStateTitle(active.state)).font(.headline)
+                    Text(store.mediaStatusTitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("call-media-status")
                 }
                 Spacer()
                 Button("Завершить", role: .destructive) {
@@ -60,28 +66,6 @@ struct CallBanner: View {
             .padding(.horizontal)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("call-active-banner")
-        }
-    }
-
-    private var mediaDetail: String {
-        switch store.mediaState {
-        case .idle: return "Ожидание собеседника"
-        case .joining: return "Подключение микрофона…"
-        case .connected:
-            return store.remoteAudioCount > 0 ? "Голос собеседника слышен" : "Вы в звонке, ждём собеседника"
-        case .unavailable: return "Голос недоступен"
-        }
-    }
-
-    private func stateTitle(_ state: CallStateValue) -> String {
-        switch state {
-        case .created, .inviting: return "Вызов…"
-        case .ringing: return "Звонит"
-        case .connecting: return "Подключение…"
-        case .active: return "Разговор"
-        case .reconnecting: return "Переподключение…"
-        case .ending: return "Завершение…"
-        case .ended: return "Звонок завершён"
         }
     }
 }

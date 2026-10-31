@@ -47,6 +47,7 @@ public struct LuxoraPhoneRootView: View {
     private let pushRegistrationStore: PushRegistrationStore?
     private let chatFoldersStore: ChatFoldersStore?
     private let communityStore: CommunityStore?
+    private let communityManagementStore: CommunityManagementStore?
     private let chatTopicsStore: ChatTopicsStore?
     private let globalSearchStore: GlobalSearchStore?
     private let updateChatPreferences: (UUID, ChatPreferencesPatch) async -> Bool
@@ -71,6 +72,7 @@ public struct LuxoraPhoneRootView: View {
         pushRegistrationStore: PushRegistrationStore? = nil,
         chatFoldersStore: ChatFoldersStore? = nil,
         communityStore: CommunityStore? = nil,
+        communityManagementStore: CommunityManagementStore? = nil,
         chatTopicsStore: ChatTopicsStore? = nil,
         globalSearchStore: GlobalSearchStore? = nil,
         updateChatPreferences: @escaping (UUID, ChatPreferencesPatch) async -> Bool = { _, _ in false },
@@ -88,6 +90,7 @@ public struct LuxoraPhoneRootView: View {
         self.pushRegistrationStore = pushRegistrationStore
         self.chatFoldersStore = chatFoldersStore
         self.communityStore = communityStore
+        self.communityManagementStore = communityManagementStore
         self.chatTopicsStore = chatTopicsStore
         self.globalSearchStore = globalSearchStore
         self.updateChatPreferences = updateChatPreferences
@@ -152,7 +155,11 @@ public struct LuxoraPhoneRootView: View {
 
             Tab(phoneString("tab.calls"), systemImage: "phone.fill", value: .calls) {
                 NavigationStack {
-                    PhoneCallsView(gate: featureMatrix.calls)
+                    PhoneCallsView(
+                        store: store,
+                        gate: featureMatrix.calls,
+                        openConversation: openConversation
+                    )
                 }
             }
             .accessibilityIdentifier("tab-calls")
@@ -200,6 +207,7 @@ public struct LuxoraPhoneRootView: View {
                             if let communityStore {
                                 PhoneCommunitiesView(
                                     communityStore: communityStore,
+                                    managementStore: communityManagementStore,
                                     communityListState: store.conversationListState,
                                     refreshCommunities: {
                                         await store.refreshConversations()
@@ -220,6 +228,12 @@ public struct LuxoraPhoneRootView: View {
                                 PhoneCommunityProfileView(
                                     communityStore: communityStore,
                                     topicsStore: chatTopicsStore,
+                                    managementStore: communityManagementStore,
+                                    participantResolver: { userID in
+                                        store.conversations.first(where: {
+                                            $0.avatar.id == userID
+                                        })?.avatar
+                                    },
                                     initialConversation: conversation,
                                     openConversation: { returnToConversation($0) },
                                     leftCommunity: { _ in
@@ -288,6 +302,7 @@ public struct LuxoraPhoneRootView: View {
         }
         .tint(LuxoraTheme.accent)
         .preferredColorScheme(colorScheme)
+        .phoneActiveCallPresentation(store: store)
         #if DEBUG
         .task { applyDebugRouteIfNeeded() }
         #endif
@@ -2196,6 +2211,7 @@ private struct PhoneDirectConversationView: View {
     @State private var scheduleDraft = ""
     @State private var scheduleDate = Date().addingTimeInterval(3_600)
     @State private var scheduleError: String?
+    @State private var presentsCallHistory = false
     #if DEBUG
     @State private var didInstallDebugMessageMutations = false
     @State private var didApplyDebugMessageCaptureState = false
@@ -2734,34 +2750,63 @@ private struct PhoneDirectConversationView: View {
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
-                    if let callsStore {
+                    if callsUsable, let callsStore {
                         Task { await callsStore.startCall(chatID: conversation.id, mediaMode: "audio") }
                     } else {
                         presentedGate = callsGate
                     }
                 } label: {
-                    if callsStore != nil {
+                    if callsUsable, callsStore != nil {
                         Image(systemName: "phone.fill")
                     } else {
                         LockedToolbarIcon(symbol: "phone.fill")
                     }
                 }
-                .tint(callsStore == nil ? .secondary : .green)
+                .tint(callsUsable && callsStore != nil ? .green : .secondary)
                 .accessibilityLabel(phoneString("conversation.audio_call"))
                 .accessibilityIdentifier("conversation-audio-call")
                 Button {
-                    presentedGate = callsGate
+                    presentedGate = videoCallGate
                 } label: {
                     LockedToolbarIcon(symbol: "video.fill")
                 }
                 .tint(.secondary)
                 .accessibilityLabel(phoneString("conversation.video_call"))
                 .accessibilityIdentifier("conversation-video-call")
+                Menu {
+                    Button {
+                        presentsCallHistory = true
+                    } label: {
+                        Label("История звонков", systemImage: "clock.arrow.circlepath")
+                    }
+                    .accessibilityIdentifier("conversation-call-history-item")
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .tint(.secondary)
+                .accessibilityLabel("История звонков")
+                .accessibilityIdentifier("conversation-call-history")
             }
         }
         .sheet(item: $presentedGate) { gate in
             PhoneFeatureStatusSheet(gate: gate)
                 .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $presentsCallHistory) {
+            if let callsStore {
+                ChatCallHistoryView(
+                    store: store,
+                    callsStore: callsStore,
+                    conversation: conversation,
+                    gate: callsGate
+                )
+            } else {
+                ContentUnavailableView(
+                    "История звонков недоступна",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("Сеанс звонков не создан, поэтому Luxora не показывает историю.")
+                )
+            }
         }
         .sheet(item: $forwardedMessage) { message in
             PhoneForwardDestinationSheet(
@@ -2821,6 +2866,27 @@ private struct PhoneDirectConversationView: View {
 
     private var usesExpandedMessageLayout: Bool {
         dynamicTypeSize >= .xxLarge
+    }
+
+    /// A real call may only be started when the server advertises the calls
+    /// media plane (projected as `.limited`, a preview) and the session store
+    /// exists. Otherwise the control explains the current gate instead of
+    /// sending a request the server cannot serve.
+    private var callsUsable: Bool {
+        callsGate.state == FeatureGateState.available || callsGate.state == FeatureGateState.limited
+    }
+
+    /// Video is never started from the client: the server join grant only
+    /// authorizes the microphone, so this explains the real limitation instead
+    /// of opening a fake video mode.
+    private var videoCallGate: FeatureGate {
+        FeatureGate(
+            id: "video-calls",
+            title: phoneString("conversation.video_call"),
+            symbol: "video.fill",
+            state: callsUsable ? FeatureGateState.limited : callsGate.state,
+            detail: "Видеозвонки недоступны: серверный доступ к звонкам разрешает только микрофон. Luxora не включает видеорежим."
+        )
     }
 
     #if DEBUG
@@ -3582,10 +3648,34 @@ private struct PhoneSpacesView: View {
 }
 
 private struct PhoneCallsView: View {
+    @Bindable var store: MessengerStore
     let gate: FeatureGate
+    let openConversation: (UUID) -> Void
+
+    @Environment(\.callsStore) private var callsStore
     @State private var presentedGate: FeatureGate?
 
+    /// The server only advertises calls (`features.calls=true`) once the media
+    /// plane is configured, and the feature matrix projects that preview state
+    /// as `.limited`. Only those two states may show a real server call log.
+    private var callsUsable: Bool {
+        gate.state == FeatureGateState.available || gate.state == FeatureGateState.limited
+    }
+
     var body: some View {
+        if callsUsable, let callsStore {
+            PhoneCallsHistoryView(
+                store: store,
+                callsStore: callsStore,
+                gate: gate,
+                openConversation: openConversation
+            )
+        } else {
+            lockedCallsScreen
+        }
+    }
+
+    private var lockedCallsScreen: some View {
         List {
             Section {
                 PhoneDestinationHero(

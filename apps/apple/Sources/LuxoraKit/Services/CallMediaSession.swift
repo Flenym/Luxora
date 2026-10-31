@@ -20,6 +20,10 @@ final class CallMediaSession {
     private let relay: Relay
     private var remoteAudioTrackCount = 0
 
+    /// Truthful published microphone state of this session. `start` enables the
+    /// microphone, so this only becomes false through `setMicrophone`.
+    private(set) var isMicrophoneEnabled = false
+
     init(onEvent: @escaping @MainActor (Event) -> Void) {
         let relay = Relay(onEvent: onEvent)
         self.relay = relay
@@ -33,7 +37,16 @@ final class CallMediaSession {
     func start(serverURL: String, token: String) async throws {
         try await room.connect(url: serverURL, token: token)
         try await room.localParticipant.setMicrophone(enabled: true)
+        isMicrophoneEnabled = true
         relay.emit(.connected)
+    }
+
+    /// Publishes the microphone state through the LiveKit session. Throws when
+    /// the media session is no longer able to change it; the caller must not
+    /// claim a mute state that was not applied.
+    func setMicrophone(enabled: Bool) async throws {
+        try await room.localParticipant.setMicrophone(enabled: enabled)
+        isMicrophoneEnabled = enabled
     }
 
     /// Leaves the room and releases the microphone and remote audio.
