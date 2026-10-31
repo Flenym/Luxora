@@ -22,6 +22,12 @@ RUN apk add --no-cache --no-progress coturn bash \
 
 EXPOSE 3478 3478/udp
 
+# Default to the unprivileged account created above. The local compose harness
+# explicitly overrides this to 0:0 because the relay binds port 3478 with only
+# NET_BIND_SERVICE retained; the image itself must still declare a non-root
+# default (Trivy DS-0002).
+USER turn
+
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=5 \
     CMD bash -ec 'exec 3<>/dev/tcp/127.0.0.1/3478; exec 3>&-'
 

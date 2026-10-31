@@ -320,6 +320,7 @@ export function RequestsDialog({ open, onClose, onNotify }: { open: boolean; onC
             <button
               type="button"
               className="button button--primary button--sm"
+              data-testid="request-accept"
               onClick={() => void accept(request)}
               disabled={busyId === request.id}
             >
@@ -329,6 +330,7 @@ export function RequestsDialog({ open, onClose, onNotify }: { open: boolean; onC
             <button
               type="button"
               className="button button--ghost button--sm"
+              data-testid="request-decline"
               onClick={() => void decline(request)}
               disabled={busyId === request.id}
             >
