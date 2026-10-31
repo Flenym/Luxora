@@ -508,6 +508,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   });
   await app.register(cors, {
     credentials: false,
+    // A browser client on another origin must be able to issue every mutation
+    // the API exposes. @fastify/cors defaults to GET,HEAD,POST only, which
+    // silently blocks PATCH/PUT/DELETE after a successful preflight.
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    // Header material the browser must be able to read: conditional/range
+    // downloads for attachment and data-export content, and bounded retry
+    // hints. Origin policy is unchanged.
+    exposedHeaders: [
+      "ETag",
+      "Content-Range",
+      "Accept-Ranges",
+      "Content-Disposition",
+      "Retry-After",
+      "X-Content-Type-Options"
+    ],
+    maxAge: 86_400,
     origin(origin, callback) {
       if (origin === undefined || config.corsOrigins.includes(origin)) {
         callback(null, true);
