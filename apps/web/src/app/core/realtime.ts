@@ -81,6 +81,20 @@ const HELLO_TIMEOUT_MS = 6_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 25_000;
 const WATCHDOG_GRACE_MS = 15_000;
 const SYNC_RECOVERY_RETRY_MS = 2_000;
+// A hostile or broken gateway must not be able to schedule an unbounded timer
+// from the `hello.heartbeatIntervalMs` frame. The interval is only a liveness
+// hint, so clamp it to a safe range before it reaches `setTimeout`.
+const MIN_HEARTBEAT_INTERVAL_MS = 1_000;
+const MAX_HEARTBEAT_INTERVAL_MS = 120_000;
+
+/** Clamp a server-provided heartbeat interval to a bounded, finite duration. */
+export function clampHeartbeatIntervalMs(value: unknown, fallback: number): number {
+  const safeFallback = Number.isFinite(fallback) && fallback > 0
+    ? Math.min(MAX_HEARTBEAT_INTERVAL_MS, Math.max(MIN_HEARTBEAT_INTERVAL_MS, Math.floor(fallback)))
+    : DEFAULT_HEARTBEAT_INTERVAL_MS;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return safeFallback;
+  return Math.min(MAX_HEARTBEAT_INTERVAL_MS, Math.max(MIN_HEARTBEAT_INTERVAL_MS, Math.floor(value)));
+}
 
 /** Resolve the realtime URL from the API base (never leaks a token). */
 export function resolveRealtimeUrl(apiBaseUrl: string, fallbackOrigin?: string): string {
@@ -157,7 +171,10 @@ export class RealtimeClient {
     this.#baseBackoffMs = options.baseBackoffMs ?? 500;
     this.#maxBackoffMs = options.maxBackoffMs ?? 30_000;
     this.#jitterRatio = options.jitterRatio ?? 0.25;
-    this.#configuredHeartbeatMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.#configuredHeartbeatMs = clampHeartbeatIntervalMs(
+      options.heartbeatIntervalMs,
+      DEFAULT_HEARTBEAT_INTERVAL_MS
+    );
     this.#maxConsecutiveFailures = options.maxConsecutiveFailures ?? 0;
     const factory = options.webSocketFactory;
     if (factory !== undefined) {
@@ -263,7 +280,13 @@ export class RealtimeClient {
 
   #armWatchdog(): void {
     this.#disarmWatchdog();
-    const timeoutMs = this.#heartbeatIntervalMs + WATCHDOG_GRACE_MS;
+    // Re-clamp at the scheduling site so the timeout passed to the runtime is
+    // provably bounded even if a future path bypasses the constructor clamp.
+    const heartbeatMs = Math.min(
+      MAX_HEARTBEAT_INTERVAL_MS,
+      Math.max(MIN_HEARTBEAT_INTERVAL_MS, this.#heartbeatIntervalMs)
+    );
+    const timeoutMs = heartbeatMs + WATCHDOG_GRACE_MS;
     this.#watchdogTimer = this.#timers.setTimeout(() => {
       this.#watchdogTimer = null;
       if (this.#status !== "online") return;
@@ -330,10 +353,10 @@ export class RealtimeClient {
     switch (frame.type) {
       case "hello":
         this.#clearAuthTimer();
-        this.#heartbeatIntervalMs =
-          typeof frame.heartbeatIntervalMs === "number" && frame.heartbeatIntervalMs > 0
-            ? frame.heartbeatIntervalMs
-            : this.#configuredHeartbeatMs;
+        this.#heartbeatIntervalMs = clampHeartbeatIntervalMs(
+          frame.heartbeatIntervalMs,
+          this.#configuredHeartbeatMs
+        );
         this.#authenticate();
         return;
       case "ready":

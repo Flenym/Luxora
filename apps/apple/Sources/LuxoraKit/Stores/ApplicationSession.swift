@@ -1716,11 +1716,11 @@ public final class ApplicationSession {
             }
         )
 
-        let communityManagementStore = CommunityManagementStore(
+        let managementStore = CommunityManagementStore(
             currentUserID: userID,
             communityStore: communitiesStore
         )
-        communityManagementStore.configureRemote(
+        managementStore.configureRemote(
             inviteLinkLoader: { chatID in
                 try await coordinator.withAccessToken { token in
                     try await communityAPI.inviteLinks(chatID: chatID, token: token)
@@ -1937,7 +1937,7 @@ public final class ApplicationSession {
         chatFoldersStore = foldersStore
         chatFoldersBinding = foldersBinding
         communityStore = communitiesStore
-        communityManagementStore = communityManagementStore
+        communityManagementStore = managementStore
         chatTopicsStore = topicsStore
         globalSearchStore = searchStore
         synchronizedDraftStore = draftsStore

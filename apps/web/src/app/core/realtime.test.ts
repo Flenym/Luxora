@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { LuxoraApiError, type DurableRealtimeEvent, type Message } from "../contract";
 import {
   RealtimeClient,
+  clampHeartbeatIntervalMs,
   resolveRealtimeUrl,
   type CursorStorage,
   type RealtimeClientOptions,
@@ -437,5 +438,19 @@ describe("realtime URL", () => {
     expect(resolveRealtimeUrl("https://api.luxora.app", undefined)).toBe("wss://api.luxora.app/v2/realtime");
     expect(resolveRealtimeUrl("http://127.0.0.1:2222/", undefined)).toBe("ws://127.0.0.1:2222/v2/realtime");
     expect(resolveRealtimeUrl("", "http://localhost:4173")).toBe("ws://localhost:4173/v2/realtime");
+  });
+});
+
+describe("heartbeat interval clamping", () => {
+  it("bounds a hostile server heartbeat before it is used as a timer", () => {
+    expect(clampHeartbeatIntervalMs(25_000, 25_000)).toBe(25_000);
+    expect(clampHeartbeatIntervalMs(Number.MAX_SAFE_INTEGER, 25_000)).toBe(120_000);
+    expect(clampHeartbeatIntervalMs(-1, 25_000)).toBe(25_000);
+    expect(clampHeartbeatIntervalMs(0, 25_000)).toBe(25_000);
+    expect(clampHeartbeatIntervalMs(Number.POSITIVE_INFINITY, 25_000)).toBe(25_000);
+    expect(clampHeartbeatIntervalMs(Number.NaN, 25_000)).toBe(25_000);
+    expect(clampHeartbeatIntervalMs("25000", 25_000)).toBe(25_000);
+    expect(clampHeartbeatIntervalMs(1, 25_000)).toBe(1_000);
+    expect(clampHeartbeatIntervalMs(90_000, 25_000)).toBe(90_000);
   });
 });

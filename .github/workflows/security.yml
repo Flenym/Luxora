@@ -157,7 +157,11 @@ jobs:
       - name: Scan pinned coturn image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: coturn/coturn:4.16.0-alpine3.24@sha256:901954a6b057079e1b12b2e4b4de06e3419e503336ba76c18f62debca3ac4b42
+          # Local-dev harness only. The stable alpine tags still ship brotli
+          # 1.2.0-r1 (CVE-2026-111497, CRITICAL); this 2026-10-31 edge-alpine
+          # digest is built on Alpine 3.24.3 and scans clean. Rotate to the
+          # next stable release once upstream rebuilds on the patched base.
+          image-ref: coturn/coturn:edge-alpine@sha256:fe2423b3c9b0a8d919c89908e254ea93aaf028e98d3e34f31bc940e9f0ed58f2
           scanners: vuln,secret
           version: v0.73.0
           format: table

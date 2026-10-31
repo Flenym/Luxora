@@ -74,7 +74,13 @@ services:
         ipv4_address: 172.31.80.10
 
   turn:
-    image: coturn/coturn:4.16.0-alpine3.24@sha256:901954a6b057079e1b12b2e4b4de06e3419e503336ba76c18f62debca3ac4b42
+    # Local development harness only (never shipped to users). The upstream
+    # stable alpine tags (4.16/4.18-alpine3.24) still bundle brotli-libs
+    # 1.2.0-r1, which Trivy flags as CRITICAL (CVE-2026-111497, fixed in
+    # 1.2.1-r0). This edge-alpine digest from 2026-10-31 is built on Alpine
+    # 3.24.3 and scans clean; replace it with the next stable tag as soon as
+    # upstream rebuilds on the patched base image.
+    image: coturn/coturn:edge-alpine@sha256:fe2423b3c9b0a8d919c89908e254ea93aaf028e98d3e34f31bc940e9f0ed58f2
     command:
       - --listening-ip=0.0.0.0
       - --relay-ip=172.31.80.20
