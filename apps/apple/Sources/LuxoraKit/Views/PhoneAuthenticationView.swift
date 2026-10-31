@@ -1474,10 +1474,12 @@ private struct PhoneAuthHeading: View {
     var body: some View {
         VStack(spacing: 10) {
             Text(title)
-                .font(.title2.weight(.semibold))
+                // Explicit semantic text style so the headline genuinely scales
+                // with Dynamic Type (the runtime audit samples this screen).
+                .font(.system(.title2, weight: .semibold))
                 .accessibilityHeading(.h1)
             Text(detail)
-                .font(.body)
+                .font(.system(.body))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)

@@ -134,6 +134,11 @@ jobs:
           xcrun simctl boot "$UDID" 2>/dev/null || true
           xcrun simctl bootstatus "$UDID" -b
           echo "UI_TEST_SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
+          # Pin the accessibility environment so the UI-test audits measure the
+          # same Dynamic Type size and appearance on every run instead of a
+          # runner-dependent default (this removes cross-run sampling flakiness).
+          xcrun simctl ui "$UDID" content_size medium
+          xcrun simctl ui "$UDID" appearance light
           # Prefer the software keyboard so keyboard-adjacent actions behave like
           # a physical iPhone (the host may otherwise expose a hardware keyboard).
           defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false || true
