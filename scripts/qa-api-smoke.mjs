@@ -25,6 +25,10 @@
  *   calls      create/ring/accept/join-grant(503)/decline/hangup/list
  *   folders    create/list/patch/reorder/delete + stateRevision + nonce replay
  *   prefs      archive/mute partial updates
+ *   pagination cursor convergence over messages/chats/search/folders plus the
+ *              remaining lists (members/topics/invite-links/join-requests/
+ *              history/calls/sessions): no loss/duplication, terminal cursor,
+ *              garbage-cursor 400 and limit bounds
  *   exports    request -> poll -> download headers/hash/byte-range
  *   deletion   schedule -> idempotent re-schedule -> cancel (never executes)
  *   authz      anonymous 401, stranger 404/FORBIDDEN consistency, admin truth
@@ -460,6 +464,7 @@ const ctx = {
   tokens: {},
   passwords: {},
   ids: {},
+  capabilities: null,
   secrets: { refreshTokens: [], linkSecrets: [], accessTokens: [] },
   adminToken: null
 };
@@ -514,6 +519,81 @@ async function sendMessage(token, chatId, body, extra = {}) {
   const response = await api("POST", `/v1/chats/${chatId}/messages`, { token, json: payload });
   expectStatus(response, 201, "send message");
   return json(response, "send message").message;
+}
+
+// --- pagination helpers -----------------------------------------------------
+
+function listRowId(row) {
+  if (row === null || typeof row !== "object") return undefined;
+  if (typeof row.id === "string") return row.id;
+  if (typeof row.callId === "string") return row.callId;
+  if (typeof row.membership?.userId === "string") return row.membership.userId;
+  if (typeof row.messageId === "string") return row.messageId;
+  return undefined;
+}
+
+function withListParams(path, { limit, cursor } = {}) {
+  const parts = [];
+  if (limit !== undefined) parts.push(`limit=${limit}`);
+  if (cursor !== undefined && cursor !== null) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+  if (parts.length === 0) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}${parts.join("&")}`;
+}
+
+/** Follows nextCursor until it is null, asserting no repeated cursor or row. */
+async function paginateList(path, token, { field = "items", limit = 2, maxPages = 40 } = {}) {
+  const ids = [];
+  const cursors = new Set();
+  let cursor = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const response = await api("GET", withListParams(path, { limit, cursor }), { token });
+    expectStatus(response, 200, `paginate ${path}`);
+    const rows = response.json?.[field];
+    ok(Array.isArray(rows), `paginate ${path}: ${field} must be an array`);
+    for (const row of rows) {
+      const id = listRowId(row);
+      ok(typeof id === "string", `paginate ${path}: every row must expose an identifier`);
+      ids.push(id);
+    }
+    ok(rows.length <= limit, `paginate ${path}: page must not exceed limit=${limit}`);
+    const next = response.json.nextCursor ?? null;
+    if (next === null) {
+      eq(new Set(ids).size, ids.length, `paginate ${path}: no duplicate rows across pages`);
+      return ids;
+    }
+    ok(typeof next === "string" && next.length > 0, `paginate ${path}: nextCursor must be a string`);
+    ok(!cursors.has(next), `paginate ${path}: nextCursor must not repeat`);
+    cursors.add(next);
+    cursor = next;
+  }
+  throw new Error(`paginate ${path}: did not terminate within ${maxPages} pages`);
+}
+
+async function fullListIds(path, token, { field = "items", limit = 100 } = {}) {
+  const response = await api("GET", withListParams(path, { limit }), { token });
+  expectStatus(response, 200, `full list ${path}`);
+  const rows = response.json?.[field];
+  ok(Array.isArray(rows), `full list ${path}: ${field} must be an array`);
+  return rows.map((row) => {
+    const id = listRowId(row);
+    ok(typeof id === "string", `full list ${path}: every row must expose an identifier`);
+    return id;
+  });
+}
+
+async function expectInvalidCursor(path, token, { limit = 10 } = {}) {
+  const response = await api("GET", withListParams(path, {
+    limit,
+    cursor: "garbage-cursor-value"
+  }), { token });
+  expectStatus(response, 400, `invalid cursor ${path}`);
+  expectErrorCode(response, "BAD_REQUEST", `invalid cursor ${path}`);
+}
+
+async function expectLimitValidation(path, token, limit) {
+  const response = await api("GET", withListParams(path, { limit }), { token });
+  expectStatus(response, 400, `limit validation ${path} limit=${limit}`);
+  expectErrorCode(response, "VALIDATION_FAILED", `limit validation ${path} limit=${limit}`);
 }
 
 /** Minimal dependency-free PNG encoder (RGB8, no filter) used for the media flow. */
@@ -603,6 +683,7 @@ await step("ops.capabilities", async () => {
   const response = await api("GET", "/v1/capabilities");
   expectStatus(response, 200, "capabilities");
   const body = json(response, "capabilities");
+  ctx.capabilities = body;
   eq(body.schemaVersion, 1, "capabilities schemaVersion");
   eq(body.versions.http[0], 1, "capabilities http version");
   ok(body.versions.realtime.supported.includes(2), "realtime v2 must be supported");
@@ -2170,6 +2251,230 @@ await step("preferences.archive-mute", async () => {
   return "archive/mute partial updates are independent and account scoped";
 });
 
+// --- pagination convergence ------------------------------------------------
+
+await step("pagination.messages-chats", async () => {
+  const a = need(ctx.tokens.a, "user A");
+  const b = need(ctx.users.b, "user B");
+  const chatId = need(ctx.ids.directChatId, "direct chat");
+
+  for (let index = 0; index < 5; index += 1) {
+    await sendMessage(a.accessToken, chatId, `Paged message ${index} ${searchNeedle}`);
+  }
+  const messagePath = `/v1/chats/${chatId}/messages`;
+  const messagesFull = await fullListIds(messagePath, a.accessToken);
+  const messagesPaged = await paginateList(messagePath, a.accessToken);
+  eq(JSON.stringify(messagesPaged), JSON.stringify(messagesFull), "message pages must equal the full history");
+  await expectInvalidCursor(messagePath, a.accessToken);
+  await expectLimitValidation(messagePath, a.accessToken, 101);
+
+  for (let index = 0; index < 3; index += 1) {
+    const created = await api("POST", "/v1/chats", {
+      token: a.accessToken,
+      json: { kind: "group", title: `QA page group ${runId} ${index}`, memberIds: [b.id] }
+    });
+    expectStatus(created, 201, "create paged group");
+  }
+  const chatsFull = await fullListIds("/v1/chats", a.accessToken);
+  const chatsPaged = await paginateList("/v1/chats", a.accessToken);
+  eq(JSON.stringify(chatsPaged), JSON.stringify(chatsFull), "chat pages must equal the full chat list");
+  await expectInvalidCursor("/v1/chats", a.accessToken);
+  return `${messagesPaged.length} messages and ${chatsPaged.length} chats converge with limit=2`;
+});
+
+await step("pagination.search", async () => {
+  const a = need(ctx.tokens.a, "user A");
+  const b = need(ctx.users.b, "user B");
+
+  const messageSearch = `/v1/search/messages?q=${encodeURIComponent(searchNeedle)}`;
+  const messageSearchFull = await fullListIds(messageSearch, a.accessToken);
+  const messageSearchPaged = await paginateList(messageSearch, a.accessToken);
+  eq(JSON.stringify(messageSearchPaged), JSON.stringify(messageSearchFull), "search message pages");
+  await expectInvalidCursor(messageSearch, a.accessToken);
+
+  const userSearch = `/v1/users/search?q=${encodeURIComponent(b.username.slice(0, 10))}`;
+  const userSearchFull = await fullListIds(userSearch, a.accessToken);
+  const userSearchPaged = await paginateList(userSearch, a.accessToken, { limit: 1 });
+  eq(JSON.stringify(userSearchPaged), JSON.stringify(userSearchFull), "search user pages");
+
+  const chatSearch = `/v1/search/chats?q=${encodeURIComponent(`page group ${runId}`)}`;
+  const chatSearchFull = await fullListIds(chatSearch, a.accessToken);
+  const chatSearchPaged = await paginateList(chatSearch, a.accessToken, { limit: 1 });
+  eq(JSON.stringify(chatSearchPaged), JSON.stringify(chatSearchFull), "search chat pages");
+
+  const fileSearch = `/v1/search/files?q=${encodeURIComponent(`qa-smoke-${runId}`)}`;
+  const fileSearchFull = await fullListIds(fileSearch, a.accessToken);
+  const fileSearchPaged = await paginateList(fileSearch, a.accessToken, { limit: 1 });
+  eq(JSON.stringify(fileSearchPaged), JSON.stringify(fileSearchFull), "search file pages");
+  return `search convergence: ${messageSearchPaged.length} messages, ${userSearchPaged.length} users, ` +
+    `${chatSearchPaged.length} chats, ${fileSearchPaged.length} files`;
+});
+
+await step("pagination.folders-bounded", async () => {
+  const a = need(ctx.tokens.a, "user A");
+  const rules = {
+    includeKinds: ["direct"],
+    unreadOnly: false,
+    excludeMuted: false,
+    includeArchived: false
+  };
+  let previousStateRevision = (await api("GET", "/v1/chat-folders", { token: a.accessToken })).json.stateRevision;
+  for (let index = 0; index < 2; index += 1) {
+    const created = await api("POST", "/v1/chat-folders", {
+      token: a.accessToken,
+      json: {
+        title: `Paged folder ${index} ${runId}`,
+        rules,
+        overrides: [],
+        clientNonce: randomUUID()
+      }
+    });
+    expectStatus(created, 201, "create paged folder");
+    previousStateRevision = created.json.stateRevision;
+  }
+
+  // Folders are intentionally bounded (capabilities maxChatFolders = 10), so
+  // the account-global snapshot is not cursor paginated: it is one atomic
+  // stateRevision projection, and clients apply it whole.
+  const response = await api("GET", "/v1/chat-folders?limit=5", { token: a.accessToken });
+  expectStatus(response, 200, "bounded folder list");
+  const body = response.json;
+  ok(Array.isArray(body.items), "folder items array");
+  const maxFolders = ctx.capabilities?.limits?.maxChatFolders ?? 10;
+  ok(body.items.length <= maxFolders, "folder list must stay within maxChatFolders");
+  eq(body.stateRevision, previousStateRevision, "folder stateRevision matches the last mutation");
+  ok(!("nextCursor" in body), "folder snapshot is intentionally not cursor paginated");
+  const positions = body.items.map((folder) => folder.position);
+  eq(
+    JSON.stringify(positions),
+    JSON.stringify([...positions].sort((left, right) => left - right)),
+    "folder positions must be ordered"
+  );
+  return `${body.items.length} folders within the documented bound ${maxFolders}, stateRevision ${body.stateRevision}`;
+});
+
+await step("pagination.remaining-lists", async () => {
+  const a = need(ctx.tokens.a, "user A");
+  const b = need(ctx.tokens.b, "user B");
+  const c = need(ctx.tokens.c, "user C");
+  const groupId = need(ctx.ids.groupChatId, "group chat");
+  const directChatId = need(ctx.ids.directChatId, "direct chat");
+  const messageId = need(ctx.ids.message3, "realtime message");
+
+  // members
+  const membersPath = `/v1/chats/${groupId}/members`;
+  const membersFull = await fullListIds(membersPath, a.accessToken);
+  const membersPaged = await paginateList(membersPath, a.accessToken, { limit: 1 });
+  eq(JSON.stringify(membersPaged), JSON.stringify(membersFull), "member pages");
+  await expectInvalidCursor(membersPath, a.accessToken);
+  await expectLimitValidation(membersPath, a.accessToken, 101);
+
+  // topics
+  for (let index = 0; index < 3; index += 1) {
+    const created = await api("POST", `/v1/chats/${groupId}/topics`, {
+      token: a.accessToken,
+      json: { title: `Paged topic ${index} ${runId}` }
+    });
+    expectStatus(created, 201, "create paged topic");
+  }
+  const topicsPath = `/v1/chats/${groupId}/topics`;
+  const topicsFull = await fullListIds(topicsPath, a.accessToken);
+  const topicsPaged = await paginateList(topicsPath, a.accessToken);
+  eq(JSON.stringify(topicsPaged), JSON.stringify(topicsFull), "topic pages");
+  await expectInvalidCursor(topicsPath, a.accessToken);
+
+  // invite links
+  const createdLinkIds = [];
+  for (let index = 0; index < 3; index += 1) {
+    const created = await api("POST", `/v1/chats/${groupId}/invite-links`, {
+      token: a.accessToken,
+      json: { clientNonce: randomUUID() }
+    });
+    expectStatus(created, 201, "create paged invite link");
+    createdLinkIds.push(created.json.invite.id);
+  }
+  const linksPath = `/v1/chats/${groupId}/invite-links`;
+  const linksFull = await fullListIds(linksPath, a.accessToken);
+  eq(new Set(linksFull).size, linksFull.length, "invite link list must not duplicate rows");
+  ok(createdLinkIds.every((id) => linksFull.includes(id)), "created links must be listed");
+  const linksPaged = await paginateList(linksPath, a.accessToken);
+  eq(JSON.stringify(linksPaged), JSON.stringify(linksFull), "invite link pages");
+  await expectInvalidCursor(linksPath, a.accessToken);
+
+  // join requests via an approval link
+  const approval = await api("POST", `/v1/chats/${groupId}/invite-links`, {
+    token: a.accessToken,
+    json: { approvalRequired: true, clientNonce: randomUUID() }
+  });
+  expectStatus(approval, 201, "create approval link");
+  const joined = await api("POST", "/v1/invite-links/join", {
+    token: c.accessToken,
+    json: { token: approval.json.token, clientNonce: randomUUID() }
+  });
+  expectStatus(joined, 201, "stranger requests to join");
+  eq(joined.json.outcome, "pending", "approval join must queue a pending request");
+  const joinRequestsPath = `/v1/chats/${groupId}/join-requests`;
+  const joinRequestsFull = await fullListIds(joinRequestsPath, a.accessToken);
+  ok(joinRequestsFull.length >= 1, "pending join request must be listed");
+  const joinRequestsPaged = await paginateList(joinRequestsPath, a.accessToken, { limit: 1 });
+  eq(JSON.stringify(joinRequestsPaged), JSON.stringify(joinRequestsFull), "join request pages");
+  await expectInvalidCursor(joinRequestsPath, a.accessToken);
+
+  // message revision history
+  let revision = 0;
+  for (let index = 1; index <= 3; index += 1) {
+    const edited = await api("PATCH", `/v1/messages/${messageId}`, {
+      token: a.accessToken,
+      json: { body: `Realtime message ${searchNeedle} edit ${index}`, expectedRevision: revision }
+    });
+    expectStatus(edited, 200, "edit message for history pagination");
+    revision = edited.json.message.revision;
+  }
+  eq(revision, 3, "three edits must reach revision 3");
+  const historyPath = `/v1/messages/${messageId}/history`;
+  const historyFull = await fullListIds(historyPath, a.accessToken);
+  eq(historyFull.length, 3, "three previous revisions must exist");
+  const historyPaged = await paginateList(historyPath, a.accessToken);
+  eq(JSON.stringify(historyPaged), JSON.stringify(historyFull), "message history pages");
+  await expectInvalidCursor(historyPath, a.accessToken);
+
+  // calls gain a fourth call so limit=2 requires two pages
+  const extraCall = await api("POST", "/v1/calls", {
+    token: a.accessToken,
+    json: { chatId: directChatId, mediaMode: "audio", clientNonce: randomUUID() }
+  });
+  expectStatus(extraCall, 201, "create paged call");
+  const extraRing = await api("POST", `/v1/calls/${extraCall.json.call.callId}/ring`, {
+    token: a.accessToken,
+    json: { expectedRevision: extraCall.json.call.revision }
+  });
+  expectStatus(extraRing, 200, "ring paged call");
+  const extraDecline = await api("POST", `/v1/calls/${extraCall.json.call.callId}/decline`, {
+    token: b.accessToken,
+    json: { expectedRevision: extraRing.json.call.revision, reason: "declined" }
+  });
+  expectStatus(extraDecline, 200, "decline paged call");
+  const callsPath = `/v1/calls?chatId=${directChatId}`;
+  const callsFull = await fullListIds(callsPath, a.accessToken, { field: "calls", limit: 50 });
+  const callsPaged = await paginateList(callsPath, a.accessToken, { field: "calls" });
+  eq(JSON.stringify(callsPaged.sort()), JSON.stringify(callsFull.sort()), "call history pages");
+  await expectInvalidCursor(callsPath, a.accessToken);
+  await expectLimitValidation(callsPath, a.accessToken, 51);
+
+  // device sessions
+  for (let index = 0; index < 3; index += 1) {
+    await loginUser("a", `QA paged session ${index}`);
+  }
+  const sessionsPath = "/v1/auth/sessions";
+  const sessionsFull = await fullListIds(sessionsPath, a.accessToken);
+  const sessionsPaged = await paginateList(sessionsPath, a.accessToken);
+  eq(JSON.stringify(sessionsPaged), JSON.stringify(sessionsFull), "device session pages");
+  await expectInvalidCursor(sessionsPath, a.accessToken);
+  return `remaining lists converge: ${membersPaged.length} members, ${topicsPaged.length} topics, ` +
+    `${linksPaged.length} links, ${joinRequestsPaged.length} join requests, ${historyPaged.length} versions, ` +
+    `${callsPaged.length} calls, ${sessionsPaged.length} sessions`;
+});
+
 // --- data export -----------------------------------------------------------
 
 await step("exports.data-export", async () => {
@@ -2461,7 +2766,14 @@ await step("authz.admin", async () => {
 
   const tokenFile = need(adminTokenFile, "admin token file");
   ok(existsSync(tokenFile), `admin token file must exist: ${tokenFile}`);
-  const adminToken = readFileSync(tokenFile, "utf8").trim();
+  // Accept either a bare token file or a server KEY=VALUE env file
+  // (e.g. data/qa-web2/env.txt) containing ADMIN_TOKEN.
+  const tokenFileContent = readFileSync(tokenFile, "utf8").trim();
+  const adminTokenLine = tokenFileContent.split(/\r?\n/u)
+    .find((line) => /^(?:LUXORA_)?ADMIN_TOKEN=/u.test(line.trim()));
+  const adminToken = adminTokenLine === undefined
+    ? tokenFileContent
+    : adminTokenLine.trim().replace(/^(?:LUXORA_)?ADMIN_TOKEN=/u, "");
   ok(adminToken.length >= 32, "admin token must be at least 32 characters");
   ctx.adminToken = adminToken;
 
