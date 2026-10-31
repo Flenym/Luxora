@@ -137,6 +137,9 @@ export function ConversationPane({ onNotify, onBack }: ConversationPaneProps) {
           </h1>
           <p className="conversation-header__subtitle">
             {subtitle}
+            {!callsEnabled && callsAvailableInChat ? (
+              <span className="conversation-header__calls-inline"> · {s.conversation.callsChip}</span>
+            ) : null}
             {muted ? ` · ${s.sidebar.muted}` : ""}
             {chat.unreadCount > 0 ? ` · ${s.sidebar.unreadAria(chat.unreadCount)}` : ""}
           </p>

@@ -4,49 +4,50 @@
 **Владелец и разработчик:** Flenym  
 **Обновлено:** 31 октября 2026
 
-> **Текущий checkpoint 2026-10-31 (ветка `feature/ios-calls-signaling`, PR #83, head на момент записи `ec6846b`, 21 коммит; счётчик может расти):**
+> **Текущий checkpoint 2026-10-31 (финальный, ветка `feature/ios-calls-signaling`, PR #83, head `df39703`; локально 29 коммитов ahead of `origin/main`):**
 > серверный calls signaling 1–7 + durable realtime `call.state.changed`; `features.calls` в capabilities
-> только при полном `CALLS_*`-медиаплане; iOS calls signaling + `CallsStore` + LiveKit voice, затем
-> iOS calls product surface (вкладка истории звонков, per-chat лог, in-call overlay/mute, call-back,
-> audio-only, capability-gated) и community management UI (invite links/join requests/ownership
-> transfer/join-by-link) — код в `4918cfa`, ждёт Apple CI; медиастек
-> `start.bat`/LiveKit/coturn/Caddy/CloudPub; web call fallback `apps/call-web/index.html`;
-> **публичный продуктовый сайт завершён** (14 маршрутов, 22 docs-страницы RU/EN, canonical/OG/JSON-LD/
-> sitemap/robots, lazy 3D hero — `9d01a1a`); **web messenger client `/app` реализован** (`37e7b92`:
-> auth, shell/search/filters, paginated history, optimistic send/retry, reply/edit/delete,
-> reactions/pins, честные delivered/read, attachments/thumbnail/download, realtime v2
-> resume/sync.required/backoff, message requests, call signalling UI с honest unavailable media,
-> access token memory-only + refresh в `sessionStorage`); CORS browser mutation fix (`7867abb`);
-> dependency-фиксы + CodeQL re-enabled (`b8cd224`); docs-sync коммит `a2917fb`.
-> **Evidence:** web — локально **48 Vitest PASS** (api 17, realtime 12, store 19; воспроизведено
-> docs-truth), typecheck PASS, build green; headless-Chrome smoke прошёл локально (не CI E2E).
-> Последний завершённый полный серверный/AI замер — CI `a801cb3`: protocol 17/104, passkey-domain 70,
-> call-control 23, API 101/743, Web build + desktop typecheck PASS; Apple Swift 396 XCTest
-> (6 expected skips, 0 failures) + 20 Swift Testing + unsigned iOS compile PASS.
-> **CI-статус:** предыдущий прогон `4918cfa` завершён: **Node/Web/Desktop — SUCCESS**
-> (48 web-тестов прошли в CI), **Apple Swift — FAILURE** (Swift compile errors в
-> `ApplicationSession.swift` вокруг `CommunityManagementStore` — фикс готовится), **Security — FAILURE**
-> (dependency-review упал). На новом head `ec6846b` (21 коммит, security-фикс) dependency-review
-> уже SUCCESS, `filesystem-and-image` пока FAILURE, CodeQL в работе — green не заявлять.
-> `main` (`cc6fce7`, 2026-09-20): Node зелёный, Apple Swift/IPA красные на этом коммите,
-> Security был красным до `b8cd224`.
+> только при полном `CALLS_*`-медиаплане; iOS calls signaling + `CallsStore` + LiveKit voice; **iOS calls
+> product surface** (вкладка истории звонков с real history, per-chat call log, call-back, in-call overlay
+> с серверно-заякоренным таймером, mute через LiveKit session, honest locked/limited gating; video locked —
+> join-grant выдаёт только микрофон) и **community management UI** (invite links shown-once + revoke,
+> join-request approval queue, ownership-transfer ceremony, join-by-link) — **проверены Apple CI**
+> (swift-package green на `b682d99`/`d0a7a8f`/`32e0d62`/`df39703`; ios-compile падал на `d0a7a8f`
+> из-за `PhoneCommunityViews.swift` optional participant-resolver unwrap и **исправлен в `df39703`** —
+> финальный прогон зелёный); медиастек
+> `start.bat`/LiveKit/dev TURN/Caddy/CloudPub, dev TURN relay из `tools/coturn/Dockerfile` на pinned Alpine
+> 3.24.3 (upstream coturn alpine-теги везут brotli CVE-2026-111497); web call fallback;
+> **публичный продуктовый сайт завершён** (14 маршрутов, 22 docs-страницы, SEO/JSON-LD, lazy hero);
+> **web messenger client `/app` реализован** (auth/shell/search/filters, paginated history, optimistic
+> send/retry, reply/edit/delete, reactions/pins, честные delivered/read, attachments/thumbnail/download,
+> realtime v2 resume/sync.required/backoff, message requests, call signalling UI с honest unavailable
+> media, access token memory-only + refresh в `sessionStorage`); CORS browser mutation fix;
+> dependency-фиксы + CodeQL re-enabled; backend security fix `b811985` (non-self Direct требует accepted
+> unblocked relationship + новый `direct-chat-relationship.integration.test.ts`).
+> **Evidence:** web — **49/49 Vitest PASS** (api 17, realtime 13, store 19; воспроизведено docs-truth),
+> typecheck PASS, build green; browser E2E локально 13–14/14 шагов (не CI). Node/Web/Desktop SUCCESS на
+> `df39703`/`32e0d62`/`380881f`; Security and container **полный PASS** на `df39703`/`32e0d62`
+> (filesystem Trivy, dependency-review, CodeQL job, API/OTP images, internal `luxora-turn` image,
+> `make calls-smoke` incl. TURN auth accept/reject); Apple Swift swift-package SUCCESS на
+> `b682d99`/`d0a7a8f`/`32e0d62`/`df39703` (**396 XCTest + 6 expected skips + 20 Swift Testing**, включая
+> `CallHistoryTests` и `CommunityManagementStoreTests`), ios-compile SUCCESS на `df39703`; FULL API
+> **103 файла / 749 тестов** green, smoke 42/42.
+> **CI-статус:** финальный head `df39703` — **все workflow SUCCESS** (Node/Web/Desktop verify,
+> Apple Swift swift-package + ios-compile, Security dependency-review + CodeQL + filesystem-and-image +
+> обязательный «CodeQL» check). `main` (`cc6fce7`, 2026-09-20): Node зелёный, Apple Swift/IPA красные на
+> этом коммите.
 >
-> **Текущая рабочая очередь (31 октября 2026; приоритет — iPhone):**
-> 1. **Дождаться и подтвердить CI на head PR:** Node/Web/Desktop (48 web-тестов), Security
->    (dependency-review, filesystem/image, CodeQL), Apple Swift (iPhone calls/community).
->    Не заявлять green до завершения.
-> 2. **iPhone in-progress (не считать готовым до Apple CI green + подтверждения Lead):**
->    calls product surface и community management UI — код в `4918cfa`; safety reports +
->    account data (export/deletion) UI — пишется сейчас (файлов в дереве ещё нет).
-> 3. **Web follow-up:** решение по E2E в CI (закоммитить harness или оставить локальным),
->    desktop shell wiring, hosting CSP/headers + sessionStorage/HttpOnly review,
->    server-synced drafts/folders — отдельная фича.
-> 4. **Public site residuals:** deployment/hosting, `/status` и `/download` честность,
->    `apps/web/README.md` refresh (зона web-team), final SEO/a11y manual pass.
-> 5. **iPhone technical remainders** — durable outbox/cache, pagination, attachment binding,
->    file open/download/share, video playback, push/CallKit (внешние гейты), real-device media/QoS.
-> 6. **Server remainders** — push-доставка (внешний блок), contact discovery без upload,
->    media transcode/quarantine, production DB/DR.
+> **Текущая рабочая очередь (31 октября 2026):**
+> 1. **Дождаться финального all-green прогона на `df39703` и смержить PR #83** (Lead).
+> 2. **iPhone remaining (planned/next, не shipped):** safety reports UI и account export/deletion UI
+>    (server + protocol готовы, iPhone client/views не написаны); реальный APNs push/CallKit — внешние
+>    гейты; durable outbox/cache, pagination, file open/download/share, video playback; real-device media/QoS.
+> 3. **Web follow-up:** hosting CSP/headers + решение sessionStorage vs HttpOnly, закоммитить или явно
+>    оставить локальным E2E harness, desktop shell wiring, server-synced drafts/folders — отдельные фичи.
+> 4. **Public site residuals:** deployment/hosting, `/status` и `/download` честность, финальный ручной
+>    SEO/a11y pass; `apps/web/README.md` обновлён в этом docs-проходе.
+> 5. **Server remainders** — push-доставка (внешний блок), contact discovery без upload,
+>    media transcode/quarantine, production DB/DR, production calls capacity/review; E2EE — отдельная
+>    аудируемая программа.
 >
 > Ниже сохранён исторический лог слайсов; он описывает состояние на момент записи и не является
 > текущим статусом.
@@ -265,6 +266,9 @@
 >
 > **Дополнение 2026-10-31 (следующие коммиты PR #83: web client, public site finish, CI/security, iOS calls surface/community):**
 > `37e7b92` web messenger client `/app` (auth, shell/search/filters, conversation, optimistic send/retry, reactions/pins/reply/edit/delete, честные receipts, attachments/thumbnail/download, realtime v2 resume/sync.required/backoff, message requests, call signalling UI с honest unavailable media, access token memory-only + refresh `sessionStorage`; `src/app/core` 48 Vitest — api 17, realtime 12, store 19); `9d01a1a` публичный сайт финализирован (14 маршрутов, 22 docs-страницы, canonical/OG/JSON-LD/sitemap/robots, a11y, lazy hero); `7867abb` CORS preflight mutation-методов + exposed headers + regression test + `scripts/qa-api-smoke.mjs`; `b8cd224` dependency-фиксы + CodeQL re-enabled (+ web tests in Node workflow); `19d59f2` Swift test stability fix; `4918cfa` iOS calls product surface (история звонков, per-chat лог, in-call overlay/mute, call-back) + community management (invite links/join requests/ownership transfer/join-by-link) — **Apple CI на момент записи в работе**. Evidence: web 48/48 локально (docs-truth воспроизвёл), typecheck PASS, build green; CI на head `4918cfa` в работе.
+>
+> **Дополнение 2026-10-31 (финальные коммиты PR #83, head `df39703`):**
+> `380881f` CI-watchdog timeouts + web/docs truth; `29060bf` Swift community-management tests compile/type fix; `b811985` backend security fix — `POST /v1/chats` non-self Direct теперь требует accepted unblocked relationship (закрыт обход через `messageRequests:"nobody"`), новый `direct-chat-relationship.integration.test.ts`, boundary fixtures, smoke **42/42**, FULL API **103 файла / 749 тестов** green; `b682d99`+`d0a7a8f`+`8ceb57c`+`32e0d62` dev TURN relay собран из `tools/coturn/Dockerfile` на pinned Alpine 3.24.3 (upstream coturn alpine-теги везут brotli CVE-2026-111497) и работает от непривилегированного пользователя — **Security and container полный PASS на `32e0d62` и `df39703`** (filesystem Trivy, dependency-review, CodeQL job, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject); `df39703` iOS fix — unwrap community participant-resolver + explicit calls copy; Apple Swift swift-package green на `b682d99`/`d0a7a8f`/`32e0d62`/`df39703` (396 XCTest + 6 expected skips + 20 Swift Testing, включая `CallHistoryTests`/`CommunityManagementStoreTests`), ios-compile PASSED на `380881f`, FAILED на `d0a7a8f` и fixed в `df39703` — **финальный прогон `df39703` полностью SUCCESS**. Web: 49/49 Vitest (api 17, realtime 13, store 19), browser E2E локально 13–14/14 шагов (не CI).
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, обновлено 2026-10-31)
 
@@ -273,10 +277,11 @@
 
 ### CRITICAL
 
-- [~] Зелёный CI на head PR: Node/Web/Desktop **SUCCESS на `4918cfa`** (48 web-тестов в CI); Apple Swift **FAILURE на `4918cfa`** (compile errors community-management в `ApplicationSession.swift` — фикс в работе); Security на `ec6846b`: dependency-review + job codeql SUCCESS, `filesystem-and-image` FAILURE («Calls Compose security invariants failed»), обязательный status-check «CodeQL» FAILURE (default setup не настроен). Green не заявлять до завершения. `main` (`cc6fce7`): Node зелёный, Apple Swift/IPA красные на этом коммите, Security был красным до `b8cd224`
+- [x] **Зелёный CI на финальном head `df39703`:** Node/Web/Desktop verify SUCCESS (49/49 web-тестов в CI); Security and container SUCCESS (filesystem Trivy, dependency-review, CodeQL job, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject); Apple Swift swift-package SUCCESS на `b682d99`/`d0a7a8f`/`32e0d62`/`df39703` (396 XCTest + 6 expected skips + 20 Swift Testing, включая `CallHistoryTests`/`CommunityManagementStoreTests`) и `ios-compile` SUCCESS на `df39703`; обязательный status-check «CodeQL» SUCCESS. `main` (`cc6fce7`): Node зелёный, Apple Swift/IPA красные на этом коммите
 - [x] Truth-аудит: фейковых E2EE/call/presence/download/sync UI нет — gates/locked-кнопки; публичный сайт помечает planned-функции; web-клиент медиа звонков честно `unavailable`
 - [ ] Полный локальный suite + CI перед каждым пушем (без исключений)
-- [x] CodeQL re-enabled (`b8cd224`, advanced setup в Security workflow; причина паузы зафиксирована в комментарии workflow)
+- [x] CodeQL re-enabled (`b8cd224`, advanced setup в Security workflow; причина паузы зафиксирована в комментарии workflow); Security-прогон `32e0d62` прошёл полностью, включая CodeQL job
+- [x] Backend security fix `b811985`: non-self Direct требует accepted, unblocked relationship (ранее обход при `messageRequests:"nobody"`), новый `direct-chat-relationship.integration.test.ts`, boundary fixtures, smoke 42/42, FULL API 103/749; browser E2E доказывает 403 → message-request → accept → direct → realtime
 
 ### HIGH
 
@@ -288,16 +293,16 @@
 - [x] Voice consent-kind gate: send-time `400` без voice/audio, audio parity, client transcribe guards + time-bomb фикс expiry-теста
 - [x] Voice playback round-trip: multi-chunk upload out-of-order, receiver Range-стриминг `206`, байт-точное скачивание, transcript-конвергенция, stranger `404`
 - [x] Search pagination convergence: messages global+scoped, known-users, files (без потерь/дублей, garbage cursor `400`)
-- [x] Calls preview: серверный signaling 1–7 + durable `call.state.changed`; iOS `CallsStore`/`CallBanner`/LiveKit voice; capabilities-гейт по медиаплану; web fallback `apps/call-web` — всё закоммичено в PR #83 (Evidence: CI 2026-10-31)
+- [x] Calls preview: серверный signaling 1–7 + durable `call.state.changed`; iOS `CallsStore`/`CallBanner`/LiveKit voice; capabilities-гейт по медиаплану; web fallback `apps/call-web` — всё закоммичено в PR #83
 - [x] iPhone attachments: composer media strip, photo picker (≤10 изображений), file importer, upload→send с attachmentIds, image-бабл, viewer с зумом, file-row; voice — отдельный recorder/player
 - [x] iPhone topics: `ChatTopicsStore`, управление в профиле сообщества, chips выбора в композере, фильтр истории, topicID сквозь send-фаннел
 - [x] iPhone voice: запись (таймер/уровни/отмена/стоп), recording bar, playback с waveform, consent-тумблер и отправка транскрипта
-- [x] **Публичный продуктовый сайт завершён** (`9d01a1a`): 14 маршрутов, 22 docs-страницы RU/EN, canonical/OG/JSON-LD/sitemap/robots, а11y, lazy 3D hero, честные download/status/security копии; mojibake исправлен
-- [x] **Web messenger client `/app` реализован и проверен локально** (`37e7b92`): auth (username+password, session boot из `sessionStorage`, one-flight refresh, sign-out), shell (sidebar search, All/Unread/Archived, new chat по username, message-request panel, profile edit), conversation (cursor history, optimistic same-nonce retry, reply/edit/delete, reactions, pins, честные delivered/read ticks, image/file/thumbnail/download, typing, local drafts, read receipts on open/focus, day separators, load-older, new-messages divider), realtime `/v2` resume/`sync.required`/bounded backoff/close-codes, call signalling UI с honest `unavailable` media, access token memory-only + refresh в `sessionStorage`; **48 Vitest PASS** (api 17, realtime 12, store 19), typecheck PASS, build green, локальный headless-Chrome E2E (не CI)
-- [ ] **Web follow-up:** решение по E2E в CI, hosting CSP/headers + sessionStorage/HttpOnly review, desktop shell wiring, server-synced drafts/folders UI
-- [~] **iPhone calls product surface** (ios-calls): код в `4918cfa` — вкладка истории звонков, per-chat лог, in-call overlay с elapsed timer, честный mute (только при подключённом медиа), speaker видимо недоступен, call-back, audio only, capability-gated. **Не считать готовым до Apple CI green + подтверждения Lead**
-- [~] **iPhone community management UI** (ios-community): API client/models + store/views для invite links/join requests/ownership transfer/join-by-link в `4918cfa`, ждёт Apple CI
-- [~] **iPhone safety reports + account data UI** (в работе, ios-safety): сервер/protocol для report, export (035), deletion (036) есть, iPhone client/UI ещё пишется (файлов в дереве нет)
+- [x] **Публичный продуктовый сайт завершён**: 14 маршрутов, 22 docs-страницы RU/EN, canonical/OG/JSON-LD/sitemap/robots, а11y, lazy 3D hero, честные download/status/security копии; mojibake исправлен
+- [x] **Web messenger client `/app` реализован и проверен локально**: auth/session boot/sign-out, shell/search/filters/new chat/message requests/profile, conversation (cursor history, optimistic same-nonce retry, reply/edit/delete, reactions, pins, честные delivered/read, attachments/thumbnails/download, typing, local drafts, read receipts on open/focus, day separators/load-older/new-messages divider), realtime `/v2` resume/sync.required/backoff/close-codes, call signalling UI с honest `unavailable` media; **49/49 Vitest** (api 17, realtime 13, store 19), typecheck PASS, build green в CI; browser E2E локально 13–14/14 (не CI)
+- [ ] **Web follow-up:** hosting CSP/headers + sessionStorage/HttpOnly review, решение по E2E в CI, desktop shell wiring, server-synced drafts/folders UI
+- [x] **iPhone calls product surface** — **проверен Apple CI (финальный head `df39703` all-green)**: вкладка истории звонков (real history), per-chat call log, call-back, in-call overlay с серверно-заякоренным таймером и honest mute (только при подключённом медиа), locked/limited gating; video locked (join-grant выдаёт только микрофон). Swift-package green на `b682d99`/`d0a7a8f`/`32e0d62`/`df39703` (включая `CallHistoryTests`); ios-compile SUCCESS на `df39703`
+- [x] **iPhone community management UI** — **проверен Apple CI (финальный head `df39703` all-green)**: invite links shown-once + revoke, join-request approval queue, ownership-transfer ceremony, join-by-link. Swift-package green на `b682d99`/`d0a7a8f`/`32e0d62`/`df39703` (включая `CommunityManagementStoreTests`); ios-compile SUCCESS на `df39703`
+- [ ] **iPhone safety reports UI + account data (export/deletion) UI — planned/next:** сервер/protocol готовы (report, export 035, deletion 036), iPhone client/views не написаны
 - [ ] Topics/threads: realtime-конвергенция чужих изменений и comments/threads как отдельный домен (routing/composer/history уже подключены)
 - [ ] Voice остаток: poor-network/process-death доказательства именно для voice-цепочки (generic resume покрыт); real-device gates; round video
 - [ ] Attachments остаток: file open/download/share, video picker/playback, upload resume/background evidence, scan/transcode pipeline
@@ -307,7 +312,7 @@
 - [x] Image dimensions server-verified (mismatch `400`, measured adopt, AVIF/HEIC остаются client_declared)
 - [ ] Media processing остаток: quarantine/transcode pipeline (thumbnails + WAV duration на сервере DONE, CI PASS)
 - [x] Search pagination convergence (messages/people/files); остаток: contacts/address-book policy
-- [~] Calls remainders: push-дозвон (polling/signalling only, нет CallKit), видео/screen share (server grant — только микрофон), production SFU/TURN capacity + relay-cost evidence, media-E2EE, независимый security review; iPhone call history/log/overlay и web signalling UI — в PR, ждут CI
+- [~] Calls remainders: push-дозвон (polling/signalling only, нет CallKit), видео/screen share (server grant — только микрофон), production SFU/TURN capacity + relay-cost evidence, media-E2EE, независимый security review; dev TURN relay — `tools/coturn/Dockerfile` на pinned Alpine 3.24.3 (brotli CVE-2026-111497), Security PASS на `32e0d62`
 - [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON, 7-day TTL, Range download
 - [x] Account export media binaries (DONE): `media/<attachmentId>/<fileName>` в архиве, per-file SHA-256, size-mismatch → 503 вместо тихой потери
 - [x] Account deletion state machine first slice (036 + retention 037, оба CI PASS): grace 7 дней, cancel, sweep, tombstone-подход, routes + unit/integration тесты, export retention worker
@@ -337,9 +342,9 @@
 
 - [x] Only `Beta-0.1` appears as visible release metadata; only Flenym as owner/developer; repo-wide classified metadata gate passes while excluding internal package/API/platform versions.
 - [ ] All simulated call, E2EE, delivery, presence, download and sync UI is removed or clearly labelled demo/roadmap.
-- [x] Node/Web/Desktop CI green on PR #83: 48 web-тестов включены в workflow, truth-гейт исправлен (`2baac72`); прогон на `4918cfa` — **SUCCESS**. Локально `bash infra/validate-public-metadata.sh` печатает PASS.
-- [~] Security CI green: dependency-фиксы + CodeQL re-enabled (`b8cd224`), затем security-фикс (`ec6846b`); на `ec6846b` dependency-review и job codeql — SUCCESS, `filesystem-and-image` FAILURE («Calls Compose security invariants failed»), обязательный status-check «CodeQL» FAILURE (default setup) — evidence зафиксировать после завершения.
-- [~] Apple Swift CI green: на `4918cfa` FAILURE из-за compile errors community-management (`ApplicationSession.swift`); фикс в работе, зелёный прогон ещё не получен.
+- [x] Node/Web/Desktop CI green on PR #83: 49 web-тестов включены в workflow; SUCCESS на `32e0d62`/`380881f`. Локально `bash infra/validate-public-metadata.sh` печатает PASS.
+- [x] Security CI green: dependency-фиксы + CodeQL re-enabled (`b8cd224`), TURN image на pinned Alpine 3.24.3, **полный PASS Security and container на `32e0d62`** (filesystem Trivy, dependency-review, CodeQL job, API/OTP images, internal `luxora-turn` image, `make calls-smoke` incl. TURN auth accept/reject).
+- [x] Apple Swift CI green на финальном head: swift-package SUCCESS на `b682d99`/`d0a7a8f`/`32e0d62`/`df39703` (396 XCTest + 6 expected skips + 20 Swift Testing, включая `CallHistoryTests` и `CommunityManagementStoreTests`); ios-compile PASSED на `380881f`, FAILED на `d0a7a8f`, **fixed in `df39703` — финальный прогон SUCCESS**.
 - [x] CodeQL: re-enabled (advanced setup, `javascript-typescript`; причина паузы задокументирована в workflow-комментарии).
 - [x] Browser CORS boundary: preflight всех mutation-методов + exposed headers по exact-allowlist, regression test и live smoke harness (`7867abb`).
 - [x] Root editor/ignore/Make/Compose conventions exist.

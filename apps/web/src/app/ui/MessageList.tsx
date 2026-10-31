@@ -81,13 +81,15 @@ export function MessageList({ chat, members, me, onReply, onNotify }: MessageLis
   useLayoutEffect(() => {
     if (!divider) return;
     const node = dividerRef.current;
-    if (node) {
-      node.scrollIntoView({ block: "center", behavior: "auto" });
-      const el = listRef.current;
-      if (el) {
-        atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-        setAtBottom(atBottomRef.current);
-      }
+    const el = listRef.current;
+    if (node && el) {
+      // Scroll the message container itself: scrollIntoView would also scroll
+      // the page and push the app header out of the viewport.
+      const containerRect = el.getBoundingClientRect();
+      const nodeRect = node.getBoundingClientRect();
+      el.scrollTop += nodeRect.top - containerRect.top - (el.clientHeight - nodeRect.height) / 2;
+      atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+      setAtBottom(atBottomRef.current);
     }
   }, [divider]);
 
@@ -183,7 +185,15 @@ export function MessageList({ chat, members, me, onReply, onNotify }: MessageLis
       onNotify(s.conversation.replyUnavailable);
       return;
     }
-    node.scrollIntoView({ block: "center", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    const el = listRef.current;
+    if (el) {
+      const containerRect = el.getBoundingClientRect();
+      const nodeRect = node.getBoundingClientRect();
+      el.scrollTo({
+        top: el.scrollTop + nodeRect.top - containerRect.top - containerRect.height / 3,
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+      });
+    }
     node.classList.add("is-highlighted");
     window.setTimeout(() => node.classList.remove("is-highlighted"), 1600);
   };

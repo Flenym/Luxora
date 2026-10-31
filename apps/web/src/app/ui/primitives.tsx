@@ -169,30 +169,30 @@ export function Modal({ open, onClose, title, children, testId, className, varia
   if (!open || typeof document === "undefined") return null;
 
   const content = (
-    <div className={`modal-layer modal-layer--${variant}`}>
+    <div className={`lux-modal lux-modal--${variant}`}>
       <div
-        className="modal-backdrop"
+        className="lux-modal__backdrop"
         aria-hidden="true"
         onMouseDown={() => onCloseRef.current()}
       />
       <div
         ref={panelRef}
-        className={`modal-panel${className ? ` ${className}` : ""}`}
+        className={`lux-modal__panel${className ? ` ${className}` : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
         data-testid={testId}
       >
-        <div className="modal-head">
-          <h2 id={titleId} className="modal-title">
+        <div className="lux-modal__head">
+          <h2 id={titleId} className="lux-modal__title">
             {title}
           </h2>
           <IconButton label={s.dialogs.close} size="sm" onClick={() => onCloseRef.current()}>
             <X size={18} aria-hidden="true" />
           </IconButton>
         </div>
-        <div className="modal-body">{children}</div>
+        <div className="lux-modal__body">{children}</div>
       </div>
     </div>
   );

@@ -23,11 +23,13 @@ delivery, production call capacity/review, the full conversation/community and
 media-processing model, gated key management/E2EE, moderation/jobs, production
 storage, backups, monitoring and DR. A thin iPhone integration harness may
 verify real contracts during this phase; it now carries a call surface (history,
-per-chat log, in-call overlay with honest mute — audio only, awaiting Apple CI)
-and LiveKit voice, while full iPhone product work still waits for server
-stability. The public product site is a static, truthful surface shipped ahead
+per-chat log, in-call overlay with honest mute — audio only) and LiveKit voice,
+both verified by Apple CI (swift-package green including `CallHistoryTests`;
+ios-compile fix in `df39703` awaiting its final workflow run), while full iPhone
+product work still waits for server stability. The public product site is a
+static, truthful surface shipped ahead
 of the client work, and the `/app` web messenger client is a developer preview
-against the real API and realtime gateway (48 unit tests, no CI E2E yet). All
+against the real API and realtime gateway (49 unit tests, no CI E2E yet). All
 other client feature expansion remains frozen; their existing code is a
 portability/design probe.
 

@@ -14,10 +14,11 @@ build codecs, ICE, DTLS, SRTP, congestion control or an SFU from scratch.
 This decision does not make calls a product. As recorded on 31 October 2026 the
 repository has call-control records (migrations `038`–`039`), a grant endpoint,
 signed webhook reconciliation, durable `call.state.changed` realtime, a local
-LiveKit/coturn/Caddy harness, and client previews: iPhone call banner/voice, a
+LiveKit/TURN/Caddy harness, and client previews: iPhone call banner/voice, a
 call surface with recent-calls history, per-chat call log, in-call overlay with
-honest microphone mute and call-back (audio only, capability-gated, awaiting
-Apple CI), plus a web signalling UI and a diagnostic fallback page. It still has
+honest microphone mute and call-back (audio only, capability-gated; verified by
+Apple CI — ios-compile fix in `df39703`), plus a web signalling UI and a
+diagnostic fallback page. It still has
 **no** push/CallKit ringing, video or screen-share client media, production
 SFU/TURN capacity evidence, media-E2EE or independent call security review.
 `docker-compose.calls.yml` and `start.bat` remain a local infrastructure

@@ -109,10 +109,10 @@ call-control domain is API-integrated with signaling slices, short-lived
 LiveKit/coturn grants behind a configuration gate, a signed webhook,
 membership-reconcile and stale-reconnect sweepers, durable `call.state.changed`,
 an iPhone call surface (banner, recent-calls history, per-chat log, in-call
-overlay with honest mute — audio only, awaiting Apple CI) and a web signalling
-UI plus fallback page. Still open: push/CallKit ringing, video/screen-share
-clients, production SFU/TURN capacity and relay-cost evidence, real-device
-network labs and independent review.
+overlay with honest mute — audio only; verified by Apple CI, ios-compile fix in
+`df39703`) and a web signalling UI plus fallback page. Still open: push/CallKit
+ringing, video/screen-share clients, production SFU/TURN capacity and relay-cost
+evidence, real-device network labs and independent review.
 
 Canonical design and the truth boundary: [docs/specs/CALLS_PLATFORM.md](docs/specs/CALLS_PLATFORM.md).
 

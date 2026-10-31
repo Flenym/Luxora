@@ -14,10 +14,10 @@ Existing clients are valuable design/portability probes but do not define indepe
 
 | Platform | Technology | Current repository state | Working network product? |
 | --- | --- | --- | --- |
-| iPhone/iPad | SwiftUI + LiveKit SDK | Russian phone-first UI, Telegram-like chat/profile/settings routes, API/Keychain/realtime chat operations, live local onboarding/chat evidence, separate Design Lab; call banner, audio-call start and LiveKit voice via `CallsStore` (media only when the server media plane is configured); call surface with a real recent-calls tab, per-chat call log, in-call overlay with honest mute and call-back (audio only, capability-gated; awaiting Apple CI); community management for invite links/join requests/ownership transfer/join-by-link (awaiting Apple CI); video call stays locked | Partial connected harness, not full/offline-ready |
+| iPhone/iPad | SwiftUI + LiveKit SDK | Russian phone-first UI, Telegram-like chat/profile/settings routes, API/Keychain/realtime chat operations, live local onboarding/chat evidence, separate Design Lab; call banner, audio-call start and LiveKit voice via `CallsStore` (media only when the server media plane is configured); call surface with a real recent-calls tab, per-chat call log, in-call overlay with honest mute and call-back (audio only, capability-gated) — **verified by Apple CI (final head `df39703` all-green)**; community management for invite links/join requests/ownership transfer/join-by-link — **verified by Apple CI (final head `df39703` all-green)**; video call stays locked | Partial connected harness, not full/offline-ready |
 | macOS native | SwiftUI/SwiftPM | same thin harness/local preview in executable; no calls media UI wired | Partial harness, not full desktop |
 | Android | Kotlin/Compose | adaptive local `MessengerState.demo()` | No |
-| Web | React/TypeScript/Vite + React Router | completed public product site (14 routes, 22-page RU/EN docs portal, SEO/JSON-LD, sitemap/robots, a11y, lazy 3D hero) and a real messenger client at `/app` (auth, chat shell, paginated history, optimistic send/retry, reactions/pins/edits, attachments, realtime v2 with resume/backoff, message requests, call signalling UI with honest unavailable media; 48 unit tests) — developer preview, not released; separate single-file call fallback page | Public site is static; `/app` client is a developer preview, not a shipped product |
+| Web | React/TypeScript/Vite + React Router | completed public product site (14 routes, 22-page RU/EN docs portal, SEO/JSON-LD, sitemap/robots, a11y, lazy 3D hero) and a real messenger client at `/app` (auth, chat shell, paginated history, optimistic send/retry, reactions/pins/edits, attachments, realtime v2 with resume/backoff, message requests, call signalling UI with honest unavailable media; 49 unit tests) — developer preview, not released; separate single-file call fallback page | Public site is static; `/app` client is a developer preview, not a shipped product |
 | Windows/Linux | Electron | hardened shell packages the Web build (`apps/web/dist`, now including `/app`) and hardens navigation/permissions/CSP | No |
 
 Apple can request and verify a phone challenge, branch an existing account from
@@ -41,9 +41,10 @@ synchronized drafts, notification, appearance and data settings, blocked users,
 server device/password settings and community management (invite links, join
 requests, ownership transfer, join-by-link). Its message store is still in
 memory: there is no durable outbox/cache, pagination, robust
-reconnect/reconcile or real-device media evidence. The new calls/community
-surfaces were awaiting Apple CI at the time of writing; safety
-reports/account-data export/deletion UI is still in progress and is not claimed
+reconnect/reconcile or real-device media evidence. The calls/community surfaces
+are verified by Apple CI (swift-package green; the ios-compile fix in `df39703`
+was awaiting its final workflow run at the time of writing); safety
+reports/account-data export/deletion UI is still not written and is not claimed
 done. The separate Apple Design Lab and all Android/Web demo chats remain local;
 simulated states must remain visibly labelled. The public web site persists only
 the language preference.

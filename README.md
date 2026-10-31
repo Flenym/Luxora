@@ -106,7 +106,7 @@ Active work — visible in code, not yet shippable as product:
 | 🖼 | Media processing | Server-side thumbnails and WAV duration are in; quarantine & transcode pipeline still open |
 | 🔎 | Search completion | Global pagination, contacts policy, permission-first guarantees |
 | 📞 | **Calls (preview)** | Server call control with durable `call.state.changed` realtime; iPhone call surface (call history tab, per-chat call log, in-call overlay with honest mute) and LiveKit voice via `CallsStore`; web messenger call signalling UI (incoming/decline, active overlay) and a diagnostic web call fallback page. Media only works against a locally configured LiveKit/TURN stack; `GET /v1/capabilities` keeps `features.calls:false` unless that media plane is configured. No push ringing, no CallKit, no video/screen share, no production media evidence |
-| 🌐 | **Web** | Public product site is complete (14 routes, 22-page RU/EN docs portal, SEO/JSON-LD/sitemap, accessibility pass, lazy 3D hero); the web messenger client at `/app` is implemented in this PR — auth, chat shell, paginated history, optimistic send/retry, reactions/pins/edits, attachments, realtime v2 with resume/backoff, message requests, call signalling UI with honest unavailable media, memory-only access token + `sessionStorage` refresh. Verified locally by 48 unit tests, typecheck/build and a headless browser smoke; it is a developer preview, not a released client (no server-synced drafts/folders, PWA/push/offline cache, video/screen share, or CI E2E yet) |
+| 🌐 | **Web** | Public product site is complete (14 routes, 22-page RU/EN docs portal, SEO/JSON-LD/sitemap, accessibility pass, lazy 3D hero); the web messenger client at `/app` is implemented in this PR — auth, chat shell, paginated history, optimistic send/retry, reactions/pins/edits, attachments, realtime v2 with resume/backoff, message requests, call signalling UI with honest unavailable media, memory-only access token + `sessionStorage` refresh. Verified locally by 49 unit tests, typecheck/build and a browser E2E (13–14/14 steps); it is a developer preview, not a released client (no server-synced drafts/folders, PWA/push/offline cache, video/screen share, or CI E2E yet) |
 
 ### 🔵 Planned
 
@@ -160,7 +160,7 @@ One protocol — native experience everywhere. Strict build order: **server → 
 | 📲 iPad | Shared Swift foundation | ⚪ Frozen until server + iPhone are stable |
 | 💻 macOS | SwiftUI probe | ⚪ Frozen — portability probe |
 | 🤖 Android | Kotlin · Jetpack Compose | ⚪ Foundation, not API-connected |
-| 🌍 Web | React + Vite + React Router | 🟡 Public product site completed + web messenger client at `/app` implemented in this PR (48 unit tests, build green, local browser smoke) — developer preview, not a released client |
+| 🌍 Web | React + Vite + React Router | 🟡 Public product site completed + web messenger client at `/app` implemented in this PR (49 unit tests, build green, local browser smoke) — developer preview, not a released client |
 | 🪟💻 Windows / Linux | Hardened Electron shell | ⚪ Packaging probe that loads the web build; no messaging integration |
 
 Details: [CLIENTS.md](CLIENTS.md) · [MOBILE.md](MOBILE.md) · [WEB.md](WEB.md) · [DESKTOP.md](DESKTOP.md)

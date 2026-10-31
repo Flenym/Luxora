@@ -31,7 +31,7 @@ Current `LuxoraKit` provides:
 - local folder filtering/counts, persisted contact sorting, loaded-message contact search, safe username copy/share and real iOS permission-state actions;
 - remote phone challenge/OTP verification, existing-account versus profile-required branching, profile/bio/username registration, legacy register/login, restore and serialized runtime refresh, chat/message refresh/load/retry, optimistic text send/reconcile/retry with a stable client nonce, server mark-read/reactions, known-contact lookup/direct-chat creation, monotonic durable realtime cursor/message/typing apply and sign-out revoke;
 - a calls preview: `LuxoraCallsAPIClient` (create/ring/accept/decline/hangup/join-grant/list, safe error mapping without response bodies), `LuxoraCallRealtimeDecoder` (`call.state.changed` in realtime v2, strict fields, no media fields), `CallsStore` (incoming/active state driven by server reads, `call.state.changed` used only as a refresh trigger), `CallMediaSession` (LiveKit SDK, publish microphone, count remote audio tracks, never log/store the join token), a `CallBanner` above the conversation with accept/decline/hangup and honest media text, and an audio-call toolbar button;
-- a newer calls product surface (code in `4918cfa`, awaiting Apple CI): recent-calls tab with server-derived direction/missed/status/duration, per-chat call-history sheet, full-screen active-call cover with a server-anchored elapsed timer, microphone mute only when media is connected, visibly unavailable speaker, hangup and an honest media status line, call-back, and a locked honest screen when `features.calls` is false. Audio only; no CallKit, no push ringing, no video/screen share, no media-E2EE;
+- a newer calls product surface (**verified by Apple CI**): recent-calls tab with server-derived direction/missed/status/duration, per-chat call-history sheet, full-screen active-call cover with a server-anchored elapsed timer, microphone mute only when media is connected, visibly unavailable speaker, hangup and an honest media status line, call-back, and a locked honest screen when `features.calls` is false. Audio only; no CallKit, no push ringing, no video/screen share, no media-E2EE;
 - a searchable country picker, combined E.164 validation, local circular avatar crop/fallback, permission rationale and explicit synchronization state;
 - the merged Swift package runs **396 XCTest cases (6 expected live-only skips, 0 failures) plus 20 Swift Testing cases**, per the Apple Swift CI workflow on commit `a801cb3` (31 October 2026). Swift cannot be built or tested on the Windows workspace — CI is the only execution evidence.
 
@@ -48,11 +48,13 @@ drafts (load/autosave/delete/retry plus composer sync state), message actions
 (reply/edit/delete/forward/pin/reaction), message-request data layer and privacy
 policy, notification settings, blocked-users list with unblock, server
 devices/password settings, appearance and local data settings, and the
-device-link QR sheet. In-progress slices as of 31 October 2026 (none "done" until
-Apple CI is green and the Lead confirms): calls product surface and community
-management (invite links/join requests/ownership transfer/join-by-link) are in
-`4918cfa`, awaiting Apple CI; safety reports plus account export/deletion UI is
-still being written.
+device-link QR sheet. Calls product surface and community management (invite
+links shown-once + revoke, join-request queue, ownership transfer, join-by-link)
+are verified by Apple CI: swift-package green (396 XCTest + 6 expected skips +
+20 Swift Testing, including `CallHistoryTests` and `CommunityManagementStoreTests`)
+on `b682d99`/`d0a7a8f`/`32e0d62`; the `ios-compile` fix in `df39703` was awaiting
+its final workflow run at the time of writing. Safety reports plus account
+export/deletion UI is not written yet (server/protocol exist).
 
 Run shared package/macOS executable:
 

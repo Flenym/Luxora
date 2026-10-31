@@ -2,7 +2,7 @@
 
 **Релиз:** Beta-0.1  
 **Владелец и разработчик:** Flenym  
-**Status:** public product site completed; web messenger client implemented at `/app` and verified locally (48 unit tests, typecheck + build, headless browser smoke) in this PR — a developer preview, not a released client; standalone call fallback page for diagnostics
+**Status:** public product site completed; web messenger client implemented at `/app` and verified locally (49 unit tests, typecheck + build, local browser E2E 13–14/14 steps) in this PR — a developer preview, not a released client; standalone call fallback page for diagnostics
 
 ## 1. What exists
 
@@ -97,12 +97,15 @@ Implemented and verified:
   and preview proxy `/v1`, `/v2` (websockets) and `/health` to the local API on
   `127.0.0.1:2222`; a hosted build needs a real API origin and hosting headers.
 
-Verification recorded for this client: **48 Vitest tests** (`api` 17,
-`realtime` 12, `store` 19) wired into the "Node, Web and Desktop" CI workflow,
-`tsc -b`/build passing, and a local headless-Chrome smoke (sign-in → shell →
-chat → send → realtime receive) that is **not** committed as CI E2E. Bundle
-recorded in the PR verification: main chunk ≈536 kB after minification plus lazy
-`Hero3D`/`livekit-client` chunks — a build fact, not a performance guarantee.
+Verification recorded for this client: **49 Vitest tests** (`api` 17,
+`realtime` 13, `store` 19) wired into the "Node, Web and Desktop" CI workflow,
+`tsc -b`/build passing, and a local browser E2E (13–14/14 steps across repeated
+runs: sign-in, sidebar/search, message request → accept, open chat, realtime
+message to a second account, reply, receipt ticks, image upload, honest calls
+gating, profile/sign-out, mobile viewport, zero unexpected console errors) that
+is **not** committed as CI E2E. Bundle recorded in the PR verification: main
+chunk ≈536 kB after minification plus lazy `Hero3D`/`livekit-client` chunks — a
+build fact, not a performance guarantee.
 
 Known gaps — do not imply these exist:
 
@@ -114,7 +117,8 @@ Known gaps — do not imply these exist:
 - calls media is unverified end-to-end (the local server has no media plane, so
   `features.calls` stays `false` and the adapter stays unavailable);
 - presence is approximate and realtime-only;
-- the browser E2E journey is a local harness, not committed CI E2E coverage;
+- the browser E2E journey (13–14/14 local steps) is a local harness, not
+  committed CI E2E coverage;
 - no RTL/pseudo-localization run or formal WCAG audit for `/app` yet.
 
 ### 1.3 Standalone web call fallback page
@@ -152,7 +156,7 @@ npm --prefix apps/web ci
 npm --prefix apps/web run dev      # Vite dev server on 0.0.0.0:4173
 npm --prefix apps/web run typecheck
 npm --prefix apps/web run build    # tsc -b && vite build -> apps/web/dist
-npm --prefix apps/web test         # Vitest: 48 unit tests
+npm --prefix apps/web test         # Vitest: 49 unit tests
 npm --prefix apps/web run preview  # serves the production build on :4173
 ```
 

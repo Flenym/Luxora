@@ -921,6 +921,10 @@
   flex: none;
 }
 
+.conversation-header__calls-inline {
+  display: none;
+}
+
 .conversation-header__calls-note {
   font-size: 0.7rem;
   color: var(--lux-warning);
@@ -1775,7 +1779,7 @@
 
 /* ------------------------------------------------------------------ modals */
 
-.modal-layer {
+.lux-modal {
   position: fixed;
   inset: 0;
   z-index: 80;
@@ -1785,22 +1789,24 @@
   padding: 24px;
 }
 
-.modal-backdrop {
+.lux-modal__backdrop {
   position: absolute;
   inset: 0;
   background: rgba(4, 3, 14, 0.66);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
-.modal-panel {
+.lux-modal__panel {
   position: relative;
+  z-index: 1;
   width: min(560px, 100%);
   max-height: min(86dvh, 760px);
   display: flex;
   flex-direction: column;
   border-radius: var(--lux-radius-lg);
   border: 1px solid var(--lux-line-strong);
-  background: linear-gradient(180deg, rgba(25, 23, 45, 0.96), rgba(14, 13, 28, 0.98));
+  background: linear-gradient(180deg, #19172d, #0e0d1c);
   box-shadow: var(--lux-shadow);
   animation: lux-pop 0.2s var(--lux-ease);
 }
@@ -1812,7 +1818,7 @@
   }
 }
 
-.modal-head {
+.lux-modal__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1820,19 +1826,19 @@
   padding: 18px 20px 10px;
 }
 
-.modal-title {
+.lux-modal__title {
   margin: 0;
   font-size: 1.1rem;
   letter-spacing: -0.01em;
 }
 
-.modal-body {
+.lux-modal__body {
   overflow-y: auto;
   padding: 4px 20px 20px;
   overscroll-behavior: contain;
 }
 
-.modal-layer--overlay .modal-panel {
+.lux-modal--overlay .lux-modal__panel {
   width: min(460px, 100%);
 }
 
@@ -2995,6 +3001,10 @@
     grid-template-columns: 330px minmax(0, 1fr);
   }
 
+  .conversation-header__calls-inline {
+    display: inline;
+  }
+
   .conversation-header__calls-note {
     display: none;
   }
@@ -3032,6 +3042,10 @@
 
   .composer {
     padding: 8px 10px 10px;
+  }
+
+  .conversation-header__calls-inline {
+    display: inline;
   }
 
   .conversation-header__calls-note {
@@ -3074,12 +3088,12 @@
     padding: 20px;
   }
 
-  .modal-layer {
+  .lux-modal {
     padding: 12px;
     align-items: flex-end;
   }
 
-  .modal-panel {
+  .lux-modal__panel {
     max-height: 88dvh;
     border-radius: 20px;
   }
@@ -3163,7 +3177,7 @@
   .sidebar,
   .conversation-header,
   .composer,
-  .modal-panel,
+  .lux-modal__panel,
   .popover,
   .toast,
   .call-banner {
