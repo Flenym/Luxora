@@ -272,7 +272,7 @@ final class CommunityManagementStoreTests: XCTestCase {
     func testJoinRequestApproveTransitionsAndRetryKeepsRequestPending() async {
         let page = JoinRequestLoaderProbe(items: [pendingJoinRequest()])
         let decisionProbe = JoinDecisionProbe(
-            approveResult: decidedJoinRequest(state: .approved),
+            approveResult: decidedJoinDecision(state: .approved),
             failuresBeforeApprove: [.transport("response lost")]
         )
         let store = makeManagementStore(role: .owner)
@@ -309,7 +309,7 @@ final class CommunityManagementStoreTests: XCTestCase {
     func testJoinRequestDenyAndManagerOnlyGating() async {
         let page = JoinRequestLoaderProbe(items: [pendingJoinRequest()])
         let decisionProbe = JoinDecisionProbe(
-            denyResult: decidedJoinRequest(state: .denied)
+            denyResult: decidedJoinDecision(state: .denied)
         )
         let store = makeManagementStore(role: .admin)
         configure(
@@ -330,7 +330,7 @@ final class CommunityManagementStoreTests: XCTestCase {
         XCTAssertEqual(denyCalls, 1)
 
         let memberStore = makeManagementStore(role: .member)
-        let memberProbe = JoinDecisionProbe(denyResult: decidedJoinRequest(state: .denied))
+        let memberProbe = JoinDecisionProbe(denyResult: decidedJoinDecision(state: .denied))
         configure(memberStore, joinDenier: { chatID, requestID in
             try await memberProbe.deny(chatID: chatID, requestID: requestID)
         })
@@ -511,8 +511,11 @@ final class CommunityManagementStoreTests: XCTestCase {
         XCTAssertEqual(joinedStore.joinByLinkState, .idle)
 
         let pendingStore = makeManagementStore(role: .member, currentUserID: memberID)
+        // Captured by value so the @Sendable transport closure never touches
+        // main-actor test helpers.
+        let pendingRequest = pendingJoinRequest()
         configure(pendingStore, inviteJoiner: { _, _ in
-            .pending(request: pendingJoinRequest(), replayed: true)
+            .pending(request: pendingRequest, replayed: true)
         })
         let pending = await pendingStore.joinByInvite(rawInput: token(seed: "H"))
         XCTAssertNotNil(pending)
@@ -675,16 +678,20 @@ final class CommunityManagementStoreTests: XCTestCase {
         )
     }
 
-    private func decidedJoinRequest(state: CommunityJoinRequestState) -> CommunityJoinRequest {
-        CommunityJoinRequest(
-            id: requestID,
-            chatID: chatID,
-            userID: strangerID,
-            inviteLinkID: linkID,
-            state: state,
-            decidedBy: ownerID,
-            createdAt: updatedDate,
-            decidedAt: updatedDate.addingTimeInterval(60)
+    private func decidedJoinDecision(state: CommunityJoinRequestState) -> CommunityJoinDecision {
+        CommunityJoinDecision(
+            request: CommunityJoinRequest(
+                id: requestID,
+                chatID: chatID,
+                userID: strangerID,
+                inviteLinkID: linkID,
+                state: state,
+                decidedBy: ownerID,
+                createdAt: updatedDate,
+                decidedAt: updatedDate.addingTimeInterval(60)
+            ),
+            membership: nil,
+            replayed: false
         )
     }
 
