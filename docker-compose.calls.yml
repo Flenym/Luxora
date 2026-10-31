@@ -43,6 +43,13 @@ services:
           level: info
           json: true
           sample: false
+        # Deliver participant/room lifecycle events to the API so call state can
+        # move connecting -> active and end on media-plane disconnects. The API
+        # verifies the short-lived LiveKit signature with the API key/secret.
+        webhook:
+          api_key: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}"
+          urls:
+            - ${CALLS_WEBHOOK_URL:-http://host.docker.internal:2222/v1/internal/calls/livekit-webhook}
         limit:
           max_metadata_size: 16384
           max_attributes_size: 16384
