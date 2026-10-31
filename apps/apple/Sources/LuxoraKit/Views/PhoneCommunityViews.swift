@@ -30,6 +30,7 @@ private func communityCountLabel(_ count: Int, kind: ConversationKind) -> String
 
 struct PhoneCommunitiesView: View {
     @Bindable var communityStore: CommunityStore
+    var managementStore: CommunityManagementStore? = nil
     let communityListState: RemoteContentState
     let refreshCommunities: () async -> Void
     let openConversation: (UUID) -> Void
@@ -38,6 +39,7 @@ struct PhoneCommunitiesView: View {
     @State private var scope: PhoneCommunityScope = .all
     @State private var query = ""
     @State private var creationKind: CommunityKind?
+    @State private var showsJoinByLink = false
 
     private var communities: [Conversation] {
         communityStore.communities.filter { conversation in
@@ -162,6 +164,13 @@ struct PhoneCommunitiesView: View {
                     Button("Создать канал", systemImage: "megaphone.fill") {
                         creationKind = .channel
                     }
+                    if managementStore != nil {
+                        Divider()
+                        Button("Присоединиться по ссылке", systemImage: "link") {
+                            showsJoinByLink = true
+                        }
+                        .accessibilityIdentifier("spaces-join-by-link")
+                    }
                 } label: {
                     Image(systemName: "square.and.pencil")
                 }
@@ -179,6 +188,15 @@ struct PhoneCommunitiesView: View {
                     openConversation(conversation.id)
                 }
             )
+        }
+        .sheet(isPresented: $showsJoinByLink) {
+            if let managementStore {
+                PhoneCommunityJoinByLinkSheet(
+                    store: managementStore,
+                    refreshCommunities: refreshCommunities,
+                    openConversation: openConversation
+                )
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("spaces-screen")
@@ -545,6 +563,8 @@ struct PhoneCommunityProfileView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var communityStore: CommunityStore
     var topicsStore: ChatTopicsStore?
+    var managementStore: CommunityManagementStore? = nil
+    var participantResolver: (UUID) -> Participant? = { _ in nil }
     let initialConversation: Conversation
     let openConversation: (UUID) -> Void
     let leftCommunity: (UUID) -> Void
@@ -618,6 +638,8 @@ struct PhoneCommunityProfileView: View {
 
             topicsSection
 
+            managementSection
+
             if let currentMember,
                currentMember.membership.role != .owner {
                 Section {
@@ -652,11 +674,24 @@ struct PhoneCommunityProfileView: View {
             await communityStore.refreshCommunity(conversation.id)
             await communityStore.loadMembers(conversation.id)
             await topicsStore?.refresh(chatID: conversation.id)
+            if let managementStore,
+               !managementStore.isManager(chatID: conversation.id) {
+                // A plain member may be the designated ownership successor;
+                // the server reveals only that ceremony and forbids the rest.
+                await managementStore.loadPendingOwnershipTransfer(chatID: conversation.id)
+            }
         }
         .refreshable {
             await communityStore.refreshCommunity(conversation.id)
             await communityStore.loadMembers(conversation.id, force: true)
             await topicsStore?.refresh(chatID: conversation.id, force: true)
+            if let managementStore,
+               !managementStore.isManager(chatID: conversation.id) {
+                await managementStore.loadPendingOwnershipTransfer(
+                    chatID: conversation.id,
+                    force: true
+                )
+            }
         }
         .sheet(isPresented: $showsAddMember) {
             PhoneCommunityAddMemberSheet(
@@ -959,6 +994,64 @@ struct PhoneCommunityProfileView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var managementSection: some View {
+        if let managementStore, showsManagementLink(managementStore) {
+            Section {
+                NavigationLink {
+                    PhoneCommunityManagementView(
+                        store: managementStore,
+                        communityStore: communityStore,
+                        conversation: conversation,
+                        participantResolver: participantResolver
+                    )
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: managementStore.isManager(chatID: conversation.id)
+                              ? "gearshape.2.fill"
+                              : "arrow.left.arrow.right.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(LuxoraTheme.electricBlue)
+                            .frame(width: 44, height: 44)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(managementStore.isManager(chatID: conversation.id)
+                                 ? "Управление сообществом"
+                                 : "Передача владения")
+                                .foregroundStyle(.primary)
+                            Text(managementSubtitle(managementStore))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        if managementStore.hasPendingTransfer(chatID: conversation.id) {
+                            Text("Ожидает")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.orange.opacity(0.16), in: Capsule())
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("community-management-link")
+            } header: {
+                Text("Управление")
+            }
+        }
+    }
+
+    private func showsManagementLink(_ store: CommunityManagementStore) -> Bool {
+        store.isManager(chatID: conversation.id)
+            || store.isSuccessor(chatID: conversation.id)
+    }
+
+    private func managementSubtitle(_ store: CommunityManagementStore) -> String {
+        if store.isSuccessor(chatID: conversation.id) {
+            return "Вам передают владение — примите или попросите владельца отменить"
+        }
+        return "Ссылки-приглашения, заявки на вступление, передача владения"
     }
 
     private var canManageTopics: Bool {

@@ -15,7 +15,11 @@
 
 The repository currently contains a complete local Phase-1 text foundation and
 tested partial foundations from later phases: rich media/storage/search, IA-1
-relationships/safety, an isolated call-control domain and loopback SFU/TURN.
+relationships/safety, account export/deletion, QR device-linking, security
+containment, an API-integrated calls preview (signaling, grants, signed webhook,
+durable `call.state.changed`, loopback LiveKit/coturn harness, iPhone call
+surface with history/log/voice and a web signalling UI), a completed static
+public product site and a developer-preview web messenger client at `/app`.
 This is still not a complete server, and a later-phase foundation does not pass
 that phase's production gate. Client foundations do not move server phases
 forward unless they produce server-contract evidence. Truth/security/build
@@ -99,7 +103,16 @@ Gate: no inaccessible snippets, no Private plaintext leak, revoked-device cleanu
 
 ## Phase 6 — calls platform
 
-Priority: **server program, independently gated**.
+Priority: **server program, independently gated**. Status as recorded on
+31 October 2026: **preview implemented, production gate not passed**. The
+call-control domain is API-integrated with signaling slices, short-lived
+LiveKit/coturn grants behind a configuration gate, a signed webhook,
+membership-reconcile and stale-reconnect sweepers, durable `call.state.changed`,
+an iPhone call surface (banner, recent-calls history, per-chat log, in-call
+overlay with honest mute — audio only; verified by Apple CI, ios-compile fix in
+`df39703`) and a web signalling UI plus fallback page. Still open: push/CallKit
+ringing, video/screen-share clients, production SFU/TURN capacity and relay-cost
+evidence, real-device network labs and independent review.
 
 Canonical design and the truth boundary: [docs/specs/CALLS_PLATFORM.md](docs/specs/CALLS_PLATFORM.md).
 
@@ -174,9 +187,9 @@ Only stable server + full iPhone unfreeze this phase.
 
 1. iPad and macOS may reuse proven Swift domain/network/storage while keeping native UX.
 2. Android replaces demo state with the same protocol/offline conformance corpus.
-3. Web separates public site/authenticated app and adopts a reviewed browser session/cache model.
+3. Web: the public site and a developer-preview `/app` messenger client already exist in the current branch; the client must adopt reviewed hosting headers/CSP, a final refresh-token storage policy and CI E2E before it may be called available.
 4. Windows/Linux use a reviewed signed shell/updater and OS credential vault.
-5. Public site publishes only evidence-backed availability, security and download claims.
+5. Public site keeps publishing only evidence-backed availability, security and download claims; it is never the place to announce an unfinished client as shipped.
 
 Platform order within this phase may change by product evidence, but none may bypass contract and release gates.
 

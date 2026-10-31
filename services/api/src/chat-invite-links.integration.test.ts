@@ -182,11 +182,13 @@ describe("chat invite links", () => {
     })).statusCode).toBe(403);
     expect((await createLink(outsider, chatId)).statusCode).toBe(403);
 
+    // A self Direct (saved messages) keeps the invite-link Direct guard
+    // reachable without inventing a relationship with the probe outsider.
     const direct = await app!.inject({
       method: "POST",
       url: "/v1/chats",
       headers: auth(owner),
-      payload: { kind: "direct", userId: outsider.id }
+      payload: { kind: "direct", userId: owner.id }
     });
     expect(direct.statusCode).toBe(201);
     expect((await createLink(owner, direct.json().chat.id as string)).statusCode).toBe(409);

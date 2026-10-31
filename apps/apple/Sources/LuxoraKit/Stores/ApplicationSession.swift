@@ -294,8 +294,10 @@ public final class ApplicationSession {
     public private(set) var chatPreferencesStore: ChatPreferencesStore?
     public private(set) var chatFoldersStore: ChatFoldersStore?
     public private(set) var communityStore: CommunityStore?
+    public private(set) var communityManagementStore: CommunityManagementStore?
     public private(set) var chatTopicsStore: ChatTopicsStore?
     public private(set) var globalSearchStore: GlobalSearchStore?
+    private(set) var callsStore: CallsStore?
     public private(set) var synchronizedDraftStore: SynchronizedChatDraftStore?
     public let avatarImageCache = AuthenticatedAvatarImageCache()
     public let attachmentImageCache = AuthenticatedAvatarImageCache(byteLimit: 128 * 1_024 * 1_024)
@@ -463,6 +465,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        communityManagementStore?.cancelRemoteOperations()
         chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
@@ -492,9 +495,10 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        communityManagementStore = nil
         chatTopicsStore = nil
         chatTopicsStore = nil
-        globalSearchStore = nil
+        globalSearchStore = nil        callsStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
@@ -833,6 +837,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        communityManagementStore?.cancelRemoteOperations()
         chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
@@ -865,9 +870,10 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        communityManagementStore = nil
         chatTopicsStore = nil
         chatTopicsStore = nil
-        globalSearchStore = nil
+        globalSearchStore = nil        callsStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
@@ -1710,6 +1716,104 @@ public final class ApplicationSession {
             }
         )
 
+        let managementStore = CommunityManagementStore(
+            currentUserID: userID,
+            communityStore: communitiesStore
+        )
+        managementStore.configureRemote(
+            inviteLinkLoader: { chatID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.inviteLinks(chatID: chatID, token: token)
+                }
+            },
+            inviteLinkCreator: { chatID, approvalRequired, expiresInSeconds, maxUses, nonce in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.createInviteLink(
+                        chatID: chatID,
+                        approvalRequired: approvalRequired,
+                        expiresInSeconds: expiresInSeconds,
+                        maxUses: maxUses,
+                        clientNonce: nonce,
+                        token: token
+                    )
+                }
+            },
+            inviteLinkRevoker: { chatID, linkID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.revokeInviteLink(
+                        chatID: chatID,
+                        linkID: linkID,
+                        token: token
+                    )
+                }
+            },
+            joinRequestLoader: { chatID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.joinRequests(chatID: chatID, token: token)
+                }
+            },
+            joinRequestApprover: { chatID, requestID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.approveJoinRequest(
+                        chatID: chatID,
+                        requestID: requestID,
+                        token: token
+                    )
+                }
+            },
+            joinRequestDenier: { chatID, requestID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.denyJoinRequest(
+                        chatID: chatID,
+                        requestID: requestID,
+                        token: token
+                    )
+                }
+            },
+            pendingTransferLoader: { chatID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.pendingOwnershipTransfer(chatID: chatID, token: token)
+                }
+            },
+            transferInitiator: { chatID, targetUserID, nonce in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.initiateOwnershipTransfer(
+                        chatID: chatID,
+                        targetUserID: targetUserID,
+                        clientNonce: nonce,
+                        token: token
+                    )
+                }
+            },
+            transferAccepter: { chatID, transferID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.acceptOwnershipTransfer(
+                        chatID: chatID,
+                        transferID: transferID,
+                        token: token
+                    )
+                }
+            },
+            transferCanceller: { chatID, transferID in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.cancelOwnershipTransfer(
+                        chatID: chatID,
+                        transferID: transferID,
+                        token: token
+                    )
+                }
+            },
+            inviteJoiner: { inviteToken, nonce in
+                try await coordinator.withAccessToken { token in
+                    try await communityAPI.joinByInvite(
+                        token: inviteToken,
+                        clientNonce: nonce,
+                        token: token
+                    )
+                }
+            }
+        )
+
         let topicsStore = ChatTopicsStore()
         topicsStore.configureRemote(
             loader: { chatID in
@@ -1777,6 +1881,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        communityManagementStore?.cancelRemoteOperations()
         chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
@@ -1812,6 +1917,13 @@ public final class ApplicationSession {
         }
         credentialCoordinator = coordinator
         currentUserID = user.id
+        callsStore = CallsStore(
+            api: api,
+            accountID: user.id,
+            tokenProvider: {
+                try await coordinator.withAccessToken { $0 }
+            }
+        )
         durableMessagingScope = durableScope
         messengerStore = store
         deviceSessionsStore = sessionsStore
@@ -1825,6 +1937,7 @@ public final class ApplicationSession {
         chatFoldersStore = foldersStore
         chatFoldersBinding = foldersBinding
         communityStore = communitiesStore
+        communityManagementStore = managementStore
         chatTopicsStore = topicsStore
         globalSearchStore = searchStore
         synchronizedDraftStore = draftsStore
@@ -1995,6 +2108,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        communityManagementStore?.cancelRemoteOperations()
         chatTopicsStore?.cancelRemoteOperations()
         globalSearchStore?.resetForSessionReplacement()
         synchronizedDraftStore?.resetForSessionReplacement()
@@ -2014,8 +2128,9 @@ public final class ApplicationSession {
         chatFoldersStore = nil
         chatFoldersBinding = nil
         communityStore = nil
+        communityManagementStore = nil
         chatTopicsStore = nil
-        globalSearchStore = nil
+        globalSearchStore = nil        callsStore = nil
         synchronizedDraftStore = nil
         synchronizedDraftBinding = nil
         resetPhoneAuthenticationCommands()
@@ -2035,6 +2150,7 @@ public final class ApplicationSession {
         chatPreferencesStore?.resetForSessionReplacement()
         chatFoldersStore?.resetForSessionReplacement()
         communityStore?.cancelRemoteOperations()
+        communityManagementStore?.cancelRemoteOperations()
         chatTopicsStore?.cancelRemoteOperations()
         synchronizedDraftStore?.resetForSessionReplacement()
         pushNotificationLifecycle.detach()
@@ -2422,6 +2538,36 @@ public final class ApplicationSession {
                                 self.realtimeV2Sequence = dispatch.sequence
                             }
                             guard preferencesStillOwned else { return }
+
+                        case let .callState(dispatch):
+                            // Call state has no local store yet: acknowledge the
+                            // durable cursor so the stream keeps advancing. The
+                            // call UI re-reads GET /v1/calls/:id on demand.
+                            guard dispatch.sequence > (realtimeV2Sequence ?? 0) else {
+                                continue
+                            }
+                            let callStillOwned = try await ScopedRealtimePostAwaitFence.run {
+                                try await coordinator.commitRealtimeV2Cursor(dispatch.cursor)
+                            } stillOwnsSession: {
+                                self.ownsScopedRealtime(
+                                    coordinator: coordinator,
+                                    store: store,
+                                    userID: userID,
+                                    preferencesStore: preferencesStore,
+                                    preferencesBinding: preferencesBinding,
+                                    foldersStore: foldersStore,
+                                    foldersBinding: foldersBinding,
+                                    communityStore: expectedCommunityStore
+                                )
+                            } publish: {
+                                self.realtimeV2Sequence = dispatch.sequence
+                            }
+                            guard callStillOwned else { return }
+                            // Realtime is only a trigger: re-read the call so the
+                            // store can show an incoming call or end an active one.
+                            if let callsStore = self.callsStore {
+                                await callsStore.refresh(callID: dispatch.callID)
+                            }
 
                         case let .chatFolders(dispatch):
                             guard dispatch.sequence > (realtimeV2Sequence ?? 0),

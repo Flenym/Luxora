@@ -28,11 +28,42 @@ jobs:
         with:
           fail-on-severity: high
 
-  # CodeQL is suspended: the private repository has no Advanced Security
-  # license, so SARIF upload is rejected and the analyze step always fails on
-  # repository permissions. Trivy (vuln/secret/misconfig) below remains the
-  # active security gate. Re-enable this job if the repo gains Advanced
-  # Security or is made public.
+  # CodeQL was suspended while the repository was private, because the private
+  # repository had no GitHub Advanced Security license, so SARIF upload was
+  # rejected and the analyze step always failed on repository permissions.
+  # The repository is public now, so code scanning with the GitHub-provided
+  # CodeQL toolchain is free again and this job is re-enabled with advanced
+  # setup (CodeQL default setup is not configured for this repository).
+  # javascript-typescript is the only language CodeQL needs to cover here:
+  # the Node API and React apps are JavaScript/TypeScript. Build output
+  # (node_modules/dist/coverage) is excluded from analysis.
+  codeql:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          config: |
+            paths-ignore:
+              - "**/node_modules/**"
+              - "**/dist/**"
+              - "**/build/**"
+              - "**/coverage/**"
+              - "**/*.min.js"
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: "/language:javascript-typescript"
+
   filesystem-and-image:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -123,10 +154,15 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: false
           exit-code: "1"
-      - name: Scan pinned coturn image
+      - name: Build local development TURN image
+        run: docker build --pull --file tools/coturn/Dockerfile --tag luxora-turn:${{ github.sha }} .
+      - name: Scan local development TURN image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: coturn/coturn:4.16.0-alpine3.24@sha256:901954a6b057079e1b12b2e4b4de06e3419e503336ba76c18f62debca3ac4b42
+          # Local-dev harness only (never shipped): built from the pinned
+          # Alpine 3.24.3 base so the relay does not inherit the brotli
+          # CVE-2026-111497 present in upstream coturn alpine tags.
+          image-ref: luxora-turn:${{ github.sha }}
           scanners: vuln,secret
           version: v0.73.0
           format: table

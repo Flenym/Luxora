@@ -74,14 +74,26 @@ services:
         ipv4_address: 172.31.80.10
 
   turn:
-    image: coturn/coturn:4.16.0-alpine3.24@sha256:901954a6b057079e1b12b2e4b4de06e3419e503336ba76c18f62debca3ac4b42
+    # Local development harness only (never shipped to users). Built locally
+    # from the pinned Alpine 3.24.3 base because the published coturn alpine
+    # tags still bundle brotli-libs 1.2.0-r1, which Trivy flags as CRITICAL
+    # (CVE-2026-111497, fixed in 1.2.1-r0). See tools/coturn/Dockerfile.
+    build:
+      context: .
+      dockerfile: tools/coturn/Dockerfile
+    image: luxora-turn:local
+    # TURN must bind 3478 (<1024); with cap_drop ALL a non-root process cannot
+    # acquire NET_BIND_SERVICE. Run this local-only relay as root inside the
+    # container while the bounding set stays empty apart from NET_BIND_SERVICE
+    # (read-only rootfs, no new privileges, loopback-published ports).
+    user: "0:0"
     command:
       - --listening-ip=0.0.0.0
       - --relay-ip=172.31.80.20
       - --external-ip=${TURN_PUBLIC_IP:-127.0.0.1}/172.31.80.20
       - --listening-port=${TURN_PORT:-3478}
-      - --min-port=49160
-      - --max-port=49200
+      - --min-port=${TURN_RELAY_MIN_PORT:-49160}
+      - --max-port=${TURN_RELAY_MAX_PORT:-49200}
       - --realm=${TURN_REALM:-calls.luxora.local}
       - --server-name=${TURN_REALM:-calls.luxora.local}
       - --use-auth-secret
@@ -96,7 +108,6 @@ services:
       - --denied-peer-ip=192.168.0.0-192.168.255.255
       - --no-tls
       - --no-dtls
-      - --prometheus
       - --log-file=stdout
       - --simple-log
       - --pidfile=/tmp/turnserver.pid
@@ -107,9 +118,9 @@ services:
     ports:
       - "127.0.0.1:${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
       - "127.0.0.1:${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
-      - "127.0.0.1:49160-49200:49160-49200/udp"
-      - "127.0.0.1:9641:9641/tcp"
+      - "127.0.0.1:${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}:${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}/udp"
     healthcheck:
+      # tools/coturn/Dockerfile installs bash; busybox sh has no /dev/tcp.
       test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/${TURN_PORT:-3478}; exec 3>&-"]
       interval: 15s
       timeout: 3s
@@ -126,6 +137,33 @@ services:
     networks:
       calls:
         ipv4_address: 172.31.80.20
+
+  # Local-only TLS terminator so CALLS_LIVEKIT_URL can be wss:// (required by
+  # the API). Self-signed internal CA; development harness only.
+  tls:
+    image: caddy:2.8-alpine
+    volumes:
+      - ./infra/calls/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "127.0.0.1:7443:7443/tcp"
+    depends_on:
+      sfu:
+        condition: service_started
+    networks:
+      calls:
+        ipv4_address: 172.31.80.30
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+
+volumes:
+  caddy-data:
+  caddy-config:
 
 networks:
   calls:

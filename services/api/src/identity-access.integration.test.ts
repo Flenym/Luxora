@@ -194,14 +194,25 @@ describe("IA-1 identity and relationship boundary", () => {
     const nonceConflict = await createRequest(alice, bob, "Changed body", nonce);
     expect(nonceConflict.statusCode).toBe(409);
 
+    // A pending message request is not a relationship: creating a Direct
+    // directly must not bypass the recipient's acceptance, and it must not
+    // leave a chat whose realtime relationship re-authorization would reject.
     const strangerDirect = await app.inject({
       method: "POST",
       url: "/v1/chats",
       headers: auth(alice),
       payload: { kind: "direct", userId: bob.id }
     });
-    expect(strangerDirect.statusCode).toBe(201);
-    expect(strangerDirect.json().chat.kind).toBe("direct");
+    expect(strangerDirect.statusCode).toBe(403);
+    expect(strangerDirect.json().error.code).toBe("FORBIDDEN");
+    expect(strangerDirect.json().error.details).toEqual({ reason: "relationship_unavailable" });
+    const chatsBeforeAcceptance = await app.inject({
+      method: "GET",
+      url: "/v1/chats",
+      headers: auth(alice)
+    });
+    expect(chatsBeforeAcceptance.statusCode).toBe(200);
+    expect(chatsBeforeAcceptance.json().items).toHaveLength(0);
     const groupBypass = await app.inject({
       method: "POST",
       url: "/v1/chats",
@@ -483,16 +494,17 @@ describe("IA-1 identity and relationship boundary", () => {
       headers: auth(alice)
     });
     expect(unblocked.statusCode).toBe(200);
-    // Telegram semantics: a block erases the accepted relationship, and after
-    // the unblock the default everyone-privacy lets strangers deliver again
-    // without a new request/acceptance round-trip.
+    // API.md §6: unblock "does not restore acceptance". The Direct chat row
+    // remains readable as history, but active mutations stay denied until a
+    // fresh request/accept round-trip re-creates the accepted relationship.
     const afterUnblock = await app.inject({
       method: "POST",
       url: `/v1/chats/${chatId}/messages`,
       headers: auth(bob),
       payload: { body: "Delivered after unblock", clientNonce: randomUUID() }
     });
-    expect(afterUnblock.statusCode).toBe(201);
+    expect(afterUnblock.statusCode).toBe(403);
+    expect(afterUnblock.json().error.details).toEqual({ reason: "relationship_unavailable" });
 
     const newRequest = await createRequest(bob, alice, "Explicit consent after unblock");
     expect(newRequest.statusCode).toBe(201);

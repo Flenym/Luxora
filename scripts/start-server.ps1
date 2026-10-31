@@ -116,7 +116,14 @@ $env:PHONE_AUTH_DEVELOPMENT_CODE = $secrets["LUXORA_DEV_OTP_CODE"]
 $env:PHONE_AUTH_RECOVERY_DELAY_SECONDS = "0"
 $env:PHONE_AUTH_RECOVERY_TTL_SECONDS = "86400"
 $env:ADMIN_TOKEN = $secrets["LUXORA_ADMIN_TOKEN"]
-$env:CORS_ORIGINS = "http://localhost:4173,http://localhost:4174,http://localhost:5173,http://localhost:3000,http://127.0.0.1:4173,http://127.0.0.1:4174"
+$corsOrigins = @("http://localhost:4173", "http://localhost:4174", "http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:4173", "http://127.0.0.1:4174")
+# Public CloudPub origins (written by scripts/start-all.ps1) are added here so the
+# browser can call the API from the published web address.
+$publicOriginsFile = Join-Path $dataDir "public-origins.txt"
+if (Test-Path $publicOriginsFile) {
+  Get-Content $publicOriginsFile | ForEach-Object { if ($_.Trim()) { $corsOrigins += $_.Trim() } }
+}
+$env:CORS_ORIGINS = ($corsOrigins | Select-Object -Unique) -join ","
 
 Step-Message "Starting API on http://127.0.0.1:2222 (Ctrl+C to stop)"
 node --enable-source-maps services/api/dist/server.js

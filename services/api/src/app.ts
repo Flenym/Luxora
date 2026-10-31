@@ -1,3 +1,4 @@
+import type { LiveKitRoomClient } from "./services/livekit-room.js";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -68,8 +69,10 @@ export interface BuildAppOptions {
   store?: Store;
   logger?: boolean;
   logStream?: { write(message: string): void };
-  phoneDeliveryProvider?: PhoneVerificationDeliveryProvider;
-}
+    phoneDeliveryProvider?: PhoneVerificationDeliveryProvider;
+    /** Test seam: replaces the LiveKit CreateRoom client built from config. */
+    callRoomClient?: LiveKitRoomClient;
+  }
 
 export interface LuxoraApp extends FastifyInstance {
   luxora: {
@@ -442,7 +445,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   const reindexedItems = rebuildSearchIndexes(store, searchHasher);
   if (reindexedItems > 0) app.log.info({ indexedItems: reindexedItems }, "Search indexes rebuilt");
   const storage = await createStorageProvider(config);
-  const calls = new CallService(store, config.callsMediaPlane);
+  const calls = new CallService(store, config.callsMediaPlane, options.callRoomClient);
   const chats = new ChatService(store, outbox, searchHasher, {
     onMemberRemoved: (chatId, memberId) => {
       void calls.reconcileMembership(chatId, memberId).then((result) => {
@@ -505,6 +508,22 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
   });
   await app.register(cors, {
     credentials: false,
+    // A browser client on another origin must be able to issue every mutation
+    // the API exposes. @fastify/cors defaults to GET,HEAD,POST only, which
+    // silently blocks PATCH/PUT/DELETE after a successful preflight.
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    // Header material the browser must be able to read: conditional/range
+    // downloads for attachment and data-export content, and bounded retry
+    // hints. Origin policy is unchanged.
+    exposedHeaders: [
+      "ETag",
+      "Content-Range",
+      "Accept-Ranges",
+      "Content-Disposition",
+      "Retry-After",
+      "X-Content-Type-Options"
+    ],
+    maxAge: 86_400,
     origin(origin, callback) {
       if (origin === undefined || config.corsOrigins.includes(origin)) {
         callback(null, true);
@@ -676,6 +695,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<LuxoraApp
     calls,
     deviceLinks,
     serverSearchConfigured: searchHasher.available,
+    // Calls are advertised only when the media plane (LiveKit + TURN) is set.
+    callsConfigured: config.callsMediaPlane !== undefined,
     authGuard
   });
   if (config.passkeyInternalRoutesEnabled || config.passkeyInternalSignupRoutesEnabled) {

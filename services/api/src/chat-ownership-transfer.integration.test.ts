@@ -203,11 +203,13 @@ describe("chat ownership transfer ceremony", () => {
     expect((await initiate(owner, chatId, stranger.id)).statusCode).toBe(404);
     expect((await initiate(owner, chatId, owner.id)).statusCode).toBe(409);
 
+    // A self Direct (saved messages) keeps the ownership-transfer guard
+    // reachable without inventing a relationship with the probe stranger.
     const direct = await app!.inject({
       method: "POST",
       url: "/v1/chats",
       headers: auth(owner),
-      payload: { kind: "direct", userId: stranger.id }
+      payload: { kind: "direct", userId: owner.id }
     });
     expect(direct.statusCode).toBe(201);
     expect((await initiate(owner, direct.json().chat.id as string, stranger.id)).statusCode).toBe(409);

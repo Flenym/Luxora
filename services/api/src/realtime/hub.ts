@@ -436,6 +436,7 @@ export class RealtimeHub implements EventPublisher {
       case "chat.preferences.updated": return event.chatId;
       case "chat.folders.updated": return null;
       case "chat.draft.changed": return event.chatId;
+      case "call.state.changed": return event.chatId;
       case "sync.invalidated": return null;
       case "attachment.stored":
       case "relationship.request.created":

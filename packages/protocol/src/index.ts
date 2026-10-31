@@ -78,7 +78,7 @@ export const ApiErrorSchema = z.object({
     code: ApiErrorCodeSchema,
     message: z.string(),
     requestId: z.string(),
-    details: z.record(z.unknown()).optional()
+    details: z.record(z.string(), z.unknown()).optional()
   })
 });
 
@@ -618,6 +618,7 @@ export const PasskeyClientExtensionResultsSchema = z.unknown().superRefine(
     if (utf8ByteLength(serialized) > PASSKEY_MAX_EXTENSION_RESULTS_BYTES) {
       context.addIssue({
         code: z.ZodIssueCode.too_big,
+        origin: "string",
         maximum: PASSKEY_MAX_EXTENSION_RESULTS_BYTES,
         inclusive: true,
         type: "string",
@@ -1974,7 +1975,9 @@ const CapabilitiesRuntimeLimitShape = {
 export const CapabilitiesRuntimeStateSchema = z.object({
   ...CapabilitiesRuntimeLimitShape,
   serverSearchConfigured: z.boolean(),
-  phoneAuthenticationAvailable: z.boolean()
+  phoneAuthenticationAvailable: z.boolean(),
+  // True only when the call media plane (LiveKit + TURN) is configured.
+  callsConfigured: z.boolean().default(false)
 })
   .strict()
   .refine((state) => state.userStorageQuotaBytes >= state.maxAttachmentBytes, {
@@ -2024,7 +2027,7 @@ export const CapabilitiesResponseV1Schema = z.object({
     drafts: z.boolean().default(false),
     mediaUploads: z.literal(true),
     serverSearchConfigured: z.boolean(),
-    calls: z.literal(false),
+    calls: z.boolean(),
     passkeys: z.literal(false),
     push: z.literal(false)
   }),
@@ -2071,6 +2074,7 @@ export function createCapabilitiesResponseV1(
   const {
     serverSearchConfigured,
     phoneAuthenticationAvailable,
+    callsConfigured,
     ...limits
   } = state;
   return CapabilitiesResponseV1Schema.parse({
@@ -2104,7 +2108,7 @@ export function createCapabilitiesResponseV1(
       drafts: true,
       mediaUploads: true,
       serverSearchConfigured,
-      calls: false,
+      calls: callsConfigured,
       passkeys: false,
       push: false
     },
@@ -3097,9 +3101,31 @@ export const SyncInvalidatedRealtimeEventSchema = z.object({
 
 // Realtime v2 is additive: all existing messaging events remain valid while
 // IA-1 and reconciliation-invalidating events are isolated from the strict v1 union.
+// Call control state change. Carries only the identifiers and the state needed
+// to decide what to show; clients fetch the full call via GET /v1/calls/:id.
+// Never contains media, SDP, ICE, TURN or grant material.
+export const CallStateChangedRealtimeEventSchema = z.object({
+  type: z.literal("call.state.changed"),
+  callId: IdSchema,
+  chatId: IdSchema,
+  state: z.enum([
+    "created",
+    "inviting",
+    "ringing",
+    "connecting",
+    "active",
+    "reconnecting",
+    "ending",
+    "ended"
+  ]),
+  revision: z.number().int().nonnegative(),
+  occurredAt: TimestampSchema
+}).strict();
+
 export const DurableRealtimeEventSchema = z.union([
   RealtimeEventSchema,
   IA1RealtimeEventSchema,
+  CallStateChangedRealtimeEventSchema,
   ChatMembershipRealtimeEventSchema,
   ChatJoinRequestRealtimeEventSchema,
   ChatOwnershipTransferChangedRealtimeEventSchema,

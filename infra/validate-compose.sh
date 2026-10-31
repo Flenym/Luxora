@@ -74,7 +74,9 @@ jq --exit-status '
   .services.sfu as $sfu
   | .services.turn as $turn
   | ($sfu.image == "livekit/livekit-server:v1.13.5@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1")
-    and ($turn.image == "coturn/coturn:4.16.0-alpine3.24@sha256:901954a6b057079e1b12b2e4b4de06e3419e503336ba76c18f62debca3ac4b42")
+    and ($turn.image == "luxora-turn:local")
+    and ($turn.build.dockerfile == "tools/coturn/Dockerfile")
+    and ($turn.build | has("context"))
     and ($sfu.read_only == true)
     and ($turn.read_only == true)
     and ($sfu.cap_drop == ["ALL"])
@@ -88,6 +90,7 @@ jq --exit-status '
     and all($turn.ports[]; .host_ip == "127.0.0.1")
     and ($sfu.healthcheck.test[0] == "CMD")
     and ($turn.healthcheck.test[0] == "CMD")
+    and ($turn.user == "0:0")
     and ($sfu.depends_on.turn.condition == "service_healthy")
 ' "$calls_config" >/dev/null || {
   echo "Calls Compose security invariants failed." >&2

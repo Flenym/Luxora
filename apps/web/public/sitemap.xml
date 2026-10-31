@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://luxora.app/</loc><priority>1.0</priority></url>
+  <url><loc>https://luxora.app/download</loc><priority>0.9</priority></url>
+  <url><loc>https://luxora.app/security</loc><priority>0.8</priority></url>
+  <url><loc>https://luxora.app/docs/introduction</loc><priority>0.8</priority></url>
+  <url><loc>https://luxora.app/docs/installation</loc><priority>0.7</priority></url>
+  <url><loc>https://luxora.app/docs/quick-start</loc><priority>0.7</priority></url>
+  <url><loc>https://luxora.app/docs/first-steps</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/docs/creating-an-account</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/docs/profile</loc><priority>0.5</priority></url>
+  <url><loc>https://luxora.app/docs/settings</loc><priority>0.5</priority></url>
+  <url><loc>https://luxora.app/docs/sessions</loc><priority>0.5</priority></url>
+  <url><loc>https://luxora.app/docs/chats</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/docs/groups</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/docs/messages</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/docs/media</loc><priority>0.5</priority></url>
+  <url><loc>https://luxora.app/docs/files</loc><priority>0.5</priority></url>
+  <url><loc>https://luxora.app/docs/windows</loc><priority>0.4</priority></url>
+  <url><loc>https://luxora.app/docs/macos</loc><priority>0.4</priority></url>
+  <url><loc>https://luxora.app/docs/linux</loc><priority>0.4</priority></url>
+  <url><loc>https://luxora.app/docs/ios</loc><priority>0.5</priority></url>
+  <url><loc>https://luxora.app/docs/android</loc><priority>0.4</priority></url>
+  <url><loc>https://luxora.app/docs/web</loc><priority>0.5</priority></url>
+  <url><loc>https://luxora.app/docs/account-security</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/docs/privacy</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/docs/api</loc><priority>0.4</priority></url>
+  <url><loc>https://luxora.app/faq</loc><priority>0.7</priority></url>
+  <url><loc>https://luxora.app/about</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/blog</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/status</loc><priority>0.5</priority></url>
+  <url><loc>https://luxora.app/contact</loc><priority>0.6</priority></url>
+  <url><loc>https://luxora.app/privacy</loc><priority>0.4</priority></url>
+  <url><loc>https://luxora.app/terms</loc><priority>0.4</priority></url>
+</urlset>

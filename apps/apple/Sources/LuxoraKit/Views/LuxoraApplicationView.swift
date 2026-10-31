@@ -35,6 +35,7 @@ public struct LuxoraApplicationView: View {
             }
         }
         .environment(\.authenticatedAvatarImageCache, session.avatarImageCache)
+        .environment(\.callsStore, session.callsStore)
         .task { await restoreSession() }
     }
 
@@ -127,6 +128,7 @@ public struct LuxoraApplicationView: View {
             pushRegistrationStore: session.pushRegistrationStore,
             chatFoldersStore: session.chatFoldersStore,
             communityStore: session.communityStore,
+            communityManagementStore: session.communityManagementStore,
             chatTopicsStore: session.chatTopicsStore,
             globalSearchStore: session.globalSearchStore,
             updateChatPreferences: { chatID, patch in

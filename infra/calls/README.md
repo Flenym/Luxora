@@ -11,8 +11,13 @@ No surface may describe calls as working because these containers start.
 The pinned components are:
 
 - LiveKit Server `v1.13.5` as the SFU and WebRTC signaling/media transport;
-- coturn `4.16.0` on the official Alpine 3.24 image as the TURN relay using
-  time-limited REST credentials;
+- a local TURN relay image built from `tools/coturn/Dockerfile` (pinned Alpine
+  3.24.3 base + distribution coturn) using time-limited REST credentials. The
+  published `coturn/coturn:*-alpine3.24` tags still bundle
+  `brotli-libs 1.2.0-r1`, which the security gate flags as CRITICAL
+  (`CVE-2026-111497`, fixed in `1.2.1-r0`), so the relay is built locally from
+  the patched base instead. This is a local development harness component,
+  never shipped to users;
 - image index digests recorded in `docker-compose.calls.yml` for reproducible
   multi-architecture resolution.
 

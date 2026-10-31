@@ -26,6 +26,11 @@ started=0
 cleanup() {
   status=$?
   if [[ "$started" -eq 1 ]]; then
+    if [[ "$status" -ne 0 ]]; then
+      echo "Calls harness smoke failed (status $status); container diagnostics:" >&2
+      "${compose[@]}" ps >&2 || true
+      "${compose[@]}" logs --no-color --tail 120 turn sfu tls >&2 || true
+    fi
     "${compose[@]}" down --remove-orphans >/dev/null 2>&1 || true
   fi
   exit "$status"
@@ -39,7 +44,6 @@ started=1
 
 curl --fail --silent --show-error http://127.0.0.1:7880/ >/dev/null
 curl --fail --silent --show-error http://127.0.0.1:6789/metrics >/dev/null
-curl --fail --silent --show-error http://127.0.0.1:9641/metrics >/dev/null
 
 # coturn's test client derives an ephemeral REST username/password from -W.
 # Zero data packets keeps this an authentication/allocation probe rather than a

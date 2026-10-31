@@ -2,7 +2,7 @@
 
 **Canonical public release:** Beta-0.1  
 **Owner and developer:** Flenym  
-**Status:** target contract plus a local infrastructure scaffold; calls are not implemented
+**Status:** canonical target contract; a preview of call signaling, grants and client media is implemented behind configuration — calls are not a product feature
 
 ## 1. Decision
 
@@ -11,9 +11,20 @@ semantics while using a maintained WebRTC media plane. The initial reference
 stack is LiveKit Server for SFU transport and coturn for relay. Luxora will not
 build codecs, ICE, DTLS, SRTP, congestion control or an SFU from scratch.
 
-This decision does not make calls available. The current repository has no call
-control records, grants endpoint, webhook reconciliation, push/ringing flow or
-client media session. `docker-compose.calls.yml` is only a configuration probe.
+This decision does not make calls a product. As recorded on 31 October 2026 the
+repository has call-control records (migrations `038`–`039`), a grant endpoint,
+signed webhook reconciliation, durable `call.state.changed` realtime, a local
+LiveKit/TURN/Caddy harness, and client previews: iPhone call banner/voice, a
+call surface with recent-calls history, per-chat call log, in-call overlay with
+honest microphone mute and call-back (audio only, capability-gated; verified by
+Apple CI — ios-compile fix in `df39703`), plus a web signalling UI and a
+diagnostic fallback page. It still has
+**no** push/CallKit ringing, video or screen-share client media, production
+SFU/TURN capacity evidence, media-E2EE or independent call security review.
+`docker-compose.calls.yml` and `start.bat` remain a local infrastructure
+harness, and `GET /v1/capabilities` advertises `features.calls` only while the
+full `CALLS_LIVEKIT_*`/`CALLS_TURN_*` configuration is present (otherwise
+`false`, and clients must show a locked/honest state).
 
 ## 2. Trust boundary
 
@@ -183,7 +194,8 @@ storage path in this contract.
 
 ## 12. Required tests and gates
 
-Calls remain unavailable until all of the following have evidence:
+Calls stay a configuration-gated preview, not product availability, until all of
+the following have evidence:
 
 - state-machine property tests for duplicate, reorder, race and stale revision;
 - authorization matrix for caller/invitee/non-member/removed/blocked/revoked
@@ -210,9 +222,14 @@ relay range. It deliberately disables TURN TLS for same-Mac testing and admits
 only the fixed SFU peer inside its private Docker subnet. This topology must not
 be copied to production.
 
-Configuration validation or healthy metrics proves process wiring only. A real
-Luxora call begins only after the call-control API, authorization, grants,
-webhooks, clients and all relevant gates above are implemented.
+Configuration validation or healthy metrics proves process wiring only. The
+implemented preview (31 October 2026) proves the control plane, grant issuance,
+webhook reconciliation, realtime refresh trigger, a client LiveKit voice join
+against the local harness, and iPhone/web call surfaces that fall back to a
+locked/honest state whenever `features.calls` is false. A production Luxora call
+additionally requires push/CallKit ringing, video/screen-share clients,
+real-device quality evidence, production SFU/TURN capacity and all gates in §12;
+until then no surface may present a call as protected, E2EE or production-ready.
 
 ## 14. Primary references
 

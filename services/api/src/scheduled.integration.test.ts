@@ -11,7 +11,7 @@ import { SearchHasher } from "./infrastructure/search-hasher.js";
 import { SqliteStore } from "./infrastructure/sqlite-store.js";
 import { ChatService } from "./services/chat-service.js";
 import type { UserRecord } from "./domain/types.js";
-import { testConfig } from "./test-helpers.js";
+import { establishAcceptedRelationship, testConfig } from "./test-helpers.js";
 
 const DATA_KEY = Buffer.alloc(32, 63).toString("base64url");
 const BASE_TIME = "2026-09-12T00:00:00.000Z";
@@ -50,14 +50,9 @@ describe("scheduled messages", () => {
     const bob = await register(app, "sched_bob");
     const aliceHeaders = { authorization: `Bearer ${alice.accessToken}` };
 
-    const chat = await app.inject({
-      method: "POST",
-      url: "/v1/chats",
-      headers: aliceHeaders,
-      payload: { kind: "direct", userId: bob.id }
-    });
-    expect(chat.statusCode, chat.body).toBe(201);
-    const chatId = chat.json().chat.id as string;
+    // A non-self Direct requires the accepted relationship; acceptance creates
+    // the documented Direct chat.
+    const chatId = await establishAcceptedRelationship(app, alice, bob);
 
     const past = await app.inject({
       method: "POST",
@@ -182,6 +177,40 @@ describe("scheduled messages", () => {
       });
       store.addChatMember(chatId, alice.id, "member", BASE_TIME);
       store.addChatMember(chatId, bob.id, "member", BASE_TIME);
+
+      // The documented Direct contract requires the accepted relationship that
+      // request acceptance would have committed together with the chat. The
+      // block below then exercises the relationship_unavailable failure path.
+      const [leftUserId, rightUserId] = [alice.id, bob.id].sort() as [string, string];
+      const pairKey = `${leftUserId}:${rightUserId}`;
+      const acceptedRequestId = randomUUID();
+      const profile = (user: UserRecord) => ({
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        bio: user.bio,
+        avatarUrl: user.avatarUrl
+      });
+      store.createMessageRequest({
+        id: acceptedRequestId,
+        pairKey,
+        senderId: alice.id,
+        recipientId: bob.id,
+        clientNonce: randomUUID(),
+        body: "Scheduled dispatch relationship",
+        linkUrl: null,
+        senderProfile: profile(alice),
+        recipientProfile: profile(bob),
+        createdAt: BASE_TIME,
+        expiresAt: "2026-10-12T00:00:00.000Z"
+      });
+      store.createAcceptedRelationship(
+        pairKey,
+        leftUserId,
+        rightUserId,
+        acceptedRequestId,
+        BASE_TIME
+      );
 
       const due = store.createScheduledMessage({
         id: randomUUID(),

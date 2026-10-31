@@ -2,7 +2,7 @@
 
 **Релиз:** Beta-0.1  
 **Владелец и разработчик:** Flenym  
-**Status:** macOS SwiftUI and Electron portability foundations; no full desktop client
+**Status:** macOS SwiftUI and Electron portability foundations; no full desktop client. The Electron shell loads the Web build — currently the public product site plus the developer-preview web messenger client at `/app`
 
 ## 1. Sequencing
 
@@ -10,7 +10,7 @@ Desktop product development is frozen until complete server platform + full iPho
 
 ## 2. Native macOS foundation
 
-`apps/apple` includes a SwiftPM `LuxoraMac` executable and XcodeGen `LuxoraDesktop` app using `LuxoraKit`. It can enter the explicit local preview or use the same thin `ApplicationSession` harness as iPhone: register/login, Keychain restore/refresh, chat/message load, optimistic text send and basic message/typing realtime. It still has no durable local DB/outbox, robust reconciliation, push, calls, full remote message actions, signing/notarization or updater.
+`apps/apple` includes a SwiftPM `LuxoraMac` executable and XcodeGen `LuxoraDesktop` app using `LuxoraKit`. It can enter the explicit local preview or use the same thin `ApplicationSession` harness as iPhone: register/login, Keychain restore/refresh, chat/message load, optimistic text send and basic message/typing realtime. The iPhone-only `CallBanner`/`CallsStore` media UI is wired for the phone root and is not presented as a finished macOS calling surface. It still has no durable local DB/outbox, robust reconciliation, push, production calls, full remote message actions, signing/notarization or updater.
 
 ```bash
 swift test --package-path apps/apple
@@ -38,6 +38,13 @@ After unfreeze, macOS should use the proven Swift server/iPhone domain/sync/stor
 - injects a CSP for packaged content;
 - exposes a narrow preload bridge with release and menu actions;
 - provides New Message/Search desktop menu commands.
+
+Renderer source selection (read from `src/main.ts`): a loopback-only
+`LUXORA_WEB_URL` in development, the packaged `resources/web/index.html`, and
+otherwise `apps/web/dist/index.html` next to the compiled shell. Today that
+renderer is the public product site plus the developer-preview `/app` web
+messenger client; loading the page does not make the desktop app a connected
+messenger.
 
 This is useful shell hardening, not proof that the renderer is a real messenger.
 

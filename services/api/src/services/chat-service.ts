@@ -193,12 +193,17 @@ export class ChatService {
     const now = new Date().toISOString();
     if (input.kind === "direct") {
       if (this.store.findUserById(input.userId) === null) throw notFound("User not found");
+      // API.md §6: a non-self Direct requires an accepted, unblocked
+      // relationship. Request acceptance creates that relationship + chat
+      // together; the messageRequests privacy policy governs the request flow,
+      // not an implicit relationship (realtime re-authorization already
+      // requires the accepted relation, so allowing creation here produced a
+      // chat whose realtime was permanently dead).
       if (
         input.userId !== actorUserId &&
         (
           this.store.isBlockedBetween(actorUserId, input.userId) ||
-          (!this.store.hasAcceptedRelationship(actorUserId, input.userId) &&
-            this.store.getPrivacySettings(input.userId).messageRequests === "nobody")
+          !this.store.hasAcceptedRelationship(actorUserId, input.userId)
         )
       ) {
         throw this.#relationshipUnavailable();
@@ -218,8 +223,7 @@ export class ChatService {
             input.userId !== actorUserId &&
             (
               this.store.isBlockedBetween(actorUserId, input.userId) ||
-              (!this.store.hasAcceptedRelationship(actorUserId, input.userId) &&
-                this.store.getPrivacySettings(input.userId).messageRequests === "nobody")
+              !this.store.hasAcceptedRelationship(actorUserId, input.userId)
             )
           ) {
             throw this.#relationshipUnavailable();
@@ -2029,14 +2033,17 @@ export class ChatService {
     if (chat.kind !== "direct") return;
     if (chat.directKey === directKey(actorUserId, actorUserId)) return;
 
+    // Active Direct mutations require the accepted, unblocked relationship that
+    // the documented contract (and realtime durable re-authorization) demands.
+    // An unaccepted Direct is denied instead of accepting HTTP mutations on a
+    // chat whose realtime would be filtered.
     const peerUserIds = this.store.listChatMemberIds(chat.id).filter((memberId) => memberId !== actorUserId);
     const peerUserId = peerUserIds[0];
     if (
       peerUserIds.length !== 1 ||
       peerUserId === undefined ||
       this.store.isBlockedBetween(actorUserId, peerUserId) ||
-      (!this.store.hasAcceptedRelationship(actorUserId, peerUserId) &&
-        this.store.getPrivacySettings(peerUserId).messageRequests === "nobody")
+      !this.store.hasAcceptedRelationship(actorUserId, peerUserId)
     ) {
       throw this.#relationshipUnavailable();
     }

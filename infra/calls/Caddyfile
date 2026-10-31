@@ -1,0 +1,12 @@
+# Local TLS terminator for the LiveKit signalling endpoint.
+# Luxora requires CALLS_LIVEKIT_URL to be wss:// (config.ts), so the SFU is
+# reached through this proxy. The certificate is issued by Caddy's internal CA
+# for localhost; the API trusts it via NODE_EXTRA_CA_CERTS. Not for production.
+{
+	auto_https disable_redirects
+}
+
+https://localhost:7443 {
+	tls internal
+	reverse_proxy sfu:7880
+}

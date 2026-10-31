@@ -12,6 +12,7 @@ on:
       - "apps/apple/**"
       - "logo.png"
       - ".github/workflows/apple.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -42,7 +42,7 @@ Passkeys/WebAuthn checkbox must remain open.
 | Registration | Atomic authenticated add plus a separately gated atomic pre-account first-passkey/account/session service, both with global credential uniqueness | Public first-authenticator release, multi-authenticator management UX and notifications |
 | Authentication | Discoverable UV step-up for exact `authenticator.add`; internal identifier-free primary sign-in and atomic session issuance | Public abuse/timing/availability and cross-client release evidence |
 | Authenticator lifecycle | Internally gated active-only list, encrypted label rename, target/revision-bound WebAuthn terminal revoke, originating-session invalidation, append-only audit/outbox/receipts and password-disabled last-factor invariant | Public route/UX review, independent notifications, distributed session fan-out and product interoperability |
-| Recovery/device linking | Not implemented | Separate IA phases |
+| Recovery/device linking | QR device-link server slices implemented on the calls branch: challenge lifecycle (040), approve/deny + SAS (041), password step-up, proof-key redemption minting a session + `sync.invalidated` (042) and passkey-ceremony step-up (043); iPhone has a device-link store, QR display sheet and terminate-others UI | QR-scan/approver UX, passkey-ceremony client UX, device-compromise/recovery flow and Private-history bootstrap; account recovery remains a separate IA phase |
 
 ## 2. Relying-party profile
 

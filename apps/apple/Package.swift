@@ -14,9 +14,17 @@ let package = Package(
         .library(name: "LuxoraDesignFixtures", targets: ["LuxoraDesignFixtures"]),
         .executable(name: "LuxoraMac", targets: ["LuxoraMac"]),
     ],
+    dependencies: [
+        // LiveKit client SDK: the iPhone call media plane (voice). Pinned to a
+        // minor range so API breaks are reviewed deliberately.
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", from: "2.17.0"),
+    ],
     targets: [
         .target(
             name: "LuxoraKit",
+            dependencies: [
+                .product(name: "LiveKit", package: "client-sdk-swift"),
+            ],
             resources: [.process("Resources")]
         ),
         .target(

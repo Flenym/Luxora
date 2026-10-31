@@ -22,6 +22,7 @@ import {
 import type { Store } from "../domain/store.js";
 import { badRequest, conflict, forbidden, notFound, serviceUnavailable, unauthenticated } from "../errors.js";
 import { createSfuSigner, createTurnSigner } from "./call-grant-signers.js";
+import { createLiveKitRoomClient, livekitHttpBase, type LiveKitRoomClient } from "./livekit-room.js";
 import { verifyLivekitWebhook } from "./call-webhook.js";
 
 export interface CallMediaPlaneConfig {
@@ -84,10 +85,18 @@ export class CallService {
   readonly #store: Store;
   readonly #executor: CallControlExecutor;
   readonly #mediaPlane: CallMediaPlaneConfig | undefined;
+  readonly #roomClient: LiveKitRoomClient | undefined;
 
-  constructor(store: Store, mediaPlane?: CallMediaPlaneConfig) {
+  constructor(store: Store, mediaPlane?: CallMediaPlaneConfig, roomClient?: LiveKitRoomClient) {
     this.#store = store;
     this.#mediaPlane = mediaPlane;
+    this.#roomClient = roomClient ?? (mediaPlane === undefined
+      ? undefined
+      : createLiveKitRoomClient({
+        baseUrl: livekitHttpBase(mediaPlane.livekitUrl),
+        apiKey: mediaPlane.livekitApiKey,
+        apiSecret: mediaPlane.livekitApiSecret
+      }));
     const adapter: CallControlStore = {
       loadCall: async (callId) => this.#store.loadCallAggregate(callId),
       findCommandReceipt: async (scope) => this.#store.findCallCommandReceipt(scope),
@@ -615,6 +624,9 @@ export class CallService {
     const deviceSessionAllowed = this.#store.isSessionActive(sessionId, userId, new Date().toISOString());
     const requestedSources = input.requestedSources as LiveKitTrackSource[];
 
+    // The SFU does not auto-create rooms, so the room must exist before any
+    // participant can join with a token. The room is created only after the
+    // grant is authorized, so a denied caller never causes media-plane writes.
     try {
       const granted = await issueJoinGrant(
         snapshot,
@@ -646,6 +658,13 @@ export class CallService {
           turnSigner: createTurnSigner(mediaPlane.turnSharedSecret)
         }
       );
+      // Authorized: make sure the SFU room exists before the token is returned.
+      // Failures never reveal media internals to the client.
+      try {
+        await this.#roomClient?.ensureRoom(snapshot.roomName);
+      } catch {
+        throw serviceUnavailable("Call media plane is temporarily unavailable");
+      }
       return JoinGrantResponseSchema.parse({
         serverUrl: mediaPlane.livekitUrl,
         token: granted.sfu.token,
