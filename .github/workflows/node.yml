@@ -205,10 +205,21 @@ jobs:
           npm --prefix apps/desktop ci --no-audit --no-fund
           npm --prefix apps/desktop run typecheck
           npm --prefix apps/desktop run compile
+      # GitHub-hosted Linux runners ship no setuid chrome-sandbox and restrict
+      # unprivileged user namespaces, so Chromium refuses to start its OS sandbox
+      # under Xvfb ("The SUID sandbox helper binary was found, but is not
+      # configured correctly"). Electron's built-in startup switch below maps
+      # ELECTRON_DISABLE_SANDBOX to Chromium's --no-sandbox for this smoke
+      # process only (electron_main_delegate.cc: BasicStartupComplete appends
+      # sandbox::policy::switches::kNoSandbox). The desktop app itself still calls
+      # app.enableSandbox() and keeps sandbox:true, contextIsolation:true and
+      # nodeIntegration:false; delete the variable if the runner ever provides a
+      # usable sandbox.
       - name: Smoke-test desktop shell under Xvfb
         working-directory: apps/desktop
         env:
           LUXORA_DESKTOP_SMOKE: "1"
+          ELECTRON_DISABLE_SANDBOX: "1"
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/data/desktop-smoke"
