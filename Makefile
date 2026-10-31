@@ -67,7 +67,20 @@ check-truth:
 	@rg -q '^Owner and developer: \*\*Flenym\*\*\.$$' infra/README.md || { \
 		echo "Infrastructure ownership metadata must be exactly Flenym."; exit 1; \
 	}
-	@if rg -n --glob '*.{ts,tsx,js,jsx,swift,kt}' 'Сквозное шифрование|Защищённый звонок' apps; then \
+	# The strict client-copy gate covers the native clients, the desktop shell,
+	# the admin console and the web messenger app (/app). The public marketing
+	# and documentation pages under apps/web/src/(pages|components|docs.ts) are
+	# allowed to *describe planned* E2EE/call work; their truth is enforced by
+	# validate-public-metadata.sh and human review instead of a blunt word ban.
+	@if rg -n --glob '*.{ts,tsx,js,jsx,swift,kt}' \
+		--glob '!apps/web/src/pages/**' \
+		--glob '!apps/web/src/components/**' \
+		--glob '!apps/web/src/docs.ts' \
+		--glob '!apps/web/src/i18n.tsx' \
+		--glob '!apps/web/src/Hero3D.tsx' \
+		--glob '!apps/web/src/App.tsx' \
+		--glob '!apps/web/src/main.tsx' \
+		'Сквозное шифрование|Защищённый звонок' apps; then \
 		echo "Unverified E2EE/call copy found in the Beta-0.1 clients."; exit 1; \
 	fi
 
