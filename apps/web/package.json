@@ -19,7 +19,7 @@
     "lucide-react": "^1.55.0",
     "react": "latest",
     "react-dom": "latest",
-    "react-router-dom": "^7.18.4",
+    "react-router-dom": "^7.18.5",
     "three": "^0.186.1",
     "typescript": "latest",
     "vite": "^8.3.5"
