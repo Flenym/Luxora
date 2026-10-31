@@ -67,9 +67,16 @@ final class MessengerSynchronizedDraftIntegrationTests: XCTestCase {
         XCTAssertEqual(messenger.draft, "send me")
 
         messenger.sendDraft()
-        try await Task.sleep(nanoseconds: 550_000_000)
+        // Confirmed-draft deletion happens after the asynchronous send round
+        // trip. Poll for the command instead of sleeping a fixed interval so a
+        // loaded CI runner cannot flake this assertion.
+        let deleteDeadline = Date().addingTimeInterval(8)
+        var commands = await deleter.commands
+        while commands.isEmpty && Date() < deleteDeadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            commands = await deleter.commands
+        }
 
-        let commands = await deleter.commands
         XCTAssertEqual(commands.count, 1)
         guard commands.count == 1 else { return }
         XCTAssertEqual(commands[0].expectedRevision, 3)
