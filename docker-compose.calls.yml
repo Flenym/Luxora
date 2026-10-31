@@ -108,7 +108,6 @@ services:
       - --denied-peer-ip=192.168.0.0-192.168.255.255
       - --no-tls
       - --no-dtls
-      - --prometheus
       - --log-file=stdout
       - --simple-log
       - --pidfile=/tmp/turnserver.pid
@@ -120,10 +119,9 @@ services:
       - "127.0.0.1:${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
       - "127.0.0.1:${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
       - "127.0.0.1:${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}:${TURN_RELAY_MIN_PORT:-49160}-${TURN_RELAY_MAX_PORT:-49200}/udp"
-      - "127.0.0.1:9641:9641/tcp"
     healthcheck:
-      # /bin/sh exists in every alpine-based coturn image; bash does not.
-      test: ["CMD", "/bin/sh", "-ec", "exec 3<>/dev/tcp/127.0.0.1/${TURN_PORT:-3478}; exec 3>&-"]
+      # tools/coturn/Dockerfile installs bash; busybox sh has no /dev/tcp.
+      test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/${TURN_PORT:-3478}; exec 3>&-"]
       interval: 15s
       timeout: 3s
       start_period: 5s

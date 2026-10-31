@@ -12,12 +12,15 @@
 FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 # bash: the upstream coturn entrypoint/healthcheck helpers use bash; the base
-# runtime arguments are supplied by docker-compose.calls.yml.
+# runtime arguments are supplied by docker-compose.calls.yml. The Alpine
+# community package is 4.10.0 without the newer Prometheus metrics endpoint,
+# so the harness exposes only the TURN listener; LiveKit's metrics remain the
+# media-plane metric source.
 RUN apk add --no-cache --no-progress coturn bash \
     && addgroup -S turn 2>/dev/null || true \
     && adduser -S -G turn turn 2>/dev/null || true
 
-EXPOSE 3478 3478/udp 9641
+EXPOSE 3478 3478/udp
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=5 \
     CMD bash -ec 'exec 3<>/dev/tcp/127.0.0.1/3478; exec 3>&-'
