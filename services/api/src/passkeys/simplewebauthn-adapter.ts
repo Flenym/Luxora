@@ -233,7 +233,7 @@ const registrationResponseSchema = z.object({
     publicKey: base64urlSchema.optional()
   }).strict(),
   authenticatorAttachment: z.enum(["cross-platform", "platform"]).optional(),
-  clientExtensionResults: z.record(z.unknown()),
+  clientExtensionResults: z.record(z.string(), z.unknown()),
   type: z.string().min(1).max(64)
 }).strict();
 
@@ -247,7 +247,7 @@ const authenticationResponseSchema = z.object({
     userHandle: base64urlSchema.optional()
   }).strict(),
   authenticatorAttachment: z.enum(["cross-platform", "platform"]).optional(),
-  clientExtensionResults: z.record(z.unknown()),
+  clientExtensionResults: z.record(z.string(), z.unknown()),
   type: z.string().min(1).max(64)
 }).strict();
 
@@ -267,7 +267,7 @@ const creationOptionsSchema = z.object({
   hints: z.array(z.enum(["hybrid", "security-key", "client-device"])).optional(),
   attestation: z.enum(["direct", "enterprise", "indirect", "none"]).optional(),
   attestationFormats: z.array(z.string()).optional(),
-  extensions: z.record(z.unknown()).optional()
+  extensions: z.record(z.string(), z.unknown()).optional()
 }).strict();
 
 const requestOptionsSchema = z.object({
@@ -277,7 +277,7 @@ const requestOptionsSchema = z.object({
   allowCredentials: z.array(descriptorSchema).optional(),
   userVerification: z.enum(["discouraged", "preferred", "required"]).optional(),
   hints: z.array(z.enum(["hybrid", "security-key", "client-device"])).optional(),
-  extensions: z.record(z.unknown()).optional()
+  extensions: z.record(z.string(), z.unknown()).optional()
 }).strict();
 
 function unavailable(): never {

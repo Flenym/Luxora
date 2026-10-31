@@ -78,7 +78,7 @@ export const ApiErrorSchema = z.object({
     code: ApiErrorCodeSchema,
     message: z.string(),
     requestId: z.string(),
-    details: z.record(z.unknown()).optional()
+    details: z.record(z.string(), z.unknown()).optional()
   })
 });
 
@@ -618,6 +618,7 @@ export const PasskeyClientExtensionResultsSchema = z.unknown().superRefine(
     if (utf8ByteLength(serialized) > PASSKEY_MAX_EXTENSION_RESULTS_BYTES) {
       context.addIssue({
         code: z.ZodIssueCode.too_big,
+        origin: "string",
         maximum: PASSKEY_MAX_EXTENSION_RESULTS_BYTES,
         inclusive: true,
         type: "string",

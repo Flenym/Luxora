@@ -22,6 +22,7 @@ on:
       - "apps/desktop/**"
       - "Makefile"
       - ".github/workflows/node.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -74,10 +75,11 @@ jobs:
           npm --prefix services/api run typecheck
           npm --prefix services/api test
           npm --prefix services/api run build
-      - name: Install and build Web
+      - name: Install, build and test Web
         run: |
           npm --prefix apps/web ci --no-audit --no-fund
           npm --prefix apps/web run build
+          npm --prefix apps/web test
       - name: Install and type-check desktop shell
         run: |
           npm --prefix apps/desktop ci --no-audit --no-fund
