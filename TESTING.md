@@ -233,10 +233,18 @@ script path, not production recovery.
   suite is **104 files / 759 tests**, and the zero-dependency smoke harness
   (`scripts/qa-api-smoke.mjs`) is a **46-step matrix: 45 PASS + 1 SKIP** (the SKIP
   happens only when no server-log path is supplied).
-- **iPhone UI-test job (PR #110)** — `ui-tests` runs a bounded offline subset of
-  the existing UI test suites on a simulator, unsigned, with
-  xcresult/log/screenshot artifacts on failure. It is new: the first green result
-  must be confirmed in CI (it was still running when docs were written).
+- **iPhone UI-test job (PR #110, verified)** — `ui-tests` runs a bounded offline
+  subset of the existing UI test suites on a simulator, unsigned, with
+  xcresult/log/screenshot artifacts. **First green on `ef57595`: 8/8 selected
+  tests passed, 0 failures, 14m32s** (under the 25-min cap); coverage: Russian
+  launch/auth, four-tab shell + chat spaces, chats no-results surface, settings
+  inventory/device fallback/privacy, navigation profile actions/contact-profile
+  message search, session-loader accessibility status and auth accessibility audit
+  (contrast/dynamic-type/hit-region). Making it deterministic required the
+  auth-footnote contrast fix, an app-owned Russian no-results surface
+  (`inbox-empty-search`) and a strict `#if DEBUG` initial-state seed. This is a
+  bounded subset, not full UI coverage; contrast audit covers detected issues, not
+  conformance proof.
 
 Run the web gates locally:
 
@@ -320,7 +328,7 @@ Tests use synthetic data and isolated temporary/in-memory databases. Never point
 | Workflow | Runner | Current checks |
 | --- | --- | --- |
 | Node, Web and Desktop | Ubuntu 24.04, Node 22 | protocol, passkey/call domains and API type+tests+build (104 files / 759 tests); Web build + 49 Vitest; **`web-e2e` browser+a11y gate (17/17 checks)**; **`desktop` Electron smoke job**; desktop typecheck; truth scan |
-| Apple Swift | macOS 26 | Swift package tests (455 XCTest + 20 Swift Testing merged checkpoint); reproducible XcodeGen generation and iPhone-only `LuxoraMobile` generic Simulator build without signing; **new bounded offline `ui-tests` simulator subset (first green result pending)** |
+| Apple Swift | macOS 26 | Swift package tests (455 XCTest + 20 Swift Testing merged checkpoint); reproducible XcodeGen generation and iPhone-only `LuxoraMobile` generic Simulator build without signing; **bounded offline `ui-tests` simulator subset — PASS on `ef57595`: 8/8 tests, 14m32s, artifacts** |
 | Android Gradle | Ubuntu 24.04, JDK 17 | unit, lint and debug APK assemble |
 | Security and container | Ubuntu 24.04 | dependency review, JS/TS CodeQL, Trivy filesystem/image, Docker build |
 
@@ -454,17 +462,17 @@ No current metric in docs is a public promise until this evidence exists.
 
 ## 13. Test evidence
 
-Recorded snapshots (2026-10-31, PR #110 head `260857f`): API full suite **104 files /
-759 tests**; Web **49/49 Vitest**; `web-e2e` browser + axe gate **17/17 checks**
-in GitHub Actions; `desktop` Electron smoke job PASS (49 s); zero critical/serious/
-moderate/minor axe findings across 22 development + 21 production-preview states
-and keyboard checks 11/11; local calls-media harness **18/18** browser checks and
-**14/14** API media-plane probe vs the Docker media plane; API smoke **45 PASS + 1
-SKIP** (46-step matrix). Apple merged checkpoint: `swift-package` **455 XCTest
-executed / 6 skipped / 0 failures + 20 Swift Testing**, `ios-compile` PASS on
-`beb6ca7`/`df39703`; the new `ui-tests` job's first green result was pending when
-this was written. These are CI/local-preview evidence, not production-scale,
-real-device, accessibility-audit/conformance or capacity proof.
+Recorded snapshots (2026-10-31, PR #110 head `ef57595` — all checks green):
+API full suite **104 files / 759 tests**; Web **49/49 Vitest**; `web-e2e` browser +
+axe gate **17/17 checks** in GitHub Actions; `desktop` Electron smoke job PASS
+(37–49 s); zero critical/serious/moderate/minor axe findings across 22 development
++ 21 production-preview states and keyboard checks 11/11; local calls-media
+harness **18/18** browser checks and **14/14** API media-plane probe vs the Docker
+media plane; API smoke **45 PASS + 1 SKIP** (46-step matrix). Apple:
+`swift-package` **455 XCTest executed / 6 skipped / 0 failures + 20 Swift
+Testing**, `ios-compile` PASS, and the new bounded offline `ui-tests` **8/8 PASS
+(14m32s, unsigned, artifacts)**. These are CI/local-preview evidence, not
+production-scale, real-device, accessibility-audit/conformance or capacity proof.
 
 Each release report records commit/build/image digest, exact command/toolchain, sanitized config profile, timestamp, raw report, known limitations, owner/approver and rollback/runbook. CI URL alone is insufficient if artifacts expire; retain required reports according to release policy.
 

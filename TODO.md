@@ -4,7 +4,7 @@
 **Владелец и разработчик:** Flenym  
 **Обновлено:** 31 октября 2026
 
-> **Текущий checkpoint 2026-10-31 (PR #110, ветка `feature/completeness-pass`, head `260857f`; PR #109 уже смержен в `main` — `0fda88a`):**
+> **Текущий checkpoint 2026-10-31 (PR #110, ветка `feature/completeness-pass`, head `ef57595`, 11 коммитов ahead of `main` — все проверки зелёные; PR #109 уже смержен в `main` — `0fda88a`):**
 > **Calls media — реальное и проверенное локально end-to-end:** media join теперь только когда звонок
 > joinable (после accept, а не во время ringing); локальный Docker media plane (LiveKit + TURN + Caddy)
 > доставляет подписанные webhooks на `/v1/internal/calls/livekit-webhook`, поэтому call идёт
@@ -34,14 +34,16 @@
 > registration; 0 регистраций в dev/preview).
 > **iPhone UI-test gate:** новый `ui-tests` job — bounded offline subset существующих UI test suites на
 > симуляторе, unsigned, xcresult/log/screenshot artifacts при failure; stale UI-test ожидания исправлены
-> статическим аудитом. На момент записи первый прогон ещё выполнялся.
-> **CI на head `260857f`:** verify PASS (API **104/759**, web **49/49**), web-e2e PASS (**17/17**,
-> functional+axe), desktop PASS (49 s), Security and container PASS (filesystem Trivy, dependency-review,
-> codeql, images, calls-smoke incl. TURN auth accept/reject), required «CodeQL» check PASS; swift-package
-> PASS; **ios-compile и `ui-tests` на момент записи ещё выполнялись** — docs не заявляют их зелёными.
+> статическим аудитом. **Первый зелёный: `ef57595` — 8/8 selected UI tests, 14m32s, unsigned, artifacts; bounded offline subset, не полное UI-покрытие.**
+> **CI на head `ef57595` — ALL GREEN:** verify PASS (API **104/759**, web **49/49**), web-e2e PASS
+> (**17/17**, functional+axe), desktop PASS (37–49 s), Security and container PASS (filesystem Trivy,
+> dependency-review, codeql, images, calls-smoke incl. TURN auth accept/reject), required «CodeQL» PASS;
+> swift-package PASS; ios-compile PASS; **ui-tests PASS — 8/8 selected simulator UI tests, 14m32s,
+> unsigned, artifacts; bounded offline subset, не полное UI-покрытие.**
+> **Остаётся только merge PR #110.**
 >
 > **Текущая рабочая очередь (31 октября 2026):**
-> 1. **Смержить PR #110** после коммита docs — дождаться ios-compile + ui-tests.
+> 1. **Смержить PR #110** — все проверки на `ef57595` зелёные (включая ui-tests 8/8/14m32s).
 > 2. **Follow-ups:** optional calls media E2E в CI (с поднимаемым media stack; сейчас 18/18 локальный
 >    ignored harness), packaged desktop release/signing/updater, hosted web с CSP/headers, API.md/protocol
 >    pagination docs (API.md обновлён в этом docs-проходе).
@@ -274,8 +276,8 @@
 > **Дополнение 2026-10-31 (финальные коммиты PR #83, head `df39703`):**
 > `380881f` CI-watchdog timeouts + web/docs truth; `29060bf` Swift community-management tests compile/type fix; `b811985` backend security fix — `POST /v1/chats` non-self Direct теперь требует accepted unblocked relationship (закрыт обход через `messageRequests:"nobody"`), новый `direct-chat-relationship.integration.test.ts`, boundary fixtures, smoke **42/42**, FULL API **103 файла / 749 тестов** green; `b682d99`+`d0a7a8f`+`8ceb57c`+`32e0d62` dev TURN relay собран из `tools/coturn/Dockerfile` на pinned Alpine 3.24.3 (upstream coturn alpine-теги везут brotli CVE-2026-111497) и работает от непривилегированного пользователя — **Security and container полный PASS на `32e0d62` и `df39703`** (filesystem Trivy, dependency-review, CodeQL job, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject); `df39703` iOS fix — unwrap community participant-resolver + explicit calls copy; Apple Swift swift-package green на `b682d99`/`d0a7a8f`/`32e0d62`/`df39703` (396 XCTest + 6 expected skips + 20 Swift Testing, включая `CallHistoryTests`/`CommunityManagementStoreTests`), ios-compile PASSED на `380881f`, FAILED на `d0a7a8f` и fixed в `df39703` — **финальный прогон `df39703` полностью SUCCESS**. Web: 49/49 Vitest (api 17, realtime 13, store 19), browser E2E локально 13–14/14 шагов (не CI). PR #83 смержен в `main` коммитом `919d0f6`.
 >
-> **Дополнение 2026-10-31 (PR #110, head `260857f` — calls media, pagination, desktop, a11y/PWA, UI-test gate):**
-> `8e663f8` real calls media end-to-end (join only after accept, web mute/unmute, honest cloud-preview copy; local Docker media plane webhooks move `connecting→active`; `scripts/dev-calls.ps1` webhook URL + correct `VITE_LUXORA_API`); `fe1c057` desktop Electron client (custom `luxora://app` scheme + in-handler CSP, loopback `LUXORA_API_URL` via sandboxed CJS preload, explicit CORS origin, smoke mode); `a0e7447` iPhone bounded offline `ui-tests` simulator job; `23d2ef7` web a11y fixes + route-level code splitting + honest PWA shell + axe audit in committed E2E; `7a67848` server cursor pagination for 7 previously-unbounded lists; `e0ec65f` a11y markdown reporting fix; `260857f` desktop CI-only sandbox switch. **Evidence:** browser calls harness **18/18** vs real media plane, API media-plane probe **14/14**; FULL API **104/759**, smoke **45 PASS + 1 SKIP**; verify PASS, web-e2e **17/17**, desktop PASS (49 s), Security PASS, required «CodeQL» PASS; axe **0 findings** across 22 dev + 21 production-preview states, keyboard 11/11, code splitting −52.5% raw/−47.4% gzip; swift-package PASS; ios-compile + ui-tests pending at write time.
+> **Дополнение 2026-10-31 (PR #110, head `ef57595` — calls media, pagination, desktop, a11y/PWA, UI-test gate; все проверки зелёные):**
+> `5b81933`/`a0e9d52`/`ef57595` green the simulator UI-test gate: contrast audit fix (dismiss auto-focused keyboard before phone-screen audit; auth footnote strengthened to conforming secondary 0.78 white on black), app-owned deterministic Russian no-results surface («Ничего не найдено» / «Попробуйте изменить запрос.») with stable `inbox-empty-search` instead of system `ContentUnavailableView`, strict `#if DEBUG` initial-state seed instead of racing `.searchable`, shared derived-data path in CI — **ui-tests 8/8 PASS 14m32s on `ef57595`**; `8e663f8` real calls media end-to-end (join only after accept, web mute/unmute, honest cloud-preview copy; local Docker media plane webhooks move `connecting→active`; `scripts/dev-calls.ps1` webhook URL + correct `VITE_LUXORA_API`); `fe1c057` desktop Electron client (custom `luxora://app` scheme + in-handler CSP, loopback `LUXORA_API_URL` via sandboxed CJS preload, explicit CORS origin, smoke mode); `a0e7447` iPhone bounded offline `ui-tests` simulator job; `23d2ef7` web a11y fixes + route-level code splitting + honest PWA shell + axe audit in committed E2E; `7a67848` server cursor pagination for 7 previously-unbounded lists; `e0ec65f` a11y markdown reporting fix; `260857f` desktop CI-only sandbox switch. **Evidence:** browser calls harness **18/18** vs real media plane, API media-plane probe **14/14**; FULL API **104/759**, smoke **45 PASS + 1 SKIP**; verify PASS, web-e2e **17/17**, desktop PASS (49 s), Security PASS, required «CodeQL» PASS; axe **0 findings** across 22 dev + 21 production-preview states, keyboard 11/11, code splitting −52.5% raw/−47.4% gzip; swift-package PASS; ios-compile + ui-tests pending at write time.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, обновлено 2026-10-31)
 
@@ -284,7 +286,7 @@
 
 ### CRITICAL
 
-- [~] **CI на PR #110 head `260857f` (по состоянию на запись):** verify PASS (API **104/759**, web build + 49/49 vitest), `web-e2e` PASS (**17/17** functional+axe), `desktop` PASS (49 s), Security and container PASS + required «CodeQL» check PASS, swift-package PASS; **ios-compile и новый `ui-tests` job на момент записи ещё выполнялись** — не заявлять green до завершения. PR #109 (`beb6ca7`) уже смержен в `main` (`0fda88a`)
+- [x] **CI на PR #110 head `ef57595` — ALL GREEN:** verify PASS (API **104/759**, web build + 49/49 vitest), `web-e2e` PASS (**17/17** functional+axe), `desktop` PASS (37–49 s), Security and container PASS + required «CodeQL» PASS, swift-package PASS, ios-compile PASS, **`ui-tests` PASS (8/8 selected simulator UI tests, 14m32s, unsigned, artifacts)**. PR #109 (`beb6ca7`) уже смержен в `main` (`0fda88a`); остаётся merge docs+PR #110
 - [x] Truth-аудит: фейковых E2EE/call/presence/download/sync UI нет — gates/locked-кнопки; публичный сайт помечает planned-функции; web-клиент медиа звонков честно `unavailable`; safety report содержит явное cloud-preview consent, удаление — typed «УДАЛИТЬ» + серверный grace
 - [ ] Полный локальный suite + CI перед каждым пушем (без исключений)
 - [x] CodeQL re-enabled (advanced setup в Security workflow); Security-прогоны `32e0d62` и `beb6ca7` прошли полностью, включая CodeQL job и required check
@@ -294,7 +296,7 @@
 - [x] Cursor pagination завершена: 7 endpoints (sessions, members, topics, invite links, join requests, message edit history, call history) с `{items|calls, nextCursor}`; default 100 (calls 50), sessions ordering `created_at DESC, id DESC`; FULL API **104/759**, smoke **45 PASS + 1 SKIP** (46-step matrix, SKIP только без server-log path)
 - [x] Desktop client: Electron shell сервит packaged web build через `luxora://app` + in-handler CSP; loopback `LUXORA_API_URL` через sandboxed CommonJS preload; explicit CORS origin `luxora://app`; `LUXORA_DESKTOP_SMOKE=1`; CI job `desktop` PASS (49 s, Xvfb, sandbox/contextIsolation сохранены)
 - [x] Web a11y/perf/PWA: axe-core 4.14 в committed E2E gate (**17/17** in CI); 0 findings across 22 dev + 21 production-preview states; keyboard 11/11; route-level code splitting (606.33/170.60 → 287.99/89.73 kB raw/gzip, −52.5%/−47.4%); honest PWA shell кэширует только public shell (никогда `/v1`,`/v2`,`/health`, сообщения), production-HTTPS-only registration, 0 dev/preview registrations
-- [x] iPhone `ui-tests` job добавлен (bounded offline simulator subset, unsigned, xcresult/log/screenshot artifacts on failure); stale UI-test expectations исправлены статическим аудитом — **первый зелёный прогон ещё не подтверждён**
+- [x] iPhone `ui-tests` job — **verified green on `ef57595`: 8/8 selected simulator UI tests passed, 14m32s, unsigned, artifacts**; bounded offline subset (Russian launch/auth, four-tab shell + chat spaces, chats no-results, settings inventory/device fallback/privacy, navigation profile actions/contact-profile message search, session-loader accessibility status, auth accessibility audit incl. contrast/dynamic-type/hit-region) — не полное UI-покрытие, contrast audit — не conformance proof; stale expectations исправлены статическим аудитом + app-owned no-results surface («Ничего не найдено» / «Попробуйте изменить запрос.», `inbox-empty-search`) и strict `#if DEBUG` initial state
 
 ### HIGH
 
@@ -356,11 +358,11 @@
 
 - [x] Only `Beta-0.1` appears as visible release metadata; only Flenym as owner/developer; repo-wide classified metadata gate passes while excluding internal package/API/platform versions.
 - [ ] All simulated call, E2EE, delivery, presence, download and sync UI is removed or clearly labelled demo/roadmap.
-- [x] Node/Web/Desktop CI green on PR #110: verify SUCCESS (API **104/759**, web build + 49/49 vitest) + **web-e2e job SUCCESS (17/17 checks incl. axe)** + **desktop job SUCCESS (49 s)** на `260857f`. Локально `bash infra/validate-public-metadata.sh` печатает PASS.
-- [ ] Apple `ios-compile` + new `ui-tests` job on `260857f`: первый зелёный прогон ещё не подтверждён; swift-package PASS.
-- [x] Security and container CI green: dependency-review, filesystem/image, codeql, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject — PASS на `260857f`, `beb6ca7` и `32e0d62`; required «CodeQL» check PASS.
-- [x] Apple Swift swift-package green: **455 XCTest (6 skipped, 0 failures) + 20 Swift Testing** (merged checkpoint; PR #110 не меняет count); PR #83 `df39703` и PR #109 `beb6ca7` были all-green. ios-compile/ui-tests на `260857f` — pending.
-- [x] CodeQL: re-enabled (advanced setup, `javascript-typescript`); required «CodeQL» check SUCCESS на `260857f`/`beb6ca7`.
+- [x] Node/Web/Desktop CI green on PR #110: verify SUCCESS (API **104/759**, web build + 49/49 vitest) + **web-e2e job SUCCESS (17/17 checks incl. axe)** + **desktop job SUCCESS (37–49 s)** на `ef57595`. Локально `bash infra/validate-public-metadata.sh` печатает PASS.
+- [x] Apple `ios-compile` + new `ui-tests` job — PASS on `ef57595` (**ui-tests 8/8, 14m32s, unsigned, artifacts**); swift-package PASS.
+- [x] Security and container CI green: dependency-review, filesystem/image, codeql, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject — PASS на `ef57595`, `260857f`, `beb6ca7` и `32e0d62`; required «CodeQL» check PASS.
+- [x] Apple Swift: **455 XCTest (6 skipped, 0 failures) + 20 Swift Testing** (merged checkpoint; PR #110 не меняет count); PR #83 `df39703` и PR #109 `beb6ca7` были all-green. На `ef57595`: swift-package PASS, ios-compile PASS, **ui-tests PASS (8/8, 14m32s)** — все проверки зелёные.
+- [x] CodeQL: re-enabled (advanced setup, `javascript-typescript`); required «CodeQL» check SUCCESS на `ef57595`/`260857f`/`beb6ca7`.
 - [x] Server cursor pagination completed: 7 additive-paginated endpoints, garbage-cursor 400, limit bounds; tested through `pagination.integration.test.ts` and 46-step smoke (45 PASS + 1 optional SKIP).
 - [x] Browser CORS boundary: preflight всех mutation-методов + exposed headers по exact-allowlist, regression test и live smoke harness (`7867abb`).
 - [x] Root editor/ignore/Make/Compose conventions exist.

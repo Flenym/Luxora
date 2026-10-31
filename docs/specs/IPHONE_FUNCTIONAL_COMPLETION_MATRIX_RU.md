@@ -54,15 +54,15 @@ PNG не доказывает кнопку. Backend foundation не доказы
 | Accessibility/localization | Russian baseline | Частично | Source scan and selected labels | VoiceOver rotor, Dynamic Type, contrast, RTL, Reduce Motion/Transparency full suite |
 | Performance/energy/crash | Server local gates | Не измерено полностью | Build/runtime smokes | Launch/scroll/memory/energy/crash profiling on supported real devices |
 | Release/install/update | CI foundations | Simulator Debug only | Xcode build | Signing, archive, TestFlight/App Store, privacy manifests, rollback/update gates |
-| UI-test CI gate (PR #110) | CI job `ui-tests` | Bounded offline subset существующих UI test suites на симуляторе, unsigned, xcresult/log/screenshot artifacts on failure; stale expectations исправлены статическим аудитом | Job добавлен; на head `260857f` первый прогон ещё выполнялся — **не подтверждён зелёным** | Полный UI/accessibility/release suite на всех reference journeys; job должен быть зелёным постоянно |
+| UI-test CI gate (PR #110) | CI job `ui-tests` | Bounded offline subset существующих UI test suites на симуляторе, unsigned, xcresult/log/screenshot artifacts; stale expectations исправлены статическим аудитом + contrast fix, app-owned no-results surface и DEBUG seed | **PASS на `ef57595`: 8/8 selected tests, 14m32s, unsigned, artifacts**; bounded subset, не полное UI-покрытие, contrast audit — не conformance proof | Полный UI/accessibility/release suite на всех reference journeys; job должен быть зелёным постоянно |
 
 ## Проверенный iPhone checkpoint 31 октября 2026 (PR #110)
 
-- **PR #110 добавляет iPhone `ui-tests` CI job, но не меняет merged iPhone feature checkpoint:**
+- **PR #110: iPhone `ui-tests` CI job зелёный (head `ef57595`), merged iPhone feature checkpoint не меняет:**
   job запускает bounded offline subset существующих UI test suites на симуляторе, unsigned, с
   xcresult/log/screenshot artifacts при падении; stale ожидания (stray brace, drifted
   identifiers/copy, privacy-row scrolling, offline API URLs) исправлены статическим аудитом.
-  На head `260857f` первый прогон ещё выполнялся — **job добавлен, но не подтверждён зелёным**;
+  **Первый зелёный: `ef57595` — 8/8 selected simulator UI tests, 14m32s, unsigned, artifacts**; bounded subset, не полное UI-покрытие;
   docs не заявляют его green до завершения.
 - **Calls media (server-side, PR #110):** join-grant теперь запрашивается только когда call
   joinable (после accept), локальный Docker media plane доставляет signed LiveKit webhooks на

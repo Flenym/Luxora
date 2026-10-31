@@ -384,7 +384,12 @@ final class LuxoraMobileUITests: XCTestCase {
         // "the empty-state overlay is not exposed to XCUITest".
         XCTAssertEqual(seededSearchField.value as? String, seededQuery)
 
-        let emptyTitle = filtered.staticTexts["Ничего не найдено"]
+        // The app-owned empty-search copy is the real visible surface; match it
+        // by containment so a combined accessibility label still satisfies the
+        // semantic assertion.
+        let emptyTitle = filtered.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Ничего не найдено")
+        ).firstMatch
         if !emptyTitle.waitForExistence(timeout: 8) {
             print("INBOX_EMPTY_SEARCH_STATE_MISSING\n\(filtered.debugDescription)")
         }

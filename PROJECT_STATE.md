@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-10-31 · PR #110 (ветка `feature/completeness-pass`, head `260857f`, 7 коммитов ahead of `main`); PR #109 (iPhone safety/account data) уже смержен в `main` коммитом `0fda88a`  
+**Обновлено:** 2026-10-31 · PR #110 (ветка `feature/completeness-pass`, head `ef57595`, 11 коммитов ahead of `main`) — все проверки на этом head зелёные; PR #109 (iPhone safety/account data) уже смержен в `main` коммитом `0fda88a`  
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -15,16 +15,16 @@
 
 ## Итоговое CI/evidence состояние
 
-Состояние на 2026-10-31 (PR #110 head `260857f`). Apple ios-compile и новый `ui-tests` job на момент записи ещё выполнялись; swift-package PASS, остальные проверки PASS.
+Состояние на 2026-10-31: PR #110 head `ef57595` — **все проверки зелёные**, включая первый зелёный `ui-tests` (8/8 selected simulator UI tests, 14m32s) и `ios-compile`.
 
 | Проверка | Статус | Где подтверждено |
 | --- | --- | --- |
-| Node/Web/Desktop `verify` | ✅ PASS | `260857f`: API full suite **104 файла / 759 тестов**, web build + **49/49 vitest**, truth-гейт PASS |
-| `web-e2e` job (functional + axe) | ✅ PASS | `260857f`: **17/17 checks passed**, включая «accessibility audit: no critical/serious WCAG 2.x A/AA violations» (job ~21 s functional+audit) |
-| `desktop` job (Electron smoke) | ✅ PASS | `260857f`: Xvfb + `LUXORA_DESKTOP_SMOKE=1`, 49 s; sandbox/contextIsolation protections сохранены |
-| Apple `swift-package` | ✅ PASS | `260857f`: прежний merged checkpoint (455 XCTest / 6 skipped / 0 failures + 20 Swift Testing) остаётся; PR #110 не меняет count |
-| Apple `ios-compile` + `ui-tests` | ⏳ pending | Новый `ui-tests` job добавлен в PR #110; на момент записи первый прогон на `260857f` ещё выполнялся — docs не заявляют его зелёным до завершения |
-| Security and container | ✅ PASS | `260857f`: filesystem Trivy, dependency-review, codeql, images, calls-smoke incl. TURN auth accept/reject; required «CodeQL» check PASS |
+| Node/Web/Desktop `verify` | ✅ PASS | `ef57595`: API full suite **104 файла / 759 тестов**, web build + **49/49 vitest**, truth-гейт PASS |
+| `web-e2e` job (functional + axe) | ✅ PASS | `ef57595`: **17/17 checks passed**, включая «accessibility audit: no critical/serious WCAG 2.x A/AA violations» (job ~21 s functional+audit) |
+| `desktop` job (Electron smoke) | ✅ PASS | `ef57595`: Xvfb + `LUXORA_DESKTOP_SMOKE=1`, 37–49 s; sandbox/contextIsolation protections сохранены |
+| Apple `swift-package` | ✅ PASS | `ef57595`: merged checkpoint (455 XCTest / 6 skipped / 0 failures + 20 Swift Testing); PR #110 не меняет count |
+| Apple `ios-compile` | ✅ PASS | `ef57595` |
+| Security and container | ✅ PASS | `ef57595`: filesystem Trivy, dependency-review, codeql, images, calls-smoke incl. TURN auth accept/reject; required «CodeQL» check PASS |
 | Calls media (локально, Docker media plane) | ✅ 18/18 | Browser harness против реального media plane: оба peer подключены с bidirectional media, call active через signed webhook, mute в обе стороны, hangup очищает оба overlay, без unexpected console errors |
 | Calls media API probe | ✅ 14/14 | JWT join grant + TURN credentials через TLS против локального медиаплана |
 | Pagination smoke | ✅ 45 PASS + 1 SKIP | `scripts/qa-api-smoke.mjs` 46-step matrix; SKIP только когда не передан server-log path |
@@ -34,7 +34,7 @@
 - **Pagination evidence:** `pagination.integration.test.ts` follows `nextCursor` to a terminal page, asserts no loss/duplication, terminal cursor, garbage-cursor 400 and limit bounds for the seven lists; API suite 104/759; smoke 45 PASS + 1 optional SKIP. Bounded lists documented as intentional rather than silently truncated.
 - **Web a11y/perf/PWA evidence:** axe gate in the committed E2E (`logs` show PASS, empty baseline), 0 findings across dev/preview audits, 11/11 keyboard checks, code-split bundle numbers above, PWA caches only public shell and is production-HTTPS-only. axe is a floor, **not** conformance/assistive-technology proof.
 - **Desktop evidence:** custom scheme origin + in-handler CSP + loopback-only API bridge + explicit CORS; CI `desktop` job PASS (49 s). Packaged distribution/signing is **not** shipped.
-- **iPhone ui-tests:** job added in PR #110 (bounded offline simulator subset, unsigned, artifacts on failure); first green result pending at write time.
+- **iPhone ui-tests (verified):** first green on `ef57595` — **8/8 selected simulator UI tests passed, 0 failures, 14m32s**, unsigned, artifacts available. История итерации: первый прогон 12m17s с 2 падениями (contrast на auth footnote + empty-search surface не наблюдался); исправлено снятием авто-фокуса клавиатуры перед phone-screen audit, усилением auth footnote до conforming secondary (0.78 white on black), заменой system `ContentUnavailableView` на app-owned русскую no-results surface («Ничего не найдено» / «Попробуйте изменить запрос.») со стабильным `inbox-empty-search`, строгим `#if DEBUG` initial state вместо гонки `.searchable` и общим derived-data путём в CI. Это bounded subset, а не полное UI-покрытие; contrast audit покрывает обнаруженные проблемы, не доказывает конформанс.
 - **Историческая справка:** `a801cb3` (protocol 17/104, API 101/743, Apple 396 XCTest + 20 Swift Testing), `df39703` (PR #83 all-green), `beb6ca7` (PR #109: Apple 455 XCTest / 6 skips / 20 Swift Testing, verify PASS, web-e2e 16/16).
 
 ## Что работает end-to-end
@@ -58,7 +58,7 @@ Production SMS-провайдер, real APNs-доставка, E2EE (серве�
 
 ## Известные truth-хвосты
 
-- Apple `ios-compile` и `ui-tests` на `260857f` на момент записи выполнялись; `ui-tests` — новый job, первый зелёный результат ещё не подтверждён. Не заявлять его зелёным до завершения.
+- Apple `ios-compile` и `ui-tests` зелёные на `ef57595`; `ui-tests` — bounded offline subset (8/8, 14m32s), не полное UI-покрытие, а axe/contrast audit — не конformance proof.
 - Calls — cloud-preview с server media plane: нельзя заявлять E2EE, production calls или «защищённый звонок»; web/desktop/iPhone используют один и тот же media-plane boundary.
 - axe-аудит — committed gate (критичные/serious = fail), но **не** доказательство WCAG-конформанса и не замена ручному screen-reader/assistive-tech аудиту.
 - PWA `sw.js` кэширует только public shell/static; сообщения и `/v1`/`/v2`/`/health` никогда не кэшируются; preview/dev registration отсутствует.
@@ -68,8 +68,8 @@ Production SMS-провайдер, real APNs-доставка, E2EE (серве�
 
 ## Следующие шаги (после мержа PR #110)
 
-1. **Смержить PR #110** после коммита docs — verify/web-e2e/desktop/security/swift-package уже зелёные; дождаться ios-compile + ui-tests.
+1. **Смержить PR #110** — docs закоммичены; все проверки на `ef57595` зелёные (verify, web-e2e 17/17, desktop, security + required CodeQL, swift-package, ios-compile, ui-tests 8/8/14m32s).
 2. **Optional:** вынести calls media E2E в CI (с поднимаемым media stack) — сейчас 18/18 локальный harness в ignored `data/qa`; packaged desktop release/signing/updater; hosted web с CSP/headers.
-3. **iPhone remaining:** durable outbox/cache, pagination, file download/share, video playback, real APNs/CallKit, E2EE, real-device/release gates; подтвердить первый зелёный `ui-tests`.
+3. **iPhone remaining:** durable outbox/cache, pagination, file download/share, video playback, real APNs/CallKit, E2EE, real-device/release gates; `ui-tests` зелёный (8/8/14m32s), но это bounded subset — расширять покрытие.
 4. **Server:** push-доставка, contact discovery без upload, media transcode/quarantine, production DB/DR, production calls capacity/review; E2EE — отдельная аудируемая программа.
 5. **Public site:** deployment/hosting, финальный ручной SEO/a11y pass.

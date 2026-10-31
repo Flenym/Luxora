@@ -1,8 +1,8 @@
 # Luxora — NEXT SESSION
 
-**Точка продолжения (обновлено 2026-10-31, PR #110):** PR #109 (iPhone safety/account data) **смержен в `main`** (`0fda88a`). Текущий PR **#110** — ветка `feature/completeness-pass`, **head `260857f`** (7 коммитов ahead of `main`): **реальное calls media end-to-end локально** (join только после accept, signed LiveKit webhooks, web mute/unmute), **завершённая cursor pagination** (7 endpoints), **desktop Electron client** (`luxora://app` + loopback API bridge + CI smoke), **web a11y/perf/PWA** (axe в committed E2E, 0 findings, code splitting, honest PWA shell), **iPhone `ui-tests` job** (bounded offline subset на симуляторе). Docs обновлены; PR ожидает коммита docs и мержа после ios-compile + ui-tests.
+**Точка продолжения (обновлено 2026-10-31, PR #110):** PR #109 (iPhone safety/account data) **смержен в `main`** (`0fda88a`). Текущий PR **#110** — ветка `feature/completeness-pass`, **head `ef57595`** (11 коммитов ahead of `main`, все проверки зелёные): **реальное calls media end-to-end локально** (join только после accept, signed LiveKit webhooks, web mute/unmute), **завершённая cursor pagination** (7 endpoints), **desktop Electron client** (`luxora://app` + loopback API bridge + CI smoke), **web a11y/perf/PWA** (axe в committed E2E, 0 findings, code splitting, honest PWA shell), **iPhone `ui-tests` job** (bounded offline subset на симуляторе). Docs обновлены; PR ожидает коммита docs и мержа после ios-compile + ui-tests.
 
-**CI на 2026-10-31 (head `260857f`):** verify PASS (API **104/759**, web build + **49/49 vitest**); `web-e2e` PASS (**17/17** functional + axe); `desktop` PASS (**49 s**, Xvfb); Security and container PASS (filesystem Trivy, dependency-review, codeql, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject) + required «CodeQL» PASS; Apple `swift-package` PASS; **`ios-compile` и `ui-tests` на момент записи ещё выполнялись** — первый зелёный результат не подтверждён.
+**CI на 2026-10-31 (head `ef57595` — ALL GREEN):** verify PASS (API **104/759**, web build + **49/49 vitest**); `web-e2e` PASS (**17/17** functional + axe); `desktop` PASS (37–49 s, Xvfb); Security and container PASS (filesystem Trivy, dependency-review, codeql, API/OTP images, internal `luxora-turn`, `make calls-smoke` incl. TURN auth accept/reject) + required «CodeQL» PASS; Apple `swift-package` PASS, `ios-compile` PASS, **`ui-tests` PASS — 8/8 selected simulator UI tests, 14m32s, unsigned, artifacts (bounded offline subset)**. Остаётся merge #110.
 
 ## Как продолжить без потери контекста
 
@@ -19,11 +19,11 @@
 - **Web E2E + axe:** `npm --prefix tools/web-e2e ci`, затем `npm --prefix tools/web-e2e test` (self-contained API :2222 + preview :4173, нужен Chrome; **17/17** checks с axe); attach-режим: `node tools/web-e2e/runner.mjs --attach`; только axe: `npm --prefix tools/web-e2e run a11y` / `node tools/web-e2e/runner.mjs --a11y-only --attach`. Детали — `tools/web-e2e/README.md`.
 - **Desktop:** `npm --prefix apps/web run build`, затем `npm --prefix apps/desktop run typecheck` / `run start` (Electron грузит `luxora://app` через bridge к loopback API); smoke-режим: `LUXORA_DESKTOP_SMOKE=1`.
 - **Полная проверка JS:** `npm --prefix packages/protocol run build`, оба typecheck, `npm --prefix services/api test` (**104 файла / 759 тестов**), `npm --prefix packages/passkey-domain test` (70), `npm --prefix packages/call-control test` (23), `node scripts/qa-api-smoke.mjs` (46-step matrix: 45 PASS + 1 optional SKIP без server-log path).
-- **Swift:** локально на Windows не собирается — только Apple CI (`swift test --package-path apps/apple`; merged checkpoint 455 XCTest + 6 expected skips + 20 Swift Testing). Новый `ui-tests` job — bounded offline simulator subset; первый зелёный прогон подтвердить.
+- **Swift:** локально на Windows не собирается — только Apple CI (`swift test --package-path apps/apple`; merged checkpoint 455 XCTest + 6 expected skips + 20 Swift Testing). `ui-tests` — bounded offline simulator subset, **PASS на `ef57595`: 8/8 tests, 14m32s, unsigned, artifacts** (не полное UI-покрытие).
 
 ## Ближайшая очередь
 
-1. **Смержить PR #110** после коммита docs — дождаться `ios-compile` и первого `ui-tests` результата; не заявлять их зелёными до завершения.
+1. **Смержить PR #110** — docs закоммичены, head `ef57595` полностью зелёный; ничего не ждём.
 2. **Follow-ups:** optional calls media E2E в CI (с поднимаемым media stack; сейчас 18/18 локальный ignored harness); packaged desktop release/signing/updater; hosted web с CSP/headers; manual WCAG/assistive-technology аудит `/app` (axe — floor, не конformance proof).
 3. **iPhone remaining (НЕ shipped):** real APNs push/CallKit, E2EE, durable outbox/cache, pagination, file download/share, video playback, real-device media/QoS, release-гейты.
 4. **Public site residuals:** deployment/hosting, `/status`/`/download` честность, ручной SEO/a11y pass.
