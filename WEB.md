@@ -2,7 +2,7 @@
 
 **Релиз:** Beta-0.1  
 **Владелец и разработчик:** Flenym  
-**Status:** public product site completed; web messenger client implemented at `/app` and verified by 49 unit tests, typecheck + build and a committed browser E2E CI gate (`tools/web-e2e`, 16/16 checks in GitHub Actions) — a developer preview, not a released client; standalone call fallback page for diagnostics
+**Status:** public product site completed; web messenger client implemented at `/app` and verified by 49 unit tests, typecheck + build and a committed browser E2E + axe accessibility CI gate (`tools/web-e2e`, 17/17 checks in GitHub Actions) — developer preview, not a released client; honest PWA shell; standalone call fallback page for diagnostics
 
 ## 1. What exists
 
@@ -99,29 +99,40 @@ Implemented and verified:
 
 Verification recorded for this client: **49 Vitest tests** (`api` 17,
 `realtime` 13, `store` 19) wired into the "Node, Web and Desktop" CI workflow,
-`tsc -b`/build passing, and a **committed browser E2E gate**: `tools/web-e2e`
-drives two isolated Chrome contexts against a real API and a temporary SQLite
-database (generated dev secrets and CSPRNG test accounts, `vite preview`,
-system-Chrome autodetect, process-tree cleanup) and passed in GitHub Actions with
-**16/16 user-observable checks** — auth error, sign-in, stranger-Direct guard →
-message request → accept, chat reopen/open, realtime delivery, reply, honest
-delivery tick, image upload/render, honest call gating, profile, sign-out and
-zero unexpected console errors; screenshots/report are artifacted only on
-failure. Bundle recorded in the PR verification: main chunk ≈536 kB after
-minification plus lazy `Hero3D`/`livekit-client` chunks — a build fact, not a
-performance guarantee.
+`tsc -b`/build passing, and a **committed browser E2E + accessibility gate**:
+`tools/web-e2e` drives two isolated Chrome contexts against a real API and a
+temporary SQLite database (generated dev secrets and CSPRNG test accounts,
+`vite preview`, system-Chrome autodetect, process-tree cleanup) and passed in
+GitHub Actions with **17/17 checks** — 16 functional checks (auth error, sign-in,
+stranger-Direct guard → message request → accept, chat reopen/open, realtime
+delivery, reply, honest delivery tick, image upload/render, honest call gating,
+profile, sign-out, zero unexpected console errors) plus an **axe-core 4.14 WCAG
+2.x A/AA audit over nine states** that fails on critical/serious findings with an
+empty baseline and JSON/markdown artifacts. An independent web-ui audit recorded
+**0 critical/serious/moderate/minor axe findings across 22 development and 21
+production-preview states** and **11/11 keyboard checks**. Route-level code
+splitting reduced the initial marketing payload from 606.33 kB raw / 170.60 kB
+gzip to **287.99 kB raw / 89.73 kB gzip (−52.5% / −47.4%)**, with `/app`, docs and
+other routes lazy under an honest loader. Bundle note: the earlier ≈536 kB main
+chunk was replaced by that split, so it is not a current figure.
 
 Known gaps — do not imply these exist:
 
 - no server-synced drafts or folder-management UI (drafts are local
   `localStorage` per account; the folder filter is local);
-- no video or screen-share calls, no push ringing, no in-call mute control in
-  the web client;
-- no PWA/service worker, no Web Push, no offline message cache;
-- calls media is unverified end-to-end (the local server has no media plane, so
-  `features.calls` stays `false` and the adapter stays unavailable);
+- no video or screen-share calls and no push ringing; the web client's calls use
+  the cloud-preview server media plane (no E2EE) and mute works only when media is
+  actually connected;
+- PWA shell caches only public shell/static assets — **no Web Push and no offline
+  message cache**, and service-worker registration is production-HTTPS-only;
+- calls media is verified locally against the Docker media plane (18/18 browser
+  checks: both peers connected, active via signed webhook, mute both ways,
+  hangup clears overlays) but there is no CI media-stack job; without a configured
+  media plane `features.calls` stays `false` and the adapter stays unavailable;
 - presence is approximate and realtime-only;
-- no RTL/pseudo-localization run or formal WCAG audit for `/app` yet.
+- no RTL/pseudo-localization run and no manual WCAG/assistive-technology audit for
+  `/app` yet (axe is a floor, not a conformance proof); hosted CSP/headers remain a
+  deployment gate.
 
 ### 1.3 Standalone web call fallback page
 

@@ -204,45 +204,72 @@ database/blob/upload bytes. Negative probes require tamper detection and reject
 restore over an existing destination. This proves only the offline local-preview
 script path, not production recovery.
 
-### Web messenger unit suite and committed browser E2E gate
+### Web messenger, desktop, calls and pagination suites (committed gates)
 
-The web messenger (`apps/web/src/app`) has two committed layers of automated
-evidence:
-
-- **49 Vitest unit tests** (`api` 17, `realtime` 13, `store` 19) run by the
-  `verify` job; they cover strict API decoding/token policy, realtime cursor,
-  `sync.required` recovery/backoff/close codes, and pure state merge rules that
-  never overclaim receipts.
-- **Browser E2E gate** — `tools/web-e2e` (added in PR #109) drives two isolated
+- **Web unit suite — 49 Vitest tests** (`api` 17, `realtime` 13, `store` 19) run
+  by the `verify` job; they cover strict API decoding/token policy, realtime
+  cursor, `sync.required` recovery/backoff/close codes, and pure state merge
+  rules that never overclaim receipts.
+- **Web browser E2E + accessibility gate — `tools/web-e2e`** drives two isolated
   Chrome contexts through the real UI against a real API and a temporary SQLite
   database. It generates CSPRNG test accounts/passwords and development secrets
   in memory, spawns the API and `vite preview`, auto-detects system Chrome
   (`CHROME_PATH` overrides), and tears the process tree down. It is wired as the
-  `web-e2e` job in `.github/workflows/node.yml` (ubuntu-24.04, 15-minute cap) and
-  passed in GitHub Actions with **16/16 user-observable checks**: auth error,
-  sign-in, stranger-Direct guard → message request → accept, chat reopen/open,
-  realtime delivery, reply, honest delivery tick, image upload/render, honest
-  call gating, profile, sign-out and zero unexpected console errors. Screenshots
-  and an `e2e-report.json` are uploaded as artifacts only on failure.
+  `web-e2e` job in `.github/workflows/node.yml` (ubuntu-24.04, 15-minute cap).
+  Since PR #110 it also runs an **axe-core 4.14 WCAG 2.x A/AA audit over nine
+  states** (fail on critical/serious, empty `a11y-baseline.json` by policy,
+  JSON/markdown artifacts). The job passed in GitHub Actions with **17/17 checks**
+  (16 functional + accessibility): auth error, sign-in, stranger-Direct guard →
+  message request → accept, chat reopen/open, realtime delivery, reply, honest
+  delivery tick, image upload/render, honest call gating, profile, sign-out, zero
+  unexpected console errors, and no critical/serious axe violations.
+- **Desktop smoke gate** — a separate `desktop` job runs the packaged web build
+  inside the Electron shell under Xvfb with `LUXORA_DESKTOP_SMOKE=1` (49 s), with
+  an Electron CI-only sandbox switch while app sandbox/context isolation/Node
+  integration protections stay on.
+- **Server cursor-pagination suite** — `pagination.integration.test.ts` follows
+  `nextCursor` to a terminal page and asserts no loss/duplication, garbage-cursor
+  `400` and limit bounds for the seven additive-paginated lists; the full API
+  suite is **104 files / 759 tests**, and the zero-dependency smoke harness
+  (`scripts/qa-api-smoke.mjs`) is a **46-step matrix: 45 PASS + 1 SKIP** (the SKIP
+  happens only when no server-log path is supplied).
+- **iPhone UI-test job (PR #110)** — `ui-tests` runs a bounded offline subset of
+  the existing UI test suites on a simulator, unsigned, with
+  xcresult/log/screenshot artifacts on failure. It is new: the first green result
+  must be confirmed in CI (it was still running when docs were written).
 
-Run it locally:
+Run the web gates locally:
 
 ```powershell
 npm --prefix tools/web-e2e ci
 npm --prefix tools/web-e2e test          # self-contained: API :2222 + preview :4173
 node tools/web-e2e/runner.mjs --attach   # against already-running API + preview
+npm --prefix tools/web-e2e run a11y      # accessibility phase only
 node tools/web-e2e/runner.mjs --api-only-check  # API spawn/env self-check on :2232
 ```
 
-This is end-to-end **product-journey** evidence, not a WCAG/accessibility audit
-and not a performance/load gate; hosting headers/CSP are verified at deployment,
-which this repository does not provide.
+### Local calls-media harness (not CI)
+
+The real calls-media verification is a local harness against the Docker media
+plane (LiveKit + TURN + Caddy), not a committed CI job:
+`powershell -File scripts/dev-calls.ps1` starts the stack, sets the signed webhook
+URL (`/v1/internal/calls/livekit-webhook`) and the correct `VITE_LUXORA_API` for
+the calls API on 8080. The ignored `data/qa/calls-browser-e2e.mjs` (browser
+harness) passed **18/18** checks — both peers connected with bidirectional media,
+call active via webhook, mute toggles both ways, hangup clears both overlays, no
+unexpected console errors — and `data/qa/calls-probe.mjs` passed **14/14**
+API-level checks (JWT join grant + TURN credentials through TLS). Screenshots are
+stored under ignored `data/qa/calls-shots`. These harnesses are local evidence,
+not a CI gate, and calls remain a cloud-preview media plane (no E2EE).
+
+axe is a floor, not a conformance proof or assistive-technology audit; hosting
+headers/CSP are verified at deployment, which this repository does not provide.
 
 ### Missing current suites
 
-- No automated Web component-level or accessibility-audit suite (the Web messenger now has unit tests and a committed browser E2E gate, but no automated WCAG audit).
-- No Electron integration/packaging security tests.
-- No complete iOS release UI suite, durable-persistence or comprehensive network-journey matrix; the opt-in live phone test covers only the narrow successful new-account path listed above.
+- No manual Web assistive-technology/conformance audit yet (axe catches critical/serious automated WCAG issues only); no component-level test suite.
+- No Electron integration/packaging security tests (only the committed desktop smoke gate).
+- No complete iOS release UI suite, durable-persistence or comprehensive network-journey matrix; PR #110 adds only a bounded offline `ui-tests` simulator subset, and the opt-in live phone test covers only the narrow successful new-account path listed above.
 - No Android network/persistence/instrumentation journey tests.
 - No load/chaos/DAST/fuzz suite or production/online backup-restore suite.
 
@@ -292,8 +319,8 @@ Tests use synthetic data and isolated temporary/in-memory databases. Never point
 
 | Workflow | Runner | Current checks |
 | --- | --- | --- |
-| Node, Web and Desktop | Ubuntu 24.04, Node 22 | protocol, passkey/call domains and API type+tests+build; Web build + 49 Vitest, **`web-e2e` browser gate (16/16 checks)**, desktop typecheck, truth scan |
-| Apple Swift | macOS 26 | Swift package tests; reproducible XcodeGen generation and iPhone-only `LuxoraMobile` generic Simulator build without signing |
+| Node, Web and Desktop | Ubuntu 24.04, Node 22 | protocol, passkey/call domains and API type+tests+build (104 files / 759 tests); Web build + 49 Vitest; **`web-e2e` browser+a11y gate (17/17 checks)**; **`desktop` Electron smoke job**; desktop typecheck; truth scan |
+| Apple Swift | macOS 26 | Swift package tests (455 XCTest + 20 Swift Testing merged checkpoint); reproducible XcodeGen generation and iPhone-only `LuxoraMobile` generic Simulator build without signing; **new bounded offline `ui-tests` simulator subset (first green result pending)** |
 | Android Gradle | Ubuntu 24.04, JDK 17 | unit, lint and debug APK assemble |
 | Security and container | Ubuntu 24.04 | dependency review, JS/TS CodeQL, Trivy filesystem/image, Docker build |
 
@@ -427,13 +454,17 @@ No current metric in docs is a public promise until this evidence exists.
 
 ## 13. Test evidence
 
-Recorded snapshots (2026-10-31, PR #109 head `beb6ca7`): Apple `swift-package`
-**455 XCTest executed / 6 skipped / 0 failures + 20 Swift Testing** and
-`ios-compile` PASS; API full suite **103 files / 749 tests**; Web **49/49
-Vitest**; committed browser E2E **16/16 checks** in GitHub Actions; Security and
-container full PASS (filesystem Trivy, dependency-review, CodeQL, images,
-calls-smoke incl. TURN auth accept/reject). These are CI/local-preview evidence,
-not production-scale, real-device, accessibility-audit or capacity proof.
+Recorded snapshots (2026-10-31, PR #110 head `260857f`): API full suite **104 files /
+759 tests**; Web **49/49 Vitest**; `web-e2e` browser + axe gate **17/17 checks**
+in GitHub Actions; `desktop` Electron smoke job PASS (49 s); zero critical/serious/
+moderate/minor axe findings across 22 development + 21 production-preview states
+and keyboard checks 11/11; local calls-media harness **18/18** browser checks and
+**14/14** API media-plane probe vs the Docker media plane; API smoke **45 PASS + 1
+SKIP** (46-step matrix). Apple merged checkpoint: `swift-package` **455 XCTest
+executed / 6 skipped / 0 failures + 20 Swift Testing**, `ios-compile` PASS on
+`beb6ca7`/`df39703`; the new `ui-tests` job's first green result was pending when
+this was written. These are CI/local-preview evidence, not production-scale,
+real-device, accessibility-audit/conformance or capacity proof.
 
 Each release report records commit/build/image digest, exact command/toolchain, sanitized config profile, timestamp, raw report, known limitations, owner/approver and rollback/runbook. CI URL alone is insufficient if artifacts expire; retain required reports according to release policy.
 

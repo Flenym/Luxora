@@ -22,6 +22,37 @@ Local base URL: `http://127.0.0.1:8080`. Public deployments must use HTTPS/WSS a
 - Message body trims outer whitespace, is non-empty and at most 10,000 Unicode code points.
 - Access token default TTL is 900 seconds; use refresh endpoint, not long-lived access storage.
 
+### Cursor pagination
+
+List responses are `{items, nextCursor}` (call history: `{calls, nextCursor}`).
+`nextCursor` is `null` on the last page; pass it back unchanged as `?cursor=`
+(an omitted cursor starts at the first page). The cursor is opaque base64url,
+maximum 512 characters — clients never construct or parse it. Endpoints that were
+already paginated keep the shared `limit` default 30 / cap 100 and their existing
+ordering.
+
+Beta-0.1 added **additive** cursor pagination to the six lists that previously
+returned complete arrays (breaking no existing client): default page 100, `limit`
+1–100. A client that never sends `limit` keeps receiving the same complete array
+while the collection fits the page; larger collections must follow `nextCursor`.
+This removed the previous silent 100/200 truncation:
+
+- `GET /v1/auth/sessions?limit=&cursor=` → `{items:[{id,deviceName,createdAt,lastSeenAt,expiresAt,current}], nextCursor}`; ordered `created_at DESC, id DESC` (newest first; `current` marker unchanged).
+- `GET /v1/chats/:id/members?limit=&cursor=` → `{items:[{membership,user}], nextCursor}` (current member; same authorization).
+- `GET /v1/chats/:id/topics?limit=&cursor=` → `{items:[topic], nextCursor}` (chat member).
+- `GET /v1/chats/:id/invite-links?limit=&cursor=` → `{items:[invite], nextCursor}` (owner/admin; metadata-only, never token material).
+- `GET /v1/chats/:id/join-requests?limit=&cursor=` → `{items:[request], nextCursor}` (owner/admin).
+- `GET /v1/messages/:messageId/history?limit=&cursor=` → `{items:[{id,messageId,revision,body,editor,createdAt}], nextCursor}` (visible-message member; deleted messages answer `404`).
+
+Call history became a real page instead of a hard-capped array:
+`GET /v1/calls?chatId=&limit=&cursor=` → `{calls:[call], nextCursor}`, `limit`
+1–50 (default 50), ordered `updated_at DESC` and including ended calls.
+
+Pagination is additive: clients that ignore `nextCursor` keep working. Collections
+that remain whole are explicitly bounded by their own contract maximum (for
+example per-message attachments) and are documented as bounded, not as a page.
+Garbage cursors answer `400`; repeated rows/cursors are never returned.
+
 ## 3. Error envelope
 
 ```json
@@ -210,7 +241,7 @@ Returns `{tokens}`. The previous refresh token becomes used. Reusing it revokes 
 
 | Method/path | Result |
 | --- | --- |
-| `GET /v1/auth/sessions` | `{items:[{id,deviceName,createdAt,lastSeenAt,expiresAt,current}]}` |
+| `GET /v1/auth/sessions?limit=&cursor=` | `{items:[{id,deviceName,createdAt,lastSeenAt,expiresAt,current}],nextCursor}`; ordered `created_at DESC, id DESC` (additive pagination, default/max 100) |
 | `DELETE /v1/auth/sessions/current` | `204`; current session revoked |
 | `DELETE /v1/auth/sessions/:id` | `204`; target must belong to current user |
 | `GET /v1/me` | `{user}` for current principal |
@@ -559,15 +590,15 @@ Group/channel:
 
 | Method/path | Authorization/result |
 | --- | --- |
-| `GET /v1/chats/:id/members` | Current member; returns `{items:[{membership,user}]}` in stable join order |
+| `GET /v1/chats/:id/members?limit=&cursor=` | Current member; returns `{items:[{membership,user}],nextCursor}` (additive pagination, default/max 100) |
 | `POST /v1/chats/:id/members` | Owner/admin adds an accepted, unblocked relationship; only owner may add an admin |
 | `PATCH /v1/chats/:id/members/:userId` | Owner changes a non-owner role using `expectedRevision` |
 | `DELETE /v1/chats/:id/members/:userId` | Owner removes non-owner; admin removes member; non-owner may leave |
 | `POST /v1/chats/:id/invite-links` | Owner/admin mints a bearer link; `201` returns `{invite,token,replayed:false}` |
-| `GET /v1/chats/:id/invite-links` | Owner/admin lists metadata-only `{items:[invite]}` (no token material) |
+| `GET /v1/chats/:id/invite-links?limit=&cursor=` | Owner/admin lists metadata-only `{items:[invite],nextCursor}` (no token material; additive pagination, default/max 100) |
 | `DELETE /v1/chats/:id/invite-links/:linkId` | Owner/admin revokes idempotently; returns `{invite,replayed}` |
 | `POST /v1/invite-links/join` | Any authenticated account joins by bearer token; `201` returns joined/pending union |
-| `GET /v1/chats/:id/join-requests` | Owner/admin lists `{items:[request]}` for one chat |
+| `GET /v1/chats/:id/join-requests?limit=&cursor=` | Owner/admin lists `{items:[request],nextCursor}` for one chat (additive pagination, default/max 100) |
 | `POST /v1/chats/:id/join-requests/:requestId/approve` | Owner/admin admits; returns `{request,membership,replayed}` |
 | `POST /v1/chats/:id/join-requests/:requestId/deny` | Owner/admin rejects; returns `{request,membership:null,replayed}` |
 
@@ -775,7 +806,7 @@ to the current bearer session; a different account cannot read or cancel it
 
 First-slice call signaling persists in migration `038_call_control_records` (`calls`, `call_events`, `call_outbox`, `call_command_receipts`, `call_creation_receipts`) through a new `CallService` wrapping the audited `@luxora/call-control` `CallControlExecutor` with a SQLite adapter (atomic commit, CAS plus idempotency receipts). `POST /v1/calls` creates a call (`201`) in direct chats (`one_to_one`) and, since the second slice, group chats (`group`); `GET /v1/calls/:id` is participant-only (stranger `404`), `POST /v1/calls/:id/cancel` is host-only and `POST /v1/calls/:id/hangup` ends for self/everyone, with the participant actor device always taken from the current session. Invitees are members with a live session; unreachable members are listed in `unreachableMemberIds` (`409` when nobody is reachable, `403` when the caller is blocked with any member). Retrying the same `clientNonce` returns the same `callId` with `replayed:true` instead of creating a second call. `409` also covers a stale `expectedRevision` (the response carries the current snapshot). The second slice adds the pre-connect flow: host-only `POST /v1/calls/:id/ring` advances `created → inviting → ringing` (a re-ring on an already-ringing call convergently returns it), invitee `POST /v1/calls/:id/accept` moves to `connecting`, and `POST /v1/calls/:id/decline` (`declined`|`busy`) ends a 1:1 call while a group call keeps ringing for the rest. Calls reaching `ending` are finalized to `ended` server-side immediately, while media-plane confirmation arrives later with webhooks. Projections never expose `roomName`/device/session internals and `GET /v1/capabilities` keeps `calls:false` until the optional media plane is configured (the later media-plane slice advertises `true` only when every `CALLS_LIVEKIT_*`/`CALLS_TURN_*` setting is present). Slice 3 adds host-only `POST /v1/calls/:id/invite` with strict `{expectedRevision, inviteeMemberId}` (`InviteCallParticipantRequestSchema`) returning `201`; it is group-only (1:1 fixed membership returns `409`), requires the invitee to be a current chat member (`404` otherwise) and unblocked with the inviter (`403`), and binds the invitee device to the latest live session (`409` when none, `409` on duplicate device). The auth matrix grows 108→109 protected routes. Slice 4 adds `POST /v1/calls/:id/join-grant` with strict `{requestedSources}` returning a LiveKit SFU HS256 JWT (120s, roomJoin-only, publish limited to requested∩allowed∩consented, audio-call microphone-only) plus coturn REST credentials (username `expiry:identity.tokenId`, base64 HMAC-SHA1, 300s) and `serverUrl`. Issuance rechecks membership/relationship/block/session/epoch on every call and requires an accepted (`connecting`+) participant on a `connecting`+ call (stranger `404`, ended/pre-accept `403`, audio+camera `403`). The route answers `503` until `CALLS_LIVEKIT_URL`/`API_KEY`/`API_SECRET` plus `CALLS_TURN_SHARED_SECRET`/`URLS` are all configured with independent key material, and secrets never appear in responses or logs while `calls:false` remains until the media-plane slice advertises `calls:true` for a fully configured LiveKit + TURN setup. Push/ringing delivery, membership_removed hook and grant refresh are explicitly not yet implemented and come next. Slice 5 adds `POST /v1/internal/calls/livekit-webhook` without bearer auth: LiveKit JWT signature auth over the raw body bytes (`application/webhook+json` raw-bytes parser, SHA-256-of-raw-body claim, 5-minute clock tolerance, issuer must equal the configured API key; forged/expired/malformed → `401`). Dispatch runs as the system media-plane actor with migration `039_call_room_index` (`call_rooms` + snapshot backfill): `participant_joined` → `mark_active` (convergent skip when already active), `participant_left`/`connection_aborted` → `connection_lost` when eligible, `room_finished` → `end_call(completed)` + `finish_ending`, with a single retry on revision conflict and deterministic command IDs for replay convergence. Unknown rooms/participants/events and inapplicable states are acknowledged `200 {received:true}` without oracle or poison retries, and the webhook only confirms media-plane facts — it cannot grant authorization. Slice 6 adds the membership-removal hook with no new routes (matrix stays 111) and no migration (reads existing snapshots): `ChatService.removeMember` fires optional `onMemberRemoved(chatId, memberId)` after commit (replay path excluded), wired in `app.ts` to `CallService.reconcileMembership` fire-and-forget with error log, which issues `membership_removed` as system `membership-service` for every non-terminal membership of the removed member across live (non-ended) calls in that chat via new store `listLiveCallsForChat` (`json_extract` state filter), with epoch bump, revoked status, host-removal `ending→ended` finalization, already-terminal skipped and failures counted. Session revoke needs no hook (grant issuance rechecks liveness, in-flight tokens expire ≤120s) and block is not membership removal (grants already denied via block policy). Tests: `calls-signaling.integration` 8/8 (new reconcile test: revoke + epoch 2, removed grant `403`, survivor grant `200`), API typecheck clean, full suite not yet run; honest remainder is push/ringing delivery (real APNs blocked externally), grant refresh, crash-cleanup sweeper, then search. Slice 7 adds the stale-reconnecting sweeper with no new routes (matrix stays 111) and no migration: `CallService.sweepStaleReconnecting(now, timeoutMs>=60s, limit=100)` ends calls stuck with a reconnecting participant past the `updated_at` watermark via `end_call(network-timeout)` + `finish_ending` as system media-plane, using store `listStaleReconnectingCalls(beforeIso, limit)` (`json_extract`/`json_each`, non-ended + reconnecting + watermark) wired into the existing 10-minute `cleanupTimer` (10-minute timeout), idempotent with races converging by reload (domain errors skipped, infra errors counted; calls exposed on `app.luxora` for tests). Tests: new `calls-reconnect-sweeper.integration` 1/1 (stuck→ended/network-timeout, fresh untouched, resweep no-op), API typecheck clean, full suite not yet run; honest remainder is push/ringing delivery (real APNs blocked externally), then search (grant refresh covered by stateless re-issuance).
 
-New `GET /v1/calls?chatId=` returns `{calls: CallResponse[]}` ordered `updated_at` DESC (max 50, including ended calls for missed-call history) as polling discovery until push delivery lands. Missing `chatId` answers `400`, while unknown chats and non-members share one `404` with no oracle.
+New `GET /v1/calls?chatId=&limit=&cursor=` returns `{calls:[CallResponse], nextCursor}` ordered `updated_at` DESC (page size default/max 50, including ended calls for missed-call history) as polling discovery until push delivery lands. Missing `chatId` answers `400`, while unknown chats and non-members share one `404` with no oracle.
 
 ### Device linking (slices 1–4)
 

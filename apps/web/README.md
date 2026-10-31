@@ -79,8 +79,11 @@ refresh token только в `sessionStorage`.
 - нет server-synced drafts/folders UI (drafts/folders — локальные);
 - нет Web Push и offline-доступа к сообщениям: PWA-кэш содержит только публичные
   shell/static-ассеты и не кэширует API/сообщения;
-- calls media не проверено end-to-end: без медиаплана `features.calls:false`,
-  адаптер остаётся `unavailable`, звук не имитируется;
+- calls media проверено локально против реального Docker media plane (browser
+  harness 18/18: оба peer с bidirectional media, call active через signed webhook,
+  mute в обе стороны, hangup очищает overlays; API media-plane probe 14/14);
+  это cloud-preview server media plane без E2EE, а в CI media-стек не
+  поднимается — без медиаплана `features.calls:false` и адаптер `unavailable`;
 - presence приблизительный и только realtime;
 - axe-core аудит ключевых экранов (auth, shell, conversation, dialogs и ключевые
   публичные страницы) в CI; ручная NVDA/VoiceOver-сессия и hosted CSP/headers
@@ -94,7 +97,7 @@ refresh token только в `sessionStorage`.
 `tools/web-e2e` гоняет два изолированных Chrome-контекста против реального API и
 временной SQLite (генерируемые dev-секреты и CSPRNG-аккаунты, `vite preview`,
 system-Chrome autodetect, process-tree cleanup) и входит в `web-e2e` job
-`.github/workflows/node.yml` — **16/16 user-observable checks PASS в GitHub
+`.github/workflows/node.yml` — **17/17 checks PASS (functional + axe a11y) в GitHub
 Actions**. Локально:
 
 ```bash
