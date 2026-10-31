@@ -129,6 +129,8 @@ public struct LuxoraApplicationView: View {
             chatFoldersStore: session.chatFoldersStore,
             communityStore: session.communityStore,
             communityManagementStore: session.communityManagementStore,
+            safetyReportsStore: session.safetyReportsStore,
+            accountDataStore: session.accountDataStore,
             chatTopicsStore: session.chatTopicsStore,
             globalSearchStore: session.globalSearchStore,
             updateChatPreferences: { chatID, patch in

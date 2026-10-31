@@ -48,6 +48,8 @@ public struct LuxoraPhoneRootView: View {
     private let chatFoldersStore: ChatFoldersStore?
     private let communityStore: CommunityStore?
     private let communityManagementStore: CommunityManagementStore?
+    private let safetyReportsStore: SafetyReportsStore?
+    private let accountDataStore: AccountDataStore?
     private let chatTopicsStore: ChatTopicsStore?
     private let globalSearchStore: GlobalSearchStore?
     private let updateChatPreferences: (UUID, ChatPreferencesPatch) async -> Bool
@@ -73,6 +75,8 @@ public struct LuxoraPhoneRootView: View {
         chatFoldersStore: ChatFoldersStore? = nil,
         communityStore: CommunityStore? = nil,
         communityManagementStore: CommunityManagementStore? = nil,
+        safetyReportsStore: SafetyReportsStore? = nil,
+        accountDataStore: AccountDataStore? = nil,
         chatTopicsStore: ChatTopicsStore? = nil,
         globalSearchStore: GlobalSearchStore? = nil,
         updateChatPreferences: @escaping (UUID, ChatPreferencesPatch) async -> Bool = { _, _ in false },
@@ -91,6 +95,8 @@ public struct LuxoraPhoneRootView: View {
         self.chatFoldersStore = chatFoldersStore
         self.communityStore = communityStore
         self.communityManagementStore = communityManagementStore
+        self.safetyReportsStore = safetyReportsStore
+        self.accountDataStore = accountDataStore
         self.chatTopicsStore = chatTopicsStore
         self.globalSearchStore = globalSearchStore
         self.updateChatPreferences = updateChatPreferences
@@ -190,6 +196,7 @@ public struct LuxoraPhoneRootView: View {
                                     securityGate: featureMatrix.securityE2EE,
                                     communityStore: communityStore,
                                     topicsStore: chatTopicsStore,
+                                    safetyReportsStore: safetyReportsStore,
                                     attachmentImageCache: attachmentImageCache,
                                     openCommunityProfile: {
                                         chatsPath.append(.communityProfile(conversationID))
@@ -393,9 +400,38 @@ public struct LuxoraPhoneRootView: View {
                 synchronizeAuthorization: synchronizePushAuthorization
             )
         case .privacy:
-            PhonePrivacySettingsView(store: store, featureMatrix: featureMatrix)
+            PhonePrivacySettingsView(
+                store: store,
+                featureMatrix: featureMatrix,
+                safetyReportsStore: safetyReportsStore,
+                openReports: { settingsPath.append(.reports) }
+            )
         case .data:
-            PhoneDataSettingsView(featureMatrix: featureMatrix)
+            PhoneDataSettingsView(
+                featureMatrix: featureMatrix,
+                accountDataStore: accountDataStore,
+                openAccountData: { settingsPath.append(.accountData) }
+            )
+        case .reports:
+            if let safetyReportsStore {
+                PhoneSafetyReportsView(store: safetyReportsStore)
+            } else {
+                ContentUnavailableView(
+                    "Жалобы недоступны",
+                    systemImage: "flag.slash",
+                    description: Text("Серверный раздел жалоб не подключён в этом сеансе.")
+                )
+            }
+        case .accountData:
+            if let accountDataStore {
+                PhoneAccountDataView(store: accountDataStore)
+            } else {
+                ContentUnavailableView(
+                    "Данные аккаунта недоступны",
+                    systemImage: "externaldrive.badge.questionmark",
+                    description: Text("Экспорт и удаление аккаунта не подключены в этом сеансе.")
+                )
+            }
         case .appearance:
             PhoneAppearanceSettingsView(store: store)
         case .power:
@@ -523,6 +559,8 @@ private enum PhoneSettingsRoute: Hashable {
     case notifications
     case privacy
     case data
+    case reports
+    case accountData
     case appearance
     case power
     case language
@@ -2196,11 +2234,13 @@ private struct PhoneDirectConversationView: View {
     let securityGate: FeatureGate
     let communityStore: CommunityStore?
     let topicsStore: ChatTopicsStore?
+    let safetyReportsStore: SafetyReportsStore?
     let attachmentImageCache: AuthenticatedAvatarImageCache?
     let openCommunityProfile: () -> Void
 
     @State private var presentedGate: FeatureGate?
     @State private var forwardedMessage: ChatMessage?
+    @State private var reportedMessage: ChatMessage?
     @State private var deletionCandidate: ChatMessage?
     @State private var presentsMediaPicker = false
     @State private var presentsFilePicker = false
@@ -2410,6 +2450,7 @@ private struct PhoneDirectConversationView: View {
             edit: store.canEdit(message) ? { store.beginEditing(message) } : nil,
             delete: store.canDelete(message) ? { deletionCandidate = message } : nil,
             forward: store.canForward(message) ? { forwardedMessage = message } : nil,
+            report: canReport(message) ? { reportedMessage = message } : nil,
             togglePin: store.canPin(message, in: conversation)
                 ? { store.togglePin(message.id, in: conversation.id) }
                 : nil
@@ -2417,6 +2458,18 @@ private struct PhoneDirectConversationView: View {
         .padding(.bottom, usesExpandedMessageLayout && isLast ? 2 : 0)
         .id(message.id)
         .accessibilityIdentifier("message-\(message.id.uuidString.lowercased())")
+    }
+
+    /// Only messages authored by another account and already persisted by the
+    /// server can be reported: a report's evidence must be an existing message
+    /// written by the reported subject (server rule).
+    private func canReport(_ message: ChatMessage) -> Bool {
+        guard safetyReportsStore != nil else { return false }
+        guard message.author.id != store.currentUser.id else { return false }
+        guard message.delivery != .sending, message.delivery != .failed else {
+            return false
+        }
+        return !store.metadata(for: message.id).isDeleted
     }
 
     private func toggleVoiceRecording() {
@@ -2818,6 +2871,24 @@ private struct PhoneDirectConversationView: View {
                 }
             )
         }
+        .sheet(item: $reportedMessage) { message in
+            if let safetyReportsStore {
+                PhoneSafetyReportSheet(
+                    store: safetyReportsStore,
+                    conversationTitle: conversation.title,
+                    subjectName: message.author.displayName,
+                    subjectAccountID: message.author.id,
+                    messageID: message.id,
+                    messagePreview: message.text
+                )
+            } else {
+                ContentUnavailableView(
+                    "Жалоба недоступна",
+                    systemImage: "flag.slash",
+                    description: Text("Серверный раздел жалоб не подключён в этом сеансе.")
+                )
+            }
+        }
         .confirmationDialog(
             "Удалить сообщение?",
             isPresented: Binding(
@@ -3089,6 +3160,7 @@ private struct PhoneMessageBubble: View {
     let edit: (() -> Void)?
     let delete: (() -> Void)?
     let forward: (() -> Void)?
+    let report: (() -> Void)?
     let togglePin: (() -> Void)?
 
     var body: some View {
@@ -3270,6 +3342,10 @@ private struct PhoneMessageBubble: View {
                 Button("Переслать", systemImage: "arrowshape.turn.up.right", action: forward)
                     .accessibilityIdentifier("message-action-forward")
             }
+            if let report {
+                Button("Пожаловаться", systemImage: "exclamationmark.bubble", action: report)
+                    .accessibilityIdentifier("message-action-report")
+            }
             if let delete {
                 Divider()
                 Button("Удалить", systemImage: "trash", role: .destructive, action: delete)
@@ -3303,6 +3379,9 @@ private struct PhoneMessageBubble: View {
             }
             if let forward {
                 Button("Переслать", action: forward)
+            }
+            if let report {
+                Button("Пожаловаться", action: report)
             }
             if let delete {
                 Button("Удалить", role: .destructive, action: delete)
@@ -5263,6 +5342,8 @@ private struct PhoneNotificationPreferencesSections: View {
 private struct PhonePrivacySettingsView: View {
     @Bindable var store: MessengerStore
     let featureMatrix: LuxoraFeatureMatrix
+    let safetyReportsStore: SafetyReportsStore?
+    let openReports: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var permissions = PhoneSystemPermissionSnapshot.loading
@@ -5429,6 +5510,25 @@ private struct PhonePrivacySettingsView: View {
                 Text("Заблокированные не могут написать, позвонить или найти вас. Разблокировать можно в любой момент.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Жалобы и отчёты") {
+                if safetyReportsStore != nil {
+                    Button(action: openReports) {
+                        HStack {
+                            Label("Мои жалобы", systemImage: "flag.fill")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .accessibilityIdentifier("privacy-safety-reports")
+                    Text("Здесь только подтверждения отправленных вами жалоб: выбранные сообщения и текст комментария сервер в этот список не возвращает. Жалоба отправляет выбранное сообщение и комментарий на сервер — это облачный предпросмотр, не E2EE.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Label("Серверный раздел жалоб не подключён в этом сеансе", systemImage: "lock.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
             Section("Разрешения этого iPhone") {
                 PhoneSystemPermissionRow(title: "Контакты", symbol: "person.crop.circle", state: permissions.contacts)
                 PhoneSystemPermissionRow(title: "Камера", symbol: "camera.fill", state: permissions.camera)
@@ -5469,6 +5569,8 @@ private struct PhonePrivacySettingsView: View {
 
 private struct PhoneDataSettingsView: View {
     let featureMatrix: LuxoraFeatureMatrix
+    let accountDataStore: AccountDataStore?
+    let openAccountData: () -> Void
     @AppStorage("luxora.data.keepMedia") private var keepMedia: String = "forever"
     @AppStorage("luxora.data.autoDownloadPhotosCellular") private var autoPhotosCellular = true
     @AppStorage("luxora.data.autoDownloadPhotosWifi") private var autoPhotosWifi = true
@@ -5507,6 +5609,25 @@ private struct PhoneDataSettingsView: View {
                 Toggle("Файлы по Wi-Fi", isOn: $autoFilesWifi)
                 Text("Видео и файлы по сотовой сети по умолчанию выключены, чтобы не тратить трафик — как в Telegram. Каждую настройку Luxora учитывает перед загрузкой вложения.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Данные аккаунта") {
+                if accountDataStore != nil {
+                    Button(action: openAccountData) {
+                        HStack {
+                            Label("Экспорт и удаление аккаунта", systemImage: "externaldrive.fill")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .accessibilityIdentifier("data-account-data")
+                    Text("Соберите архив своих данных (включая медиафайлы; токены и секреты не включаются) или запланируйте удаление аккаунта. У удаления есть семидневный срок, в течение него его можно отменить; после срока — нельзя.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Label("Экспорт и удаление недоступны в этом сеансе", systemImage: "lock.fill")
+                        .foregroundStyle(.secondary)
+                }
             }
             Section("Сеть") {
                 LabeledContent("Лимит вложений", value: "100 МБ на файл")
