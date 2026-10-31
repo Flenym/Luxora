@@ -106,7 +106,7 @@
 | 🖼 | Обработка медиа | Серверные thumbnails и длительность WAV уже есть; quarantine- и transcode-пайплайн ещё открыт |
 | 🔎 | Завершение поиска | Глобальная пагинация, политика контактов, permission-first гарантии |
 | 📞 | **Звонки (preview)** | Серверный call control с durable realtime `call.state.changed`; iPhone call surface (вкладка истории звонков, лог звонков по чату, in-call overlay с честным mute) и голос через LiveKit в `CallsStore`; web-клиент — только сигнальный UI звонков (входящий/отклонить, активный overlay) плюс диагностическая fallback-страница. Медиа работает только против локально сконфигурированного LiveKit/TURN; `GET /v1/capabilities` держит `features.calls:false`, пока медиаплан не настроен. Нет push-дозвона, CallKit, видео/screen share и production-доказательств медиа |
-| 🌐 | **Web** | Публичный продуктовый сайт завершён (14 маршрутов, 22-страничный двуязычный docs-портал, SEO/JSON-LD/sitemap, accessibility, lazy 3D hero); веб-клиент мессенджера по адресу `/app` реализован в этом PR — auth, оболочка чатов, пагинированная история, оптимистичная отправка/retry, реакции/пины/правки, вложения, realtime v2 с resume/backoff, message requests, сигнальный UI звонков с честно недоступным медиа, access-токен в памяти + refresh в `sessionStorage`. Проверено локально: 49 unit-тестов, typecheck/build и browser E2E (13–14/14 шагов); это developer preview, а не выпущенный клиент (нет server-synced drafts/folders, PWA/push/offline-кэша, видео/screen share и CI E2E) |
+| 🌐 | **Web** | Публичный продуктовый сайт завершён (14 маршрутов, 22-страничный двуязычный docs-портал, SEO/JSON-LD/sitemap, accessibility, lazy 3D hero); веб-клиент мессенджера по адресу `/app` реализован в этом PR — auth, оболочка чатов, пагинированная история, оптимистичная отправка/retry, реакции/пины/правки, вложения, realtime v2 с resume/backoff, message requests, сигнальный UI звонков с честно недоступным медиа, access-токен в памяти + refresh в `sessionStorage`. Проверено: 49 unit-тестов, typecheck/build и committed browser E2E CI gate (16/16 проверок); это developer preview, а не выпущенный клиент (нет server-synced drafts/folders, PWA/push/offline-кэша, видео/screen share, hosting CSP и WCAG-аудита) |
 
 ### 🔵 Запланировано
 
@@ -156,11 +156,11 @@
 | Платформа | Технологии | Статус |
 |---|---|---|
 | 🌐 Сервер / API | Node.js 22 · Fastify · SQLite WAL | 🟢 Рабочий фундамент — активный фокус |
-| 📱 iPhone | Swift 6 · SwiftUI · Keychain · LiveKit SDK | 🟡 Тонкий интеграционный harness с живыми доказательствами контрактов; call-баннер и голос за гейтом медиаплана |
+| 📱 iPhone | Swift 6 · SwiftUI · Keychain · LiveKit SDK | 🟡 Тонкий интеграционный harness с живыми доказательствами контрактов; calls surface/история, community management, safety reports и account export/deletion UI (проверены CI); медиа за гейтом медиаплана |
 | 📲 iPad | Общий Swift-фундамент | ⚪ Заморожен до стабильных сервера + iPhone |
 | 💻 macOS | SwiftUI probe | ⚪ Заморожен — portability probe |
 | 🤖 Android | Kotlin · Jetpack Compose | ⚪ Фундамент, не подключён к API |
-| 🌍 Web | React + Vite + React Router | 🟡 Публичный продуктовый сайт завершён + веб-клиент мессенджера `/app` реализован в этом PR (49 unit-тестов, build green, локальный браузерный smoke) — developer preview, не выпущенный клиент |
+| 🌍 Web | React + Vite + React Router | 🟡 Публичный продуктовый сайт завершён + веб-клиент мессенджера `/app` реализован (49 unit-тестов, build green, committed browser E2E CI gate 16/16) — developer preview, не выпущенный клиент |
 | 🪟💻 Windows / Linux | Закалённый Electron shell | ⚪ Packaging probe, загружающий веб-сборку; без интеграции сообщений |
 
 Детали: [CLIENTS.md](CLIENTS.md) · [MOBILE.md](MOBILE.md) · [WEB.md](WEB.md) · [DESKTOP.md](DESKTOP.md)
