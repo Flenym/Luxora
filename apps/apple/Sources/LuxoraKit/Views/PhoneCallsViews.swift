@@ -113,7 +113,7 @@ struct PhoneCallsHistoryView: View {
         List {
             if gate.state != FeatureGateState.available {
                 Section {
-                    Text(gate.detail)
+                    Text("Звонки включены в предварительном режиме: сервер подтвердил медиасеть. Это не production-качество и не E2EE.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -352,7 +352,7 @@ struct ChatCallHistoryView: View {
         List {
             if gate.state != FeatureGateState.available {
                 Section {
-                    Text(gate.detail)
+                    Text("Звонки включены в предварительном режиме: сервер подтвердил медиасеть. Это не production-качество и не E2EE.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

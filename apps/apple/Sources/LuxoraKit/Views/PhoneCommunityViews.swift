@@ -564,7 +564,7 @@ struct PhoneCommunityProfileView: View {
     @Bindable var communityStore: CommunityStore
     var topicsStore: ChatTopicsStore?
     var managementStore: CommunityManagementStore? = nil
-    var participantResolver: ((UUID) -> Participant?)? = nil
+    var participantResolver: (UUID) -> Participant? = { _ in nil }
     let initialConversation: Conversation
     let openConversation: (UUID) -> Void
     let leftCommunity: (UUID) -> Void
