@@ -105,8 +105,8 @@
 | 🎙 | Голосовые сообщения | Клиентские запись/воспроизведение/транскрипт-UI и серверные consent/transcript-контракты есть; real-device и poor-network QA, а также серверная верификация waveform ещё открыты |
 | 🖼 | Обработка медиа | Серверные thumbnails и длительность WAV уже есть; quarantine- и transcode-пайплайн ещё открыт |
 | 🔎 | Завершение поиска | Глобальная пагинация, политика контактов, permission-first гарантии |
-| 📞 | **Звонки (preview)** | Серверный call control с durable realtime `call.state.changed`, iPhone call-баннер и голос через LiveKit в `CallsStore`, а также fallback-страница звонков в вебе. Медиа работает только против локально сконфигурированного LiveKit/TURN; `GET /v1/capabilities` держит `features.calls:false`, пока этот медиаплан не настроен. Нет push-дозвона, CallKit и production-доказательств медиа |
-| 🌐 | **Web** | Публичный продуктовый сайт (лендинг, документация, безопасность, загрузка, FAQ, о проекте, блог, статус, контакты, правовые страницы) и веб-клиент мессенджера, который всё ещё активно разрабатывается в этом PR. Публичный сайт не заявляет, что клиент доступен |
+| 📞 | **Звонки (preview)** | Серверный call control с durable realtime `call.state.changed`; iPhone call surface (вкладка истории звонков, лог звонков по чату, in-call overlay с честным mute) и голос через LiveKit в `CallsStore`; web-клиент — только сигнальный UI звонков (входящий/отклонить, активный overlay) плюс диагностическая fallback-страница. Медиа работает только против локально сконфигурированного LiveKit/TURN; `GET /v1/capabilities` держит `features.calls:false`, пока медиаплан не настроен. Нет push-дозвона, CallKit, видео/screen share и production-доказательств медиа |
+| 🌐 | **Web** | Публичный продуктовый сайт завершён (14 маршрутов, 22-страничный двуязычный docs-портал, SEO/JSON-LD/sitemap, accessibility, lazy 3D hero); веб-клиент мессенджера по адресу `/app` реализован в этом PR — auth, оболочка чатов, пагинированная история, оптимистичная отправка/retry, реакции/пины/правки, вложения, realtime v2 с resume/backoff, message requests, сигнальный UI звонков с честно недоступным медиа, access-токен в памяти + refresh в `sessionStorage`. Проверено локально: 48 unit-тестов, typecheck/build и headless-браузерный smoke; это developer preview, а не выпущенный клиент (нет server-synced drafts/folders, PWA/push/offline-кэша, видео/screen share и CI E2E) |
 
 ### 🔵 Запланировано
 
@@ -160,7 +160,7 @@
 | 📲 iPad | Общий Swift-фундамент | ⚪ Заморожен до стабильных сервера + iPhone |
 | 💻 macOS | SwiftUI probe | ⚪ Заморожен — portability probe |
 | 🤖 Android | Kotlin · Jetpack Compose | ⚪ Фундамент, не подключён к API |
-| 🌍 Web | React + Vite + React Router | 🟡 Публичный продуктовый сайт выпущен в этом PR; веб-клиент мессенджера в разработке и пока не выпущен |
+| 🌍 Web | React + Vite + React Router | 🟡 Публичный продуктовый сайт завершён + веб-клиент мессенджера `/app` реализован в этом PR (48 unit-тестов, build green, локальный браузерный smoke) — developer preview, не выпущенный клиент |
 | 🪟💻 Windows / Linux | Закалённый Electron shell | ⚪ Packaging probe, загружающий веб-сборку; без интеграции сообщений |
 
 Детали: [CLIENTS.md](CLIENTS.md) · [MOBILE.md](MOBILE.md) · [WEB.md](WEB.md) · [DESKTOP.md](DESKTOP.md)

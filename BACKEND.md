@@ -246,7 +246,12 @@ IA-1 events have explicit `sender_account`, `recipient_account`, `participant_ac
 ## 8. HTTP hardening
 
 - 1 MiB body limit and strict input schemas.
-- Exact CORS allowlist; credentials disabled for current bearer design.
+- Exact CORS allowlist; credentials disabled for current bearer design. Preflight
+  advertises `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS` over that allowlist
+  (no wildcard) and exposes only the safe response headers the browser needs:
+  `ETag`, `Content-Range`, `Accept-Ranges`, `Content-Disposition`,
+  `Retry-After`, `X-Content-Type-Options`; preflight is cached for one day. A
+  regression test covers browser mutation methods and header exposure.
 - Helmet headers; Swagger UI uses a static CSP.
 - Global 300 requests/minute/canonical source-IP baseline; tighter per-route network buckets. HTTP and realtime share the same IPv4/IPv6 normalization and explicit trusted-proxy policy. The still-internal anonymous primary-login and pre-account-signup routes use a separate bounded key that keeps IPv4 exact and aggregates canonical IPv6 by `/64`, so rotating only the subscriber-controlled low 64 bits does not create fresh local capacity; signup begin/verify are locally capped at 5/10 per minute. IA-1 additionally uses bounded per-process account/device-session buckets for exact/contextual discovery, request creation, relationship mutations and reports.
 - Sanitized public errors with request IDs and no stack/SQL response.

@@ -83,9 +83,13 @@ const WATCHDOG_GRACE_MS = 15_000;
 const SYNC_RECOVERY_RETRY_MS = 2_000;
 // A hostile or broken gateway must not be able to schedule an unbounded timer
 // from the `hello.heartbeatIntervalMs` frame. The interval is only a liveness
-// hint, so clamp it to a safe range before it reaches `setTimeout`.
+// hint, so it is clamped before storage and the watchdog only ever schedules a
+// fixed client-side constant - a server-provided duration never reaches
+// setTimeout (CodeQL js/resource-exhaustion).
 const MIN_HEARTBEAT_INTERVAL_MS = 1_000;
 const MAX_HEARTBEAT_INTERVAL_MS = 120_000;
+const WATCHDOG_TIMEOUT_MS = DEFAULT_HEARTBEAT_INTERVAL_MS + WATCHDOG_GRACE_MS;
+const WATCHDOG_EXTENDED_TIMEOUT_MS = MAX_HEARTBEAT_INTERVAL_MS + WATCHDOG_GRACE_MS;
 
 /** Clamp a server-provided heartbeat interval to a bounded, finite duration. */
 export function clampHeartbeatIntervalMs(value: unknown, fallback: number): number {
@@ -280,17 +284,16 @@ export class RealtimeClient {
 
   #armWatchdog(): void {
     this.#disarmWatchdog();
-    // Re-clamp at the scheduling site so the timeout passed to the runtime is
-    // provably bounded even if a future path bypasses the constructor clamp.
-    const heartbeatMs = Math.min(
-      MAX_HEARTBEAT_INTERVAL_MS,
-      Math.max(MIN_HEARTBEAT_INTERVAL_MS, this.#heartbeatIntervalMs)
-    );
-    const timeoutMs = heartbeatMs + WATCHDOG_GRACE_MS;
+    // Only two client-side constants can ever be scheduled: the server's
+    // heartbeat hint merely selects between them (a boolean comparison, not a
+    // duration), so a malicious frame cannot allocate an arbitrary timer.
+    const timeoutMs = this.#heartbeatIntervalMs > DEFAULT_HEARTBEAT_INTERVAL_MS
+      ? WATCHDOG_EXTENDED_TIMEOUT_MS
+      : WATCHDOG_TIMEOUT_MS;
     this.#watchdogTimer = this.#timers.setTimeout(() => {
       this.#watchdogTimer = null;
       if (this.#status !== "online") return;
-      // No frames for more than heartbeat + grace: the link is dead.
+      // No frames for longer than the client-side liveness budget.
       this.#teardownSocketAndReconnect();
     }, timeoutMs);
   }

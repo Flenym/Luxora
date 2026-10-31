@@ -30,11 +30,12 @@ Current `LuxoraKit` provides:
 - list, conversation, composer, message row, new-message, contacts, profile/QR, folders, permissions, settings and root views;
 - local folder filtering/counts, persisted contact sorting, loaded-message contact search, safe username copy/share and real iOS permission-state actions;
 - remote phone challenge/OTP verification, existing-account versus profile-required branching, profile/bio/username registration, legacy register/login, restore and serialized runtime refresh, chat/message refresh/load/retry, optimistic text send/reconcile/retry with a stable client nonce, server mark-read/reactions, known-contact lookup/direct-chat creation, monotonic durable realtime cursor/message/typing apply and sign-out revoke;
-- a calls preview: `LuxoraCallsAPIClient` (create/ring/accept/decline/hangup/join-grant/list, safe error mapping without response bodies), `LuxoraCallRealtimeDecoder` (`call.state.changed` in realtime v2, strict fields, no media fields), `CallsStore` (incoming/active state driven by server reads, `call.state.changed` used only as a refresh trigger), `CallMediaSession` (LiveKit SDK, publish microphone, count remote audio tracks, never log/store the join token), a `CallBanner` above the conversation with accept/decline/hangup and honest media text, and an audio-call toolbar button. The calls tab, recent-calls settings row and video call remain gated placeholders; there is no CallKit, no push ringing and no video media;
+- a calls preview: `LuxoraCallsAPIClient` (create/ring/accept/decline/hangup/join-grant/list, safe error mapping without response bodies), `LuxoraCallRealtimeDecoder` (`call.state.changed` in realtime v2, strict fields, no media fields), `CallsStore` (incoming/active state driven by server reads, `call.state.changed` used only as a refresh trigger), `CallMediaSession` (LiveKit SDK, publish microphone, count remote audio tracks, never log/store the join token), a `CallBanner` above the conversation with accept/decline/hangup and honest media text, and an audio-call toolbar button;
+- a newer calls product surface (code in `4918cfa`, awaiting Apple CI): recent-calls tab with server-derived direction/missed/status/duration, per-chat call-history sheet, full-screen active-call cover with a server-anchored elapsed timer, microphone mute only when media is connected, visibly unavailable speaker, hangup and an honest media status line, call-back, and a locked honest screen when `features.calls` is false. Audio only; no CallKit, no push ringing, no video/screen share, no media-E2EE;
 - a searchable country picker, combined E.164 validation, local circular avatar crop/fallback, permission rationale and explicit synchronization state;
 - the merged Swift package runs **396 XCTest cases (6 expected live-only skips, 0 failures) plus 20 Swift Testing cases**, per the Apple Swift CI workflow on commit `a801cb3` (31 October 2026). Swift cannot be built or tested on the Windows workspace — CI is the only execution evidence.
 
-`MessengerStore.sendDraft()` uses delay-simulated sent/read only when no remote sender is configured. In signed-in mode it calls the API and replaces the optimistic item with the server result; a failed item can retry with the same nonce. Read cursors and reactions use the current server API. The harness still lacks a durable outbox/cache, pagination, reconnect backoff and authoritative `sync.required` reconciliation, and has no real-device/offline evidence. The calls preview additionally lacks push/CallKit ringing, video, call history UI, durable call-state restoration and real-device media evidence; its media only works against a server whose LiveKit/TURN configuration is complete.
+`MessengerStore.sendDraft()` uses delay-simulated sent/read only when no remote sender is configured. In signed-in mode it calls the API and replaces the optimistic item with the server result; a failed item can retry with the same nonce. Read cursors and reactions use the current server API. The harness still lacks a durable outbox/cache, pagination, reconnect backoff and authoritative `sync.required` reconciliation, and has no real-device/offline evidence. The calls preview additionally lacks push/CallKit ringing, video/screen share, media-E2EE and real-device media evidence; its media only works against a server whose LiveKit/TURN configuration is complete, and the local API without a media plane keeps `features.calls:false`.
 
 Implemented iPhone surfaces that must not be read as missing (as read
 from the current sources): attachments (composer media strip, photo picker up to
@@ -47,12 +48,11 @@ drafts (load/autosave/delete/retry plus composer sync state), message actions
 (reply/edit/delete/forward/pin/reaction), message-request data layer and privacy
 policy, notification settings, blocked-users list with unblock, server
 devices/password settings, appearance and local data settings, and the
-device-link QR sheet. Known UI gaps being implemented by the iPhone slices:
-calls product surface (calls tab is still a locked placeholder; no call
-history/per-chat log/in-call mute-speaker; video locked), community-management
-UI (invite links/join requests/ownership transfer have an API client but no UI),
-and safety reports plus account export/deletion UI. None of the in-progress
-slices is "done" until Apple CI is green and the Lead confirms.
+device-link QR sheet. In-progress slices as of 31 October 2026 (none "done" until
+Apple CI is green and the Lead confirms): calls product surface and community
+management (invite links/join requests/ownership transfer/join-by-link) are in
+`4918cfa`, awaiting Apple CI; safety reports plus account export/deletion UI is
+still being written.
 
 Run shared package/macOS executable:
 

@@ -14,18 +14,22 @@ Hard delivery sequence:
 
 The current backend is a runnable local foundation: text/realtime, partial rich
 media/storage/search, IA-1 requests/relationships/blocks/reports, account
-export/deletion, QR device-linking, security containment, and an API-integrated
-calls preview (signaling, grants, signed webhook reconciliation, durable
+export/deletion, QR device-linking, security containment, a browser-complete CORS
+boundary for mutation methods/download headers, and an API-integrated calls
+preview (signaling, grants, signed webhook reconciliation, durable
 `call.state.changed`) over a loopback LiveKit/coturn harness. It is not a
 complete server platform. Completion still requires production push and APNs
 delivery, production call capacity/review, the full conversation/community and
 media-processing model, gated key management/E2EE, moderation/jobs, production
 storage, backups, monitoring and DR. A thin iPhone integration harness may
-verify real contracts during this phase, and it now carries a call banner with
-LiveKit voice; full iPhone product work still waits for server stability. The
-public product site is a static, truthful surface shipped ahead of the client
-work; the web messenger client is in development. All other client feature
-expansion remains frozen; their existing code is a portability/design probe.
+verify real contracts during this phase; it now carries a call surface (history,
+per-chat log, in-call overlay with honest mute — audio only, awaiting Apple CI)
+and LiveKit voice, while full iPhone product work still waits for server
+stability. The public product site is a static, truthful surface shipped ahead
+of the client work, and the `/app` web messenger client is a developer preview
+against the real API and realtime gateway (48 unit tests, no CI E2E yet). All
+other client feature expansion remains frozen; their existing code is a
+portability/design probe.
 
 ## 2. Current runtime topology
 
@@ -106,10 +110,10 @@ The global SQLite sequence may contain gaps for a given user. Clients track the 
 
 | Client | Current data source | Current role | Network status |
 | --- | --- | --- | --- |
-| iPhone/iPad/macOS SwiftUI | local preview or `ApplicationSession` + in-memory `MessengerStore` + `CallsStore` | Design foundation and thin server integration harness; call banner and LiveKit voice when the media plane is configured | Partial: auth/chat load/send/message realtime/call signaling+voice |
+| iPhone/iPad/macOS SwiftUI | local preview or `ApplicationSession` + in-memory `MessengerStore` + `CallsStore` | Design foundation and thin server integration harness; call surface (history/log/overlay with honest mute) and LiveKit voice when the media plane is configured | Partial: auth/chat load/send/message realtime/call signaling+voice |
 | Android Compose | `MessengerState.demo()` | Portability/layout foundation | Not connected |
-| Web React | static public-site content; web client in development | Public product site; in-development messenger client consumes the committed `apps/web/src/app/contract.ts` seam | Public site: no network; client: in progress |
-| Electron Windows/Linux | Packaged Web build (`apps/web/dist`) | Hardened shell/packaging probe | No messaging integration |
+| Web React (`/app`) | real HTTP + realtime v2; access token in memory, refresh credential in `sessionStorage` | Developer-preview messenger client: `src/app/core` (REST, realtime, store helpers, call-media adapters) + `src/app/messenger.tsx` seam + `src/app/ui`; marketing site is a separate static route tree | Connected preview: auth/chats/history/send/attachments/receipts/realtime/call signalling; call media unavailable without a configured server media plane; no CI E2E |
+| Electron Windows/Linux | Packaged Web build (`apps/web/dist`) | Hardened shell/packaging probe | No messaging integration of its own |
 
 During the server phase, a thin iPhone integration harness establishes and continuously verifies the canonical client boundaries:
 
@@ -122,7 +126,13 @@ SwiftUI Views
   → encrypted credential store + durable local database/outbox
 ```
 
-The harness is not the full product: it may expose only synthetic/test flows needed to validate server semantics. After the entire server platform passes its gates, the full iPhone app reuses those tested layers and implements the complete UX. iPad, macOS and every other client remain frozen until both server and full iPhone are stable.
+The web client mirrors this split in TypeScript: `api.ts` (transport,
+refresh single-flight, binary auth fetch), `realtime.ts` (cursor resume,
+`sync.required` recovery, bounded backoff, close codes), `store.ts` (pure merge
+helpers with no fake receipts), `call-media.ts` (honest unavailable default,
+dynamic LiveKit import) and `messenger.tsx` (state/action provider consumed by
+the UI). It is not a released client: hosting headers/CSP, a final refresh-token
+storage decision, CI E2E and an accessibility audit remain gates.
 
 ## 5. Invariants
 

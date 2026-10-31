@@ -2,23 +2,23 @@
 
 **Релиз:** Beta-0.1  
 **Владелец и разработчик:** Flenym  
-**Status:** foundations/prototypes; no full connected client; calls preview exists behind the media-plane gate
+**Status:** foundations/prototypes; no released connected client; a developer-preview web client exists at `/app`; calls preview exists behind the media-plane gate
 
 ## 1. Execution freeze
 
-The complete server platform is the active product priority. A thin iPhone integration harness may validate evolving contracts. Full iPhone work starts only after server completion; iPad, macOS, Android, Web, Windows, Linux and public-site expansion start only after stable server + full iPhone.
+The complete server platform is the active product priority. A thin iPhone integration harness may validate evolving contracts. Full iPhone work starts only after server completion; iPad, macOS, Android, Windows, Linux and public-site expansion start only after stable server + full iPhone.
 
-Existing clients are valuable design/portability probes but do not define independent backend semantics. Exception recorded in this PR: the public product site and an iPhone calls preview were pulled forward because they are required to test the calls media plane end to end; both stay truthful and neither makes a client "released".
+Existing clients are valuable design/portability probes but do not define independent backend semantics. Exception recorded in this PR: the public product site, the `/app` web messenger client and an iPhone calls preview were pulled forward because they are required to test the browser API/CORS, realtime and calls media plane end to end; all stay truthful, none makes a client "released".
 
 ## 2. Current matrix
 
 | Platform | Technology | Current repository state | Working network product? |
 | --- | --- | --- | --- |
-| iPhone/iPad | SwiftUI + LiveKit SDK | Russian phone-first UI, Telegram-like chat/profile/settings routes, API/Keychain/realtime chat operations, live local onboarding/chat evidence, separate Design Lab; call banner, incoming accept/decline, audio-call start and LiveKit voice via `CallsStore` (media only when the server media plane is configured); calls tab and video call stay gated placeholders | Partial connected harness, not full/offline-ready |
+| iPhone/iPad | SwiftUI + LiveKit SDK | Russian phone-first UI, Telegram-like chat/profile/settings routes, API/Keychain/realtime chat operations, live local onboarding/chat evidence, separate Design Lab; call banner, audio-call start and LiveKit voice via `CallsStore` (media only when the server media plane is configured); call surface with a real recent-calls tab, per-chat call log, in-call overlay with honest mute and call-back (audio only, capability-gated; awaiting Apple CI); community management for invite links/join requests/ownership transfer/join-by-link (awaiting Apple CI); video call stays locked | Partial connected harness, not full/offline-ready |
 | macOS native | SwiftUI/SwiftPM | same thin harness/local preview in executable; no calls media UI wired | Partial harness, not full desktop |
 | Android | Kotlin/Compose | adaptive local `MessengerState.demo()` | No |
-| Web | React/TypeScript/Vite + React Router | completed public product site (landing, docs portal, security, download, FAQ, blog, status, contact, legal, RU/EN); web messenger client under construction in this PR; separate single-file call fallback page | No shipped client; public site is static |
-| Windows/Linux | Electron | hardened shell packages the Web build (`apps/web/dist`) and hardens navigation/permissions/CSP | No |
+| Web | React/TypeScript/Vite + React Router | completed public product site (14 routes, 22-page RU/EN docs portal, SEO/JSON-LD, sitemap/robots, a11y, lazy 3D hero) and a real messenger client at `/app` (auth, chat shell, paginated history, optimistic send/retry, reactions/pins/edits, attachments, realtime v2 with resume/backoff, message requests, call signalling UI with honest unavailable media; 48 unit tests) — developer preview, not released; separate single-file call fallback page | Public site is static; `/app` client is a developer preview, not a shipped product |
+| Windows/Linux | Electron | hardened shell packages the Web build (`apps/web/dist`, now including `/app`) and hardens navigation/permissions/CSP | No |
 
 Apple can request and verify a phone challenge, branch an existing account from
 new profile registration, check a username, restore/refresh a Keychain session,
@@ -32,17 +32,21 @@ safe share/copy, local chat-folder filters and iOS permission states are also
 implemented. The calls slice adds `CallsStore` (active/incoming state, server
 `call.state.changed` as a refresh trigger, no optimistic call state), a call
 banner over the conversation and LiveKit room join for voice when the server
-issues a join grant. Current sources also wire media attachments (photo picker,
-file importer, upload→send, image viewer), topics (chips + history filter),
-voice recording/playback/transcript, synchronized drafts, notification,
-appearance and data settings, blocked users and server device/password settings.
-Its message store is still in memory: there is no durable outbox/cache,
-pagination, robust reconnect/reconcile or real-device media evidence. UI work
-for the calls product surface, community management and safety
-reports/account-data export deletion is in progress and is not claimed done. The
-separate Apple Design Lab and all Android/Web demo chats remain local; simulated
-states must remain visibly labelled. Web persists only the language preference
-on the public site.
+issues a join grant; a newer call surface adds the recent-calls tab, per-chat
+call log, active-call overlay with an honestly gated mute control and call-back,
+with the server capability gate keeping video locked. Current sources also wire
+media attachments (photo picker, file importer, upload→send, image viewer),
+topics (chips + history filter), voice recording/playback/transcript,
+synchronized drafts, notification, appearance and data settings, blocked users,
+server device/password settings and community management (invite links, join
+requests, ownership transfer, join-by-link). Its message store is still in
+memory: there is no durable outbox/cache, pagination, robust
+reconnect/reconcile or real-device media evidence. The new calls/community
+surfaces were awaiting Apple CI at the time of writing; safety
+reports/account-data export/deletion UI is still in progress and is not claimed
+done. The separate Apple Design Lab and all Android/Web demo chats remain local;
+simulated states must remain visibly labelled. The public web site persists only
+the language preference.
 
 ## 3. Canonical cross-client contract
 

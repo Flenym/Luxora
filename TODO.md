@@ -4,38 +4,49 @@
 **Владелец и разработчик:** Flenym  
 **Обновлено:** 31 октября 2026
 
-> **Текущий checkpoint 2026-10-31 (ветка `feature/ios-calls-signaling`, PR #83, 13 коммитов к `main`):**
+> **Текущий checkpoint 2026-10-31 (ветка `feature/ios-calls-signaling`, PR #83, head на момент записи `ec6846b`, 21 коммит; счётчик может расти):**
 > серверный calls signaling 1–7 + durable realtime `call.state.changed`; `features.calls` в capabilities
-> только при полном `CALLS_*`-медиаплане; iOS calls signaling + `CallsStore`, Call UI (banner,
-> accept/decline/hangup, старт аудиозвонка) и LiveKit voice; `CallMediaSession`; медиастек
+> только при полном `CALLS_*`-медиаплане; iOS calls signaling + `CallsStore` + LiveKit voice, затем
+> iOS calls product surface (вкладка истории звонков, per-chat лог, in-call overlay/mute, call-back,
+> audio-only, capability-gated) и community management UI (invite links/join requests/ownership
+> transfer/join-by-link) — код в `4918cfa`, ждёт Apple CI; медиастек
 > `start.bat`/LiveKit/coturn/Caddy/CloudPub; web call fallback `apps/call-web/index.html`;
-> публичный продуктовый сайт `apps/web` (React Router, docs-портал, RU/EN, Three.js hero);
-> CI-фиксы (distroless digest pins, patched npm lock entries, truth-gate scoping).
-> **Evidence (CI 2026-10-31, коммит `a801cb3`):** protocol 17/104, passkey-domain 70,
+> **публичный продуктовый сайт завершён** (14 маршрутов, 22 docs-страницы RU/EN, canonical/OG/JSON-LD/
+> sitemap/robots, lazy 3D hero — `9d01a1a`); **web messenger client `/app` реализован** (`37e7b92`:
+> auth, shell/search/filters, paginated history, optimistic send/retry, reply/edit/delete,
+> reactions/pins, честные delivered/read, attachments/thumbnail/download, realtime v2
+> resume/sync.required/backoff, message requests, call signalling UI с honest unavailable media,
+> access token memory-only + refresh в `sessionStorage`); CORS browser mutation fix (`7867abb`);
+> dependency-фиксы + CodeQL re-enabled (`b8cd224`); docs-sync коммит `a2917fb`.
+> **Evidence:** web — локально **48 Vitest PASS** (api 17, realtime 12, store 19; воспроизведено
+> docs-truth), typecheck PASS, build green; headless-Chrome smoke прошёл локально (не CI E2E).
+> Последний завершённый полный серверный/AI замер — CI `a801cb3`: protocol 17/104, passkey-domain 70,
 > call-control 23, API 101/743, Web build + desktop typecheck PASS; Apple Swift 396 XCTest
 > (6 expected skips, 0 failures) + 20 Swift Testing + unsigned iOS compile PASS.
-> **CI-статус:** Apple Swift зелёный; Node/Web/Desktop — зелёный до `make check-truth`, фикс
-> `2baac72` ждёт перезапуска; Security (`dependency-review`, `filesystem-and-image`) красный —
-> задача `ci-deps`. `main` (`cc6fce7`, 2026-09-20): Node зелёный, Apple Swift/IPA красные,
-> Security (schedule) красный с 2026-10-12.
+> **CI-статус:** предыдущий прогон `4918cfa` завершён: **Node/Web/Desktop — SUCCESS**
+> (48 web-тестов прошли в CI), **Apple Swift — FAILURE** (Swift compile errors в
+> `ApplicationSession.swift` вокруг `CommunityManagementStore` — фикс готовится), **Security — FAILURE**
+> (dependency-review упал). На новом head `ec6846b` (21 коммит, security-фикс) dependency-review
+> уже SUCCESS, `filesystem-and-image` пока FAILURE, CodeQL в работе — green не заявлять.
+> `main` (`cc6fce7`, 2026-09-20): Node зелёный, Apple Swift/IPA красные на этом коммите,
+> Security был красным до `b8cd224`.
 >
 > **Текущая рабочая очередь (31 октября 2026; приоритет — iPhone):**
-> 1. **iPhone in-progress слайсы (не считать готовыми до Apple CI green + подтверждения Lead):**
->    calls product surface (ios-calls — history/per-chat log/in-call mute-speaker; video
->    locked), community management UI (ios-community — API client/models есть, UI нет),
->    safety reports + account data UI (ios-safety — server/protocol есть, iPhone client/UI нет).
-> 2. **Web messenger completion** — `apps/web/src/app` (api/realtime/store/ui) до feature-complete,
->    живой browser-прогон, тесты в CI; затем Phase B docs (WEB.md/README/PROJECT_STATE/TODO/
->    NEXT_SESSION/CHANGELOG) с точным списком фич и gaps.
-> 3. **CI security green** — dependency-review + filesystem/image (ci-deps), затем перезапуск
->    Node/Web/Desktop (truth-гейт после `2baac72`).
-> 4. **CodeQL re-enabled** — вернуть или документировать отказ после dependency-фиксов.
-> 5. **Public site QA** — mojibake `—` в `apps/web/index.html`, truth/SEO/a11y/responsive,
->    честные `/download` и `/status`, hosting headers.
-> 6. **Desktop shell wiring** — связать Electron shell с готовым web-клиентом (CSP, навигация,
->    permissions, меню New Message/Search).
-> 7. **iPhone technical remainders** — durable outbox/cache, pagination, attachment/file
->    download-share, video playback, push/CallKit (внешние гейты), real-device media/QoS.
+> 1. **Дождаться и подтвердить CI на head PR:** Node/Web/Desktop (48 web-тестов), Security
+>    (dependency-review, filesystem/image, CodeQL), Apple Swift (iPhone calls/community).
+>    Не заявлять green до завершения.
+> 2. **iPhone in-progress (не считать готовым до Apple CI green + подтверждения Lead):**
+>    calls product surface и community management UI — код в `4918cfa`; safety reports +
+>    account data (export/deletion) UI — пишется сейчас (файлов в дереве ещё нет).
+> 3. **Web follow-up:** решение по E2E в CI (закоммитить harness или оставить локальным),
+>    desktop shell wiring, hosting CSP/headers + sessionStorage/HttpOnly review,
+>    server-synced drafts/folders — отдельная фича.
+> 4. **Public site residuals:** deployment/hosting, `/status` и `/download` честность,
+>    `apps/web/README.md` refresh (зона web-team), final SEO/a11y manual pass.
+> 5. **iPhone technical remainders** — durable outbox/cache, pagination, attachment binding,
+>    file open/download/share, video playback, push/CallKit (внешние гейты), real-device media/QoS.
+> 6. **Server remainders** — push-доставка (внешний блок), contact discovery без upload,
+>    media transcode/quarantine, production DB/DR.
 >
 > Ниже сохранён исторический лог слайсов; он описывает состояние на момент записи и не является
 > текущим статусом.
@@ -251,6 +262,9 @@
 > **Дополнение 2026-10-31 (ветка `feature/ios-calls-signaling`, PR #83; DONE/закоммичено):**
 > `d04e904` iOS calls signaling layer + `call.state.changed` в V2 (сервер: protocol-схема, декодер, API-клиент, store; тесты); `4e41939` iOS Call UI + LiveKit voice (`CallsStore` перечитывает звонок по `call.state.changed`, `CallMediaSession` публикует микрофон через LiveKit SDK, `CallBanner` accept/decline/hangup + честный media-текст); `f61b5e5` `features.calls` в capabilities = полный `CALLS_*`-медиаплан (иначе `false`); `54e2ace`+`828f32b` `start.bat` → `scripts/start-all.ps1`: LiveKit/coturn/Caddy TLS + CloudPub publish; `479dd53` web fallback `apps/call-web/index.html` (polling REST + LiveKit из CDN); `a801cb3` публичный сайт `apps/web` (React Router, docs-портал, RU/EN, Three.js hero) + web test tooling + контракт будущего клиента; `2baac72` CI truth-gate scoped. Evidence — см. текущий checkpoint вверху.
 > Осталось: веб-клиент мессенджера (`apps/web/src/app`), Security CI, CodeQL, public site QA, desktop wiring, iPhone remainders, push-дозвон/CallKit/video/production media.
+>
+> **Дополнение 2026-10-31 (следующие коммиты PR #83: web client, public site finish, CI/security, iOS calls surface/community):**
+> `37e7b92` web messenger client `/app` (auth, shell/search/filters, conversation, optimistic send/retry, reactions/pins/reply/edit/delete, честные receipts, attachments/thumbnail/download, realtime v2 resume/sync.required/backoff, message requests, call signalling UI с honest unavailable media, access token memory-only + refresh `sessionStorage`; `src/app/core` 48 Vitest — api 17, realtime 12, store 19); `9d01a1a` публичный сайт финализирован (14 маршрутов, 22 docs-страницы, canonical/OG/JSON-LD/sitemap/robots, a11y, lazy hero); `7867abb` CORS preflight mutation-методов + exposed headers + regression test + `scripts/qa-api-smoke.mjs`; `b8cd224` dependency-фиксы + CodeQL re-enabled (+ web tests in Node workflow); `19d59f2` Swift test stability fix; `4918cfa` iOS calls product surface (история звонков, per-chat лог, in-call overlay/mute, call-back) + community management (invite links/join requests/ownership transfer/join-by-link) — **Apple CI на момент записи в работе**. Evidence: web 48/48 локально (docs-truth воспроизвёл), typecheck PASS, build green; CI на head `4918cfa` в работе.
 
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, обновлено 2026-10-31)
 
@@ -259,10 +273,10 @@
 
 ### CRITICAL
 
-- [~] Зелёный CI на ветке PR #83: Apple Swift — зелёный; Node/Web/Desktop — фикс truth-гейта `2baac72` ждёт перезапуска; Security (`dependency-review`, `filesystem-and-image`) — красный, чинит `ci-deps`. `main` (`cc6fce7`): Node зелёный, Apple Swift/IPA красные на этом коммите, Security (schedule) красный с 2026-10-12
-- [x] Truth-аудит: фейковых E2EE/call/presence/download/sync UI нет — gates/locked-кнопки; публичный сайт помечает planned-функции
+- [~] Зелёный CI на head PR: Node/Web/Desktop **SUCCESS на `4918cfa`** (48 web-тестов в CI); Apple Swift **FAILURE на `4918cfa`** (compile errors community-management в `ApplicationSession.swift` — фикс в работе); Security на `ec6846b`: dependency-review + job codeql SUCCESS, `filesystem-and-image` FAILURE («Calls Compose security invariants failed»), обязательный status-check «CodeQL» FAILURE (default setup не настроен). Green не заявлять до завершения. `main` (`cc6fce7`): Node зелёный, Apple Swift/IPA красные на этом коммите, Security был красным до `b8cd224`
+- [x] Truth-аудит: фейковых E2EE/call/presence/download/sync UI нет — gates/locked-кнопки; публичный сайт помечает planned-функции; web-клиент медиа звонков честно `unavailable`
 - [ ] Полный локальный suite + CI перед каждым пушем (без исключений)
-- [ ] CodeQL re-enabled (после dependency-фиксов решить: вернуть или документировать отказ)
+- [x] CodeQL re-enabled (`b8cd224`, advanced setup в Security workflow; причина паузы зафиксирована в комментарии workflow)
 
 ### HIGH
 
@@ -275,24 +289,25 @@
 - [x] Voice playback round-trip: multi-chunk upload out-of-order, receiver Range-стриминг `206`, байт-точное скачивание, transcript-конвергенция, stranger `404`
 - [x] Search pagination convergence: messages global+scoped, known-users, files (без потерь/дублей, garbage cursor `400`)
 - [x] Calls preview: серверный signaling 1–7 + durable `call.state.changed`; iOS `CallsStore`/`CallBanner`/LiveKit voice; capabilities-гейт по медиаплану; web fallback `apps/call-web` — всё закоммичено в PR #83 (Evidence: CI 2026-10-31)
-- [x] iPhone attachments: composer media strip, photo picker (≤10 изображений), file importer, upload→send с attachmentIds, image-бабл, viewer с зумом, file-row; voice — отдельный recorder/player (см. ниже)
+- [x] iPhone attachments: composer media strip, photo picker (≤10 изображений), file importer, upload→send с attachmentIds, image-бабл, viewer с зумом, file-row; voice — отдельный recorder/player
 - [x] iPhone topics: `ChatTopicsStore`, управление в профиле сообщества, chips выбора в композере, фильтр истории, topicID сквозь send-фаннел
 - [x] iPhone voice: запись (таймер/уровни/отмена/стоп), recording bar, playback с waveform, consent-тумблер и отправка транскрипта
-- [~] **iPhone calls product surface** (в работе, ios-calls): вкладка Calls остаётся locked-заглушкой, нет call history UI и per-chat call log, нет in-call mute/speaker, video остаётся locked (серверный grant выдаёт только микрофон). Не считать готовым до Apple CI green + подтверждения Lead
-- [~] **iPhone community management UI** (в работе, ios-community): API-клиент + модели invite links / join requests / ownership transfer есть, UI отсутствует
-- [~] **iPhone safety reports + account data UI** (в работе, ios-safety): сервер/protocol для report, export (035), deletion (036) есть, iPhone client/UI отсутствует
-- [~] Web messenger client (`apps/web/src/app`): контракт закоммичен (`contract.ts`), api/realtime/store/ui в работе; Phase B docs — после «web client complete» от Lead
+- [x] **Публичный продуктовый сайт завершён** (`9d01a1a`): 14 маршрутов, 22 docs-страницы RU/EN, canonical/OG/JSON-LD/sitemap/robots, а11y, lazy 3D hero, честные download/status/security копии; mojibake исправлен
+- [x] **Web messenger client `/app` реализован и проверен локально** (`37e7b92`): auth (username+password, session boot из `sessionStorage`, one-flight refresh, sign-out), shell (sidebar search, All/Unread/Archived, new chat по username, message-request panel, profile edit), conversation (cursor history, optimistic same-nonce retry, reply/edit/delete, reactions, pins, честные delivered/read ticks, image/file/thumbnail/download, typing, local drafts, read receipts on open/focus, day separators, load-older, new-messages divider), realtime `/v2` resume/`sync.required`/bounded backoff/close-codes, call signalling UI с honest `unavailable` media, access token memory-only + refresh в `sessionStorage`; **48 Vitest PASS** (api 17, realtime 12, store 19), typecheck PASS, build green, локальный headless-Chrome E2E (не CI)
+- [ ] **Web follow-up:** решение по E2E в CI, hosting CSP/headers + sessionStorage/HttpOnly review, desktop shell wiring, server-synced drafts/folders UI
+- [~] **iPhone calls product surface** (ios-calls): код в `4918cfa` — вкладка истории звонков, per-chat лог, in-call overlay с elapsed timer, честный mute (только при подключённом медиа), speaker видимо недоступен, call-back, audio only, capability-gated. **Не считать готовым до Apple CI green + подтверждения Lead**
+- [~] **iPhone community management UI** (ios-community): API client/models + store/views для invite links/join requests/ownership transfer/join-by-link в `4918cfa`, ждёт Apple CI
+- [~] **iPhone safety reports + account data UI** (в работе, ios-safety): сервер/protocol для report, export (035), deletion (036) есть, iPhone client/UI ещё пишется (файлов в дереве нет)
 - [ ] Topics/threads: realtime-конвергенция чужих изменений и comments/threads как отдельный домен (routing/composer/history уже подключены)
 - [ ] Voice остаток: poor-network/process-death доказательства именно для voice-цепочки (generic resume покрыт); real-device gates; round video
 - [ ] Attachments остаток: file open/download/share, video picker/playback, upload resume/background evidence, scan/transcode pipeline
-- [ ] Public site QA: mojibake `—` в `apps/web/index.html`, truth/SEO/a11y/responsive, честные `/download` и `/status`, hosting headers
 
 ### MEDIUM
 
 - [x] Image dimensions server-verified (mismatch `400`, measured adopt, AVIF/HEIC остаются client_declared)
 - [ ] Media processing остаток: quarantine/transcode pipeline (thumbnails + WAV duration на сервере DONE, CI PASS)
 - [x] Search pagination convergence (messages/people/files); остаток: contacts/address-book policy
-- [~] Calls remainders: push-дозвон (polling only), CallKit, video/screen share, call history UI, production SFU/TURN capacity + relay-cost evidence, независимый security review
+- [~] Calls remainders: push-дозвон (polling/signalling only, нет CallKit), видео/screen share (server grant — только микрофон), production SFU/TURN capacity + relay-cost evidence, media-E2EE, независимый security review; iPhone call history/log/overlay и web signalling UI — в PR, ждут CI
 - [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON, 7-day TTL, Range download
 - [x] Account export media binaries (DONE): `media/<attachmentId>/<fileName>` в архиве, per-file SHA-256, size-mismatch → 503 вместо тихой потери
 - [x] Account deletion state machine first slice (036 + retention 037, оба CI PASS): grace 7 дней, cancel, sweep, tombstone-подход, routes + unit/integration тесты, export retention worker
@@ -322,9 +337,11 @@
 
 - [x] Only `Beta-0.1` appears as visible release metadata; only Flenym as owner/developer; repo-wide classified metadata gate passes while excluding internal package/API/platform versions.
 - [ ] All simulated call, E2EE, delivery, presence, download and sync UI is removed or clearly labelled demo/roadmap.
-- [ ] Node/Web/Desktop CI green on PR #83: truth-гейт после `2baac72` ждёт перезапуска; локально-прогоняемый `bash infra/validate-public-metadata.sh` обязан печатать PASS.
-- [ ] Security CI green: `dependency-review` + `filesystem-and-image` (ci-deps); после фиксов перезапустить и зафиксировать evidence.
-- [ ] CodeQL: re-enable или документировать отказ (сейчас не входит в обязательный набор зелёных workflow).
+- [x] Node/Web/Desktop CI green on PR #83: 48 web-тестов включены в workflow, truth-гейт исправлен (`2baac72`); прогон на `4918cfa` — **SUCCESS**. Локально `bash infra/validate-public-metadata.sh` печатает PASS.
+- [~] Security CI green: dependency-фиксы + CodeQL re-enabled (`b8cd224`), затем security-фикс (`ec6846b`); на `ec6846b` dependency-review и job codeql — SUCCESS, `filesystem-and-image` FAILURE («Calls Compose security invariants failed»), обязательный status-check «CodeQL» FAILURE (default setup) — evidence зафиксировать после завершения.
+- [~] Apple Swift CI green: на `4918cfa` FAILURE из-за compile errors community-management (`ApplicationSession.swift`); фикс в работе, зелёный прогон ещё не получен.
+- [x] CodeQL: re-enabled (advanced setup, `javascript-typescript`; причина паузы задокументирована в workflow-комментарии).
+- [x] Browser CORS boundary: preflight всех mutation-методов + exposed headers по exact-allowlist, regression test и live smoke harness (`7867abb`).
 - [x] Root editor/ignore/Make/Compose conventions exist.
 - [x] Node, Apple, Android and security/container CI definitions exist.
 - [x] API ships from a digest-pinned Debian 13 distroless Node 22 runtime as

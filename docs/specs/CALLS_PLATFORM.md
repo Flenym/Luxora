@@ -13,13 +13,17 @@ build codecs, ICE, DTLS, SRTP, congestion control or an SFU from scratch.
 
 This decision does not make calls a product. As recorded on 31 October 2026 the
 repository has call-control records (migrations `038`–`039`), a grant endpoint,
-signed webhook reconciliation, durable `call.state.changed` realtime, an iPhone
-call banner with LiveKit voice and a local LiveKit/coturn/Caddy harness. It still
-has **no** push/CallKit ringing, video or screen-share client media, production
-SFU/TURN capacity evidence, call history UI, media-E2EE or independent call
-security review. `docker-compose.calls.yml` and `start.bat` remain a local
-infrastructure harness, and `GET /v1/capabilities` advertises `features.calls`
-only while the full `CALLS_LIVEKIT_*`/`CALLS_TURN_*` configuration is present.
+signed webhook reconciliation, durable `call.state.changed` realtime, a local
+LiveKit/coturn/Caddy harness, and client previews: iPhone call banner/voice, a
+call surface with recent-calls history, per-chat call log, in-call overlay with
+honest microphone mute and call-back (audio only, capability-gated, awaiting
+Apple CI), plus a web signalling UI and a diagnostic fallback page. It still has
+**no** push/CallKit ringing, video or screen-share client media, production
+SFU/TURN capacity evidence, media-E2EE or independent call security review.
+`docker-compose.calls.yml` and `start.bat` remain a local infrastructure
+harness, and `GET /v1/capabilities` advertises `features.calls` only while the
+full `CALLS_LIVEKIT_*`/`CALLS_TURN_*` configuration is present (otherwise
+`false`, and clients must show a locked/honest state).
 
 ## 2. Trust boundary
 
@@ -219,11 +223,12 @@ be copied to production.
 
 Configuration validation or healthy metrics proves process wiring only. The
 implemented preview (31 October 2026) proves the control plane, grant issuance,
-webhook reconciliation, realtime refresh trigger and a client LiveKit voice join
-against the local harness. A production Luxora call additionally requires push/
-CallKit ringing, video/screen-share clients, real-device quality evidence,
-production SFU/TURN capacity and all gates in §12; until then no surface may
-present a call as protected, E2EE or production-ready.
+webhook reconciliation, realtime refresh trigger, a client LiveKit voice join
+against the local harness, and iPhone/web call surfaces that fall back to a
+locked/honest state whenever `features.calls` is false. A production Luxora call
+additionally requires push/CallKit ringing, video/screen-share clients,
+real-device quality evidence, production SFU/TURN capacity and all gates in §12;
+until then no surface may present a call as protected, E2EE or production-ready.
 
 ## 14. Primary references
 

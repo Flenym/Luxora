@@ -74,7 +74,7 @@ jq --exit-status '
   .services.sfu as $sfu
   | .services.turn as $turn
   | ($sfu.image == "livekit/livekit-server:v1.13.5@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1")
-    and ($turn.image == "coturn/coturn:4.16.0-alpine3.24@sha256:901954a6b057079e1b12b2e4b4de06e3419e503336ba76c18f62debca3ac4b42")
+    and ($turn.image == "coturn/coturn:edge-alpine@sha256:fe2423b3c9b0a8d919c89908e254ea93aaf028e98d3e34f31bc940e9f0ed58f2")
     and ($sfu.read_only == true)
     and ($turn.read_only == true)
     and ($sfu.cap_drop == ["ALL"])

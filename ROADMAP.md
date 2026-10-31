@@ -17,12 +17,13 @@ The repository currently contains a complete local Phase-1 text foundation and
 tested partial foundations from later phases: rich media/storage/search, IA-1
 relationships/safety, account export/deletion, QR device-linking, security
 containment, an API-integrated calls preview (signaling, grants, signed webhook,
-durable `call.state.changed`, loopback LiveKit/coturn harness, iPhone call UI +
-voice client slice) and a static public product site. This is still not a
-complete server, and a later-phase foundation does not pass that phase's
-production gate. Client foundations do not move server phases forward unless
-they produce server-contract evidence. Truth/security/build fixes remain allowed
-everywhere.
+durable `call.state.changed`, loopback LiveKit/coturn harness, iPhone call
+surface with history/log/voice and a web signalling UI), a completed static
+public product site and a developer-preview web messenger client at `/app`.
+This is still not a complete server, and a later-phase foundation does not pass
+that phase's production gate. Client foundations do not move server phases
+forward unless they produce server-contract evidence. Truth/security/build
+fixes remain allowed everywhere.
 
 ## Phase 1 — text vertical slice
 
@@ -107,9 +108,11 @@ Priority: **server program, independently gated**. Status as recorded on
 call-control domain is API-integrated with signaling slices, short-lived
 LiveKit/coturn grants behind a configuration gate, a signed webhook,
 membership-reconcile and stale-reconnect sweepers, durable `call.state.changed`,
-an iPhone call banner with LiveKit voice and a web fallback page. Still open:
-push/CallKit ringing, video/screen-share clients, production SFU/TURN capacity
-and relay-cost evidence, real-device network labs and independent review.
+an iPhone call surface (banner, recent-calls history, per-chat log, in-call
+overlay with honest mute — audio only, awaiting Apple CI) and a web signalling
+UI plus fallback page. Still open: push/CallKit ringing, video/screen-share
+clients, production SFU/TURN capacity and relay-cost evidence, real-device
+network labs and independent review.
 
 Canonical design and the truth boundary: [docs/specs/CALLS_PLATFORM.md](docs/specs/CALLS_PLATFORM.md).
 
@@ -184,7 +187,7 @@ Only stable server + full iPhone unfreeze this phase.
 
 1. iPad and macOS may reuse proven Swift domain/network/storage while keeping native UX.
 2. Android replaces demo state with the same protocol/offline conformance corpus.
-3. Web: a static public site already ships in the current branch; the authenticated web client is in development and must adopt a reviewed browser session/cache model before it may be called available.
+3. Web: the public site and a developer-preview `/app` messenger client already exist in the current branch; the client must adopt reviewed hosting headers/CSP, a final refresh-token storage policy and CI E2E before it may be called available.
 4. Windows/Linux use a reviewed signed shell/updater and OS credential vault.
 5. Public site keeps publishing only evidence-backed availability, security and download claims; it is never the place to announce an unfinished client as shipped.
 

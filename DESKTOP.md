@@ -2,7 +2,7 @@
 
 **Релиз:** Beta-0.1  
 **Владелец и разработчик:** Flenym  
-**Status:** macOS SwiftUI and Electron portability foundations; no full desktop client. The Electron shell loads the Web build — currently the public product site plus the in-development web messenger client
+**Status:** macOS SwiftUI and Electron portability foundations; no full desktop client. The Electron shell loads the Web build — currently the public product site plus the developer-preview web messenger client at `/app`
 
 ## 1. Sequencing
 
@@ -42,8 +42,9 @@ After unfreeze, macOS should use the proven Swift server/iPhone domain/sync/stor
 Renderer source selection (read from `src/main.ts`): a loopback-only
 `LUXORA_WEB_URL` in development, the packaged `resources/web/index.html`, and
 otherwise `apps/web/dist/index.html` next to the compiled shell. Today that
-renderer is the public product site plus the in-development web messenger
-client; loading the page does not make the desktop app a connected messenger.
+renderer is the public product site plus the developer-preview `/app` web
+messenger client; loading the page does not make the desktop app a connected
+messenger.
 
 This is useful shell hardening, not proof that the renderer is a real messenger.
 
