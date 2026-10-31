@@ -414,7 +414,11 @@ public struct LuxoraPhoneAuthenticationScreen: View {
 
             Text("Luxora не имитирует отправку SMS или вход без ответа сервера.")
                 .font(.caption)
-                .foregroundStyle(Color.white.opacity(0.58))
+                // Keep the caption visually secondary but genuinely readable on
+                // the black auth surface: the previous 0.58 white failed the
+                // runtime contrast audit once the field auto-focused the
+                // keyboard over it.
+                .foregroundStyle(Color.white.opacity(0.78))
                 .multilineTextAlignment(.center)
                 .padding(.top, 12)
         }

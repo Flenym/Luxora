@@ -141,8 +141,14 @@ jobs:
         working-directory: apps/apple
         run: |
           # Diagnostic only: the booted simulator UDID below is the real
-          # destination. Keep this step from masking the actual test result.
-          xcodebuild -project Luxora.xcodeproj -scheme LuxoraMobile -showdestinations || true
+          # destination. Share the test build's derived-data path so package
+          # resolution/caches are reused by the test build instead of resolved
+          # twice (this step alone took ~3 minutes before).
+          xcodebuild \
+            -project Luxora.xcodeproj \
+            -scheme LuxoraMobile \
+            -derivedDataPath "$RUNNER_TEMP/LuxoraUITestDerivedData" \
+            -showdestinations || true
       - name: Run bounded UI-test subset (unsigned, Simulator)
         working-directory: apps/apple
         run: |

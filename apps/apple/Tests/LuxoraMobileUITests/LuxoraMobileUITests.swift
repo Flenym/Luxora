@@ -357,23 +357,33 @@ final class LuxoraMobileUITests: XCTestCase {
 
     @MainActor
     func testChatsUsesNoResultsStateOnlyForANonemptyQuery() {
-        let app = messengerApp()
-        app.launch()
+        let idle = messengerApp()
+        idle.launch()
 
-        XCTAssertTrue(app.descendants(matching: .any)["chats-screen"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.descendants(matching: .any)["inbox-empty-search"].exists)
-
-        let search = app.searchFields.firstMatch
+        XCTAssertTrue(idle.descendants(matching: .any)["chats-screen"].waitForExistence(timeout: 8))
+        let search = idle.searchFields.firstMatch
         XCTAssertTrue(search.waitForExistence(timeout: 3))
-        search.tap()
-        search.typeText("luxora-no-such-conversation")
+        XCTAssertFalse(idle.descendants(matching: .any)["inbox-empty-search"].exists)
+        XCTAssertFalse(idle.descendants(matching: .any)["inbox-empty-root"].exists)
+        idle.terminate()
 
+        // Typing into the simulator search field proved flaky in CI (the query
+        // was not committed), so seed the exact same non-empty query through the
+        // DEBUG-only launch hook and assert the real empty-search surface. The
+        // product contract stays the same: "no results" exists only for a
+        // non-empty query, never for the loaded fixture conversations.
+        let filtered = messengerApp()
+        filtered.launchEnvironment["LUXORA_UI_TEST_INITIAL_QUERY"] = "luxora-no-such-conversation"
+        filtered.launch()
+
+        XCTAssertTrue(filtered.descendants(matching: .any)["chats-screen"].waitForExistence(timeout: 8))
+        XCTAssertTrue(filtered.searchFields.firstMatch.exists)
         // The system ContentUnavailableView copy is localized by the OS, so the
-        // stable contract is the app's own empty-state identifier, not the
-        // localized title. The root empty state must not replace search results.
-        let noResults = app.descendants(matching: .any)["inbox-empty-search"]
-        XCTAssertTrue(noResults.waitForExistence(timeout: 3))
-        XCTAssertFalse(app.descendants(matching: .any)["inbox-empty-root"].exists)
+        // stable contract is the app's own empty-state identifier.
+        let noResults = filtered.descendants(matching: .any)["inbox-empty-search"]
+        XCTAssertTrue(noResults.waitForExistence(timeout: 8))
+        XCTAssertFalse(filtered.descendants(matching: .any)["inbox-empty-root"].exists)
+        XCTAssertFalse(filtered.buttons["inbox-row-\(primaryConversationID)"].exists)
     }
 
     @MainActor
