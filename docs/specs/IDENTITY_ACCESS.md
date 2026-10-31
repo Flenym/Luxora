@@ -68,7 +68,7 @@
 - Exact/contextual discovery and abuse-sensitive request/block/report mutations supplement route network limits with bounded in-process account and authenticated device-session fixed-window buckets. A session ID is not verified device identity; replica-shared anomaly/risk control remains absent.
 - Message-request and safety-report nonce checks acquire an SQLite immediate writer reservation and recheck the operation fingerprint before side effects. Independent-connection races return the first canonical resource for an identical fingerprint and `CONFLICT` for changed reuse.
 - Ordinary API request logs contain method and query-free path only; completion retains request ID, status and duration. A local canary covers query/password/token/content exclusion, not the ingress/DB/trace/crash pipeline.
-- First-request media, link fetching/preview, staff moderation case workflow, contact upload and calls remain absent.
+- First-request media, link fetching/preview, staff moderation case workflow and contact upload remain absent. Calls exist only as a configuration-gated preview (signaling/grants/webhook/realtime call state); no push/CallKit ringing, video or screen share, and no production call capacity or audited media encryption is claimed.
 
 ### 3.4. CURRENT gated passkey and lifecycle seams
 

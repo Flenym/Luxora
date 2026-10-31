@@ -13,16 +13,19 @@ Hard delivery sequence:
 `complete server platform → complete iPhone → iPad/macOS/Android/Web/Windows/Linux/public site`
 
 The current backend is a runnable local foundation: text/realtime, partial rich
-media/storage/search, IA-1 requests/relationships/blocks/reports, plus isolated
-call-control and loopback SFU/TURN probes. It is not a complete server platform.
-Completion still requires devices/passkeys/recovery, the full
-conversation/community and media-processing model, push and synchronized
-notification state, API-integrated call signaling/media operations, gated key
-management/E2EE, moderation/jobs, production storage, backups, monitoring and
-DR. A thin iPhone integration harness may verify real contracts during this
-phase, but full iPhone product work waits for server stability. All other
-client/public-site feature expansion is frozen; their existing code is a
-portability/design probe.
+media/storage/search, IA-1 requests/relationships/blocks/reports, account
+export/deletion, QR device-linking, security containment, and an API-integrated
+calls preview (signaling, grants, signed webhook reconciliation, durable
+`call.state.changed`) over a loopback LiveKit/coturn harness. It is not a
+complete server platform. Completion still requires production push and APNs
+delivery, production call capacity/review, the full conversation/community and
+media-processing model, gated key management/E2EE, moderation/jobs, production
+storage, backups, monitoring and DR. A thin iPhone integration harness may
+verify real contracts during this phase, and it now carries a call banner with
+LiveKit voice; full iPhone product work still waits for server stability. The
+public product site is a static, truthful surface shipped ahead of the client
+work; the web messenger client is in development. All other client feature
+expansion remains frozen; their existing code is a portability/design probe.
 
 ## 2. Current runtime topology
 
@@ -68,6 +71,10 @@ Unknown mutation fields are rejected. Message length is counted in Unicode code 
 - `http/routes.ts` parses untrusted input at the boundary and attaches auth guards.
 - `AuthService` owns register/login/refresh/session behavior.
 - `ChatService` owns membership checks and message mutations.
+- `CallService` owns call lifecycle over the audited `@luxora/call-control`
+  executor; it issues LiveKit/coturn join grants only while the optional media
+  plane is configured and confirms media facts through the signed LiveKit
+  webhook (the media plane itself is external to this process).
 - `TokenSecurity` owns JWT and refresh-token primitives.
 - `RealtimeHub` owns live connections but durable history remains in `Store`.
 
@@ -88,6 +95,10 @@ When configured, AES-256-GCM protects only message bodies and serialized durable
 5. Up to 500 missed events replay. Overflow returns `sync.required` and requires HTTP reconciliation.
 6. Heartbeats, stale-connection cleanup and buffer caps bound resource use.
 7. Typing and presence are ephemeral; message mutations/read/reaction events are durable.
+8. Call control emits a durable `call.state.changed` (identifiers + state only, no
+   media/SDP/ICE/TURN/grant material) in the same transaction as the call
+   mutation and its outbox row; clients treat it as a refresh trigger and re-read
+   the call over authorized REST.
 
 The global SQLite sequence may contain gaps for a given user. Clients track the last received server cursor for their authorized stream and reconcile when instructed; they never assume numeric adjacency implies authorization.
 
@@ -95,10 +106,10 @@ The global SQLite sequence may contain gaps for a given user. Clients track the 
 
 | Client | Current data source | Current role | Network status |
 | --- | --- | --- | --- |
-| iPhone/iPad/macOS SwiftUI | local preview or `ApplicationSession` + in-memory `MessengerStore` | Design foundation and thin server integration harness | Partial: auth/chat load/send/message realtime |
+| iPhone/iPad/macOS SwiftUI | local preview or `ApplicationSession` + in-memory `MessengerStore` + `CallsStore` | Design foundation and thin server integration harness; call banner and LiveKit voice when the media plane is configured | Partial: auth/chat load/send/message realtime/call signaling+voice |
 | Android Compose | `MessengerState.demo()` | Portability/layout foundation | Not connected |
-| Web React | Static arrays + component state | Landing and interaction prototype | Not connected |
-| Electron Windows/Linux | Packaged Web build | Hardened shell/packaging probe | No messaging integration |
+| Web React | static public-site content; web client in development | Public product site; in-development messenger client consumes the committed `apps/web/src/app/contract.ts` seam | Public site: no network; client: in progress |
+| Electron Windows/Linux | Packaged Web build (`apps/web/dist`) | Hardened shell/packaging probe | No messaging integration |
 
 During the server phase, a thin iPhone integration harness establishes and continuously verifies the canonical client boundaries:
 
@@ -161,7 +172,9 @@ Server-readable spaces support moderation and search with explicit pre-join disc
 - Directs, groups, channels, topics/comments, roles/permissions and all message actions.
 - Object storage, chunked/resumable media/files, voice/video notes and processing boundaries.
 - Search, push, presence/receipts, jobs, retention and abuse/moderation.
-- Call signaling plus SFU/TURN/screen-share lifecycle and capacity evidence.
+- Call signaling is implemented as a preview (control plane, grants, webhook,
+  durable realtime); remaining: push/CallKit ringing, production SFU/TURN
+  capacity, screen-share lifecycle and independent review.
 - Gated per-device key management/E2EE, transparency, backup and independent audit.
 - Production storage, queues, monitoring, backups, restore, DR and operational access.
 - Thin iPhone harness for contract/offline/interoperability evidence only.
@@ -195,9 +208,12 @@ Scale claims require representative load tests, failure tests, RPO/RTO game days
 
 The call-control, grant, SFU/TURN and media-security contract is specified
 separately in [docs/specs/CALLS_PLATFORM.md](docs/specs/CALLS_PLATFORM.md).
-`packages/call-control` is an isolated audited reducer/persistence/grant
-foundation and the local containers are an infrastructure probe; neither is an
-available calling feature or an API integration.
+`packages/call-control` is an audited reducer/persistence/grant domain; the API
+integrates it for the preview (signaling, join grants, signed webhook,
+`call.state.changed`), and the local LiveKit/coturn/Caddy containers are a
+loopback harness. This is not production calling: no push/CallKit ringing, no
+video/screen-share client media, no capacity evidence and no independent media
+security review yet.
 
 ## 9. Architecture decision rules
 

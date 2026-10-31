@@ -8,7 +8,7 @@
 
 Luxora optimizes for risk coverage and reproducible evidence, not a decorative coverage percentage. Messaging correctness requires adversarial retries, ordering, authorization, offline and partial failure—not only happy-path snapshots.
 
-Current tests prove the runnable messaging/media foundation, IA-1 identity boundary, provider-gated phone-authentication slice and local client-state behavior. They do not prove the full server platform, real SMS delivery, E2EE, complete calls, push, production scale, accessibility or cross-platform availability.
+Current tests prove the runnable messaging/media foundation, IA-1 identity boundary, provider-gated phone-authentication slice, calls preview (signaling, grants, webhook, realtime call state, iPhone LiveKit voice) and local client-state behavior. They do not prove the full server platform, real SMS delivery, E2EE, production calls/push, production scale, accessibility or cross-platform availability.
 
 ## 2. Existing automated tests
 
@@ -356,7 +356,7 @@ Calls: simultaneous answer/decline, multi-device ring, host leave, roster epoch,
 
 Media: multipart interruption/process kill, byte-range/resume, object authorization/cache keys, MIME/magic/polyglot/zip bomb/parser corpus, Moderated quarantine fail-closed, EXIF stripping, encrypted derivative isolation, quotas and abandoned-upload GC.
 
-The current media/storage slice is runnable and adversarially tested, including a disposable live S3-compatible provider gate, but it deliberately stops before malware quarantine/transcoding, verified metadata extraction and live production-cloud object-store controls. Calls have an isolated tested call-control/grant model plus a loopback LiveKit/coturn harness; signaling endpoints, signed grants, client media sessions and production capacity evidence are not integrated yet.
+The current media/storage slice is runnable and adversarially tested, including a disposable live S3-compatible provider gate, but it deliberately stops before malware quarantine/transcoding, verified metadata extraction and live production-cloud object-store controls. Calls are now an API-integrated preview: call-control endpoints, signed grants behind the configured media plane, a signed LiveKit webhook, durable `call.state.changed` and an iPhone LiveKit voice/media session are covered by tests, while push ringing, real-device network labs, SFU/TURN capacity, video/screen-share and independent media-security evidence remain open gates (31 October 2026).
 
 ## 10. Client testing after unfreeze
 

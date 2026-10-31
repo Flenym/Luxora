@@ -2,7 +2,45 @@
 
 **Релиз:** Beta-0.1  
 **Владелец и разработчик:** Flenym  
-**Обновлено:** 15 августа 2026
+**Обновлено:** 31 октября 2026
+
+> **Текущий checkpoint 2026-10-31 (ветка `feature/ios-calls-signaling`, PR #83, 13 коммитов к `main`):**
+> серверный calls signaling 1–7 + durable realtime `call.state.changed`; `features.calls` в capabilities
+> только при полном `CALLS_*`-медиаплане; iOS calls signaling + `CallsStore`, Call UI (banner,
+> accept/decline/hangup, старт аудиозвонка) и LiveKit voice; `CallMediaSession`; медиастек
+> `start.bat`/LiveKit/coturn/Caddy/CloudPub; web call fallback `apps/call-web/index.html`;
+> публичный продуктовый сайт `apps/web` (React Router, docs-портал, RU/EN, Three.js hero);
+> CI-фиксы (distroless digest pins, patched npm lock entries, truth-gate scoping).
+> **Evidence (CI 2026-10-31, коммит `a801cb3`):** protocol 17/104, passkey-domain 70,
+> call-control 23, API 101/743, Web build + desktop typecheck PASS; Apple Swift 396 XCTest
+> (6 expected skips, 0 failures) + 20 Swift Testing + unsigned iOS compile PASS.
+> **CI-статус:** Apple Swift зелёный; Node/Web/Desktop — зелёный до `make check-truth`, фикс
+> `2baac72` ждёт перезапуска; Security (`dependency-review`, `filesystem-and-image`) красный —
+> задача `ci-deps`. `main` (`cc6fce7`, 2026-09-20): Node зелёный, Apple Swift/IPA красные,
+> Security (schedule) красный с 2026-10-12.
+>
+> **Текущая рабочая очередь (31 октября 2026; приоритет — iPhone):**
+> 1. **iPhone in-progress слайсы (не считать готовыми до Apple CI green + подтверждения Lead):**
+>    calls product surface (ios-calls — history/per-chat log/in-call mute-speaker; video
+>    locked), community management UI (ios-community — API client/models есть, UI нет),
+>    safety reports + account data UI (ios-safety — server/protocol есть, iPhone client/UI нет).
+> 2. **Web messenger completion** — `apps/web/src/app` (api/realtime/store/ui) до feature-complete,
+>    живой browser-прогон, тесты в CI; затем Phase B docs (WEB.md/README/PROJECT_STATE/TODO/
+>    NEXT_SESSION/CHANGELOG) с точным списком фич и gaps.
+> 3. **CI security green** — dependency-review + filesystem/image (ci-deps), затем перезапуск
+>    Node/Web/Desktop (truth-гейт после `2baac72`).
+> 4. **CodeQL re-enabled** — вернуть или документировать отказ после dependency-фиксов.
+> 5. **Public site QA** — mojibake `—` в `apps/web/index.html`, truth/SEO/a11y/responsive,
+>    честные `/download` и `/status`, hosting headers.
+> 6. **Desktop shell wiring** — связать Electron shell с готовым web-клиентом (CSP, навигация,
+>    permissions, меню New Message/Search).
+> 7. **iPhone technical remainders** — durable outbox/cache, pagination, attachment/file
+>    download-share, video playback, push/CallKit (внешние гейты), real-device media/QoS.
+>
+> Ниже сохранён исторический лог слайсов; он описывает состояние на момент записи и не является
+> текущим статусом.
+
+## History log (датированные записи, не текущий статус)
 
 > **Checkpoint 2026-09-13 (`b41448e`, main зелёный — все 4 CI workflow PASS):**
 > protocol 15 файлов / 99 тестов PASS, API 77 файлов / 640 тестов PASS
@@ -200,7 +238,7 @@
 > `GET /v1/calls?chatId=` → `{calls: CallResponse[]}` (`updated_at` DESC, max 50, включая ended для missed-call истории); стор `listCallsForChat` + `CallListQuerySchema`/`CallListResponseSchema`, без миграции; неизвестные чаты и не-участники — один `404` без oracle, без `chatId` → `400`.
 > Тесты локально: `calls-signaling` 9/9 (новый list-тест), API typecheck clean, protocol typecheck+build clean; полный API 101 файл / 740 тестов PASS; матрица 118→119.
 
-> **Дополнение 2026-10-10 (web realtime + звонки-сигнализация, локально зелёный, uncommitted):**
+> **Дополнение 2026-10-10 (web realtime + звонки-сигнализация; ИСТОРИЧЕСКАЯ ЗАПИСЬ, НЕ ТЕКУЩИЙ СТАТУС):** эта работа велась на другой ветке/в uncommitted-виде и **не вошла** в текущую ветку: `a801cb3` заменил web-приложение публичным продуктовым сайтом, а веб-клиент мессенджера строится заново в `apps/web/src/app` (см. текущий checkpoint выше). Ниже — как это было проверено на тот момент; файлов `apps/web/src/api.ts`/`realtime.ts`/`media.ts` в ветке нет.
 > web (`apps/web`) подключён к реальному API: `api.ts` (REST), `realtime.ts` (WebSocket v1, `authenticate`, heartbeat, переподключение с паузой, reload после ready), экран входа, список чатов/история/отправка через сервер, демо как опция. Проверено на живом API: отправка → `dispatch message.created` у второго пользователя (sequence 21).
 > Сервер: `call.state.changed` (protocol `CallStateChangedRealtimeEventSchema`) пишется в `commitCallMutation` в одной транзакции со снимком и outbox (`appendEvent` каждому не удалённому участнику); `calls:false` сохранён (нет LiveKit/TURN). Проверено: цикл created→inviting→ringing→connecting→ending→ended доходит до получателя. Тесты: `calls-signaling` 10/10 (новый: доставка участнику, посторонний не получает, нет медиа-материала), матрица realtime 6/6 (событие добавлено в `DURABLE_EVENT_BOUNDARIES`, 26). Полный API 101/741 PASS, protocol 104/104, web typecheck+build PASS.
 > Web звонки: входящий баннер (принять/отклонить), активный баннер (завершить), старт аудиозвонка из шапки; видеозвонок отключён до медиасервера.
@@ -210,41 +248,57 @@
 > **iPhone (приоритет, Swift не собирается на Windows — проверка только в Apple CI):** добавлены сигнальный слой звонков: `LuxoraCallsAPIClient.swift` (create/ring/accept/decline/hangup/join-grant, безопасные ошибки без тел ответа), `LuxoraCallRealtimeDecoder.swift` (`call.state.changed` в V2, строгая проверка полей, без media-полей), ветка `callState` в `ApplicationSession` (ack курсора, без UI-эффектов), `CallsStore.swift` (состояние activeCall/incomingCall, правило «кто входящий»), тесты `CallsStoreTests.swift`. Видимый UI звонков НЕ подключён: гейт `features.calls` сервера остаётся закрытым (`calls:false`). Не сделано: LiveKit iOS SDK (голос), CallKit, экран звонка, решение о `calls:true`.
 > **Не сделано (web):** web публикует микрофон через livekit-client (`apps/web/src/media.ts`), но голос не проверен в браузере.
 
-## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
+> **Дополнение 2026-10-31 (ветка `feature/ios-calls-signaling`, PR #83; DONE/закоммичено):**
+> `d04e904` iOS calls signaling layer + `call.state.changed` в V2 (сервер: protocol-схема, декодер, API-клиент, store; тесты); `4e41939` iOS Call UI + LiveKit voice (`CallsStore` перечитывает звонок по `call.state.changed`, `CallMediaSession` публикует микрофон через LiveKit SDK, `CallBanner` accept/decline/hangup + честный media-текст); `f61b5e5` `features.calls` в capabilities = полный `CALLS_*`-медиаплан (иначе `false`); `54e2ace`+`828f32b` `start.bat` → `scripts/start-all.ps1`: LiveKit/coturn/Caddy TLS + CloudPub publish; `479dd53` web fallback `apps/call-web/index.html` (polling REST + LiveKit из CDN); `a801cb3` публичный сайт `apps/web` (React Router, docs-портал, RU/EN, Three.js hero) + web test tooling + контракт будущего клиента; `2baac72` CI truth-gate scoped. Evidence — см. текущий checkpoint вверху.
+> Осталось: веб-клиент мессенджера (`apps/web/src/app`), Security CI, CodeQL, public site QA, desktop wiring, iPhone remainders, push-дозвон/CallKit/video/production media.
+
+## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, обновлено 2026-10-31)
 
 `- [ ]` не сделано · `- [~]` в процессе · `- [x]` сделано. Статус — в
 `PROJECT_STATE.md`, точка продолжения — в `NEXT_SESSION.md`.
 
 ### CRITICAL
 
-- [x] Зелёный main после 030/031/032 (Node, Apple Swift, Apple IPA, Security)
-- [x] Truth-аудит 2026-09-13: фейковых E2EE/call/presence/download/sync UI нет — везде FeatureGate с честными копи («не использует E2EE», «не создаёт фиктивную историю», locked-кнопки)
+- [~] Зелёный CI на ветке PR #83: Apple Swift — зелёный; Node/Web/Desktop — фикс truth-гейта `2baac72` ждёт перезапуска; Security (`dependency-review`, `filesystem-and-image`) — красный, чинит `ci-deps`. `main` (`cc6fce7`): Node зелёный, Apple Swift/IPA красные на этом коммите, Security (schedule) красный с 2026-10-12
+- [x] Truth-аудит: фейковых E2EE/call/presence/download/sync UI нет — gates/locked-кнопки; публичный сайт помечает planned-функции
 - [ ] Полный локальный suite + CI перед каждым пушем (без исключений)
+- [ ] CodeQL re-enabled (после dependency-фиксов решить: вернуть или документировать отказ)
 
 ### HIGH
 
 - [x] Invite-ссылки 032 (create/list/revoke/join + thin iPhone adapter)
 - [x] Join-request approval flow (033): ссылки с `approval_required`, очередь заявок, approve/deny, realtime-события
 - [x] Ownership transfer ceremony (034): двухшаговый initiate/accept с revision-защитой, ceremony-aware триггер, Swift adapter
-- [x] Topics/threads iPhone management slice: ChatTopic-модель, client CRUD, topicId в send/messages/history-mapping, ChatTopicsStore + UI в профиле сообщества, contract/store tests. Композер-пикер и фильтр истории — следующий шаг
+- [x] Topics/threads iPhone management slice: ChatTopic-модель, client CRUD, topicId в send/messages/history-mapping, ChatTopicsStore + UI в профиле сообщества, contract/store tests
 - [x] Topics composer + фильтр: topicID сквозь send-фаннел (text/media/durable/retry), chips + индикатор композера, visibleMessages-фильтр
 - [x] Voice consent-kind gate: send-time `400` без voice/audio, audio parity, client transcribe guards + time-bomb фикс expiry-теста
 - [x] Voice playback round-trip: multi-chunk upload out-of-order, receiver Range-стриминг `206`, байт-точное скачивание, transcript-конвергенция, stranger `404`
 - [x] Search pagination convergence: messages global+scoped, known-users, files (без потерь/дублей, garbage cursor `400`)
-- [ ] Topics/threads: iPhone routing/composer/history/realtime поверх существующего contract foundation
-- [ ] Voice остаток: poor-network/process-death доказательства именно для voice-цепочки (generic resume покрыт); real-device gates
+- [x] Calls preview: серверный signaling 1–7 + durable `call.state.changed`; iOS `CallsStore`/`CallBanner`/LiveKit voice; capabilities-гейт по медиаплану; web fallback `apps/call-web` — всё закоммичено в PR #83 (Evidence: CI 2026-10-31)
+- [x] iPhone attachments: composer media strip, photo picker (≤10 изображений), file importer, upload→send с attachmentIds, image-бабл, viewer с зумом, file-row; voice — отдельный recorder/player (см. ниже)
+- [x] iPhone topics: `ChatTopicsStore`, управление в профиле сообщества, chips выбора в композере, фильтр истории, topicID сквозь send-фаннел
+- [x] iPhone voice: запись (таймер/уровни/отмена/стоп), recording bar, playback с waveform, consent-тумблер и отправка транскрипта
+- [~] **iPhone calls product surface** (в работе, ios-calls): вкладка Calls остаётся locked-заглушкой, нет call history UI и per-chat call log, нет in-call mute/speaker, video остаётся locked (серверный grant выдаёт только микрофон). Не считать готовым до Apple CI green + подтверждения Lead
+- [~] **iPhone community management UI** (в работе, ios-community): API-клиент + модели invite links / join requests / ownership transfer есть, UI отсутствует
+- [~] **iPhone safety reports + account data UI** (в работе, ios-safety): сервер/protocol для report, export (035), deletion (036) есть, iPhone client/UI отсутствует
+- [~] Web messenger client (`apps/web/src/app`): контракт закоммичен (`contract.ts`), api/realtime/store/ui в работе; Phase B docs — после «web client complete» от Lead
+- [ ] Topics/threads: realtime-конвергенция чужих изменений и comments/threads как отдельный домен (routing/composer/history уже подключены)
+- [ ] Voice остаток: poor-network/process-death доказательства именно для voice-цепочки (generic resume покрыт); real-device gates; round video
+- [ ] Attachments остаток: file open/download/share, video picker/playback, upload resume/background evidence, scan/transcode pipeline
+- [ ] Public site QA: mojibake `—` в `apps/web/index.html`, truth/SEO/a11y/responsive, честные `/download` и `/status`, hosting headers
 
 ### MEDIUM
 
 - [x] Image dimensions server-verified (mismatch `400`, measured adopt, AVIF/HEIC остаются client_declared)
-- [ ] Media processing остаток: quarantine/transcode pipeline (thumbnails + duration/waveform на сервере DONE: thumbnails 320px, WAV duration, оба CI PASS)
+- [ ] Media processing остаток: quarantine/transcode pipeline (thumbnails + WAV duration на сервере DONE, CI PASS)
 - [x] Search pagination convergence (messages/people/files); остаток: contacts/address-book policy
-- [ ] Calls честный UI + push-доставка (серверный signaling slices 1–7 DONE, CI PASS: create/get/cancel/hangup, group, ring/accept/decline, invite, join-grant, webhook, reconcile, sweeper; SFU/TURN — по готовности инфры)
-- [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON (profile/settings/sessions/relationships/blocks/chats/messages/media-meta), 7-day TTL, Range download
-- [x] Account export media binaries (DONE): `media/<attachmentId>/<fileName>` в архиве, per-file SHA-256, `listAllOwnedAttachments` через `#mapAttachment`, расхождение размера → 503 вместо тихой потери
-- [x] Account deletion state machine first slice (036 + retention 037, оба CI PASS): state machine `none → scheduled → … → completed|failed_retryable`, grace 7 дней, cancel, sweep, tombstone-подход, routes + unit/integration тесты, export retention worker
+- [~] Calls remainders: push-дозвон (polling only), CallKit, video/screen share, call history UI, production SFU/TURN capacity + relay-cost evidence, независимый security review
+- [x] Account export first slice (035): HTTP `/v1/data-exports` create/status/content, async tar.gz сборка с manifest/SHA-256, NDJSON, 7-day TTL, Range download
+- [x] Account export media binaries (DONE): `media/<attachmentId>/<fileName>` в архиве, per-file SHA-256, size-mismatch → 503 вместо тихой потери
+- [x] Account deletion state machine first slice (036 + retention 037, оба CI PASS): grace 7 дней, cancel, sweep, tombstone-подход, routes + unit/integration тесты, export retention worker
 - [x] QR device linking сервер (slices 1–4 DONE, CI PASS: challenge lifecycle 040, approve/deny+SAS 041, password step-up, redemption+session 042, passkey-ceremony step-up 043) + security event (`session_list_changed`); E2E гранта — решение N/A (§10.3); остаток — device compromise flow, history bootstrap
 - [ ] Privacy-preserving contact discovery/upload
+- [ ] Desktop shell wiring: Electron shell → готовый web-клиент (CSP, навигация, permissions, меню New Message/Search)
 
 ### LOW
 
@@ -268,14 +322,18 @@
 
 - [x] Only `Beta-0.1` appears as visible release metadata; only Flenym as owner/developer; repo-wide classified metadata gate passes while excluding internal package/API/platform versions.
 - [ ] All simulated call, E2EE, delivery, presence, download and sync UI is removed or clearly labelled demo/roadmap.
+- [ ] Node/Web/Desktop CI green on PR #83: truth-гейт после `2baac72` ждёт перезапуска; локально-прогоняемый `bash infra/validate-public-metadata.sh` обязан печатать PASS.
+- [ ] Security CI green: `dependency-review` + `filesystem-and-image` (ci-deps); после фиксов перезапустить и зафиксировать evidence.
+- [ ] CodeQL: re-enable или документировать отказ (сейчас не входит в обязательный набор зелёных workflow).
 - [x] Root editor/ignore/Make/Compose conventions exist.
 - [x] Node, Apple, Android and security/container CI definitions exist.
 - [x] API ships from a digest-pinned Debian 13 distroless Node 22 runtime as
-  UID/GID `65532`, without shell/npm/Corepack. Current local-preview primary is
-  `luxora-api@sha256:f9dbff7ffb5a22d0400fdf9c1a97e379696505f2d5a54c64c787c99c52620e6d`;
-  it is healthy on loopback `127.0.0.1:8080`, hardened and on migration `025`.
-  Trivy 0.73 reports 0 High/Critical vulnerabilities and 0 secrets. This is
-  local evidence; cloud scanning, signing and provenance remain release gates.
+  UID/GID `65532`, without shell/npm/Corepack. The August 2026 local-preview
+  primary `luxora-api@sha256:f9dbff7f…20e6d` was healthy on loopback
+  `127.0.0.1:8080`, on migration `025`; the current branch's migration chain
+  ends at `043_device_link_step_up`, and the current images are pinned by digest
+  in `docker-compose*.yml`. That run was local evidence; cloud scanning, signing
+  and provenance remain release gates.
 - [ ] First clean-checkout runs are PASS and retained as release evidence.
 - [ ] Branch protection and mandatory sensitive-path review are configured.
 - [x] Loopback operator console foundation: token-gated read-only `/v1/admin/status`,

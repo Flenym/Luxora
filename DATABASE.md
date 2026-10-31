@@ -62,6 +62,29 @@ Current migrations:
 | `021_push_registration_preferences` | session-bound encrypted APNs token registrations plus account-scoped notification preferences with hidden previews by default |
 | `022_chat_folders` | account folder-state revision, synchronized rule folders/overrides, hard limits, monotonic revision guards and encrypted immutable command receipts |
 | `023_chat_folder_receipt_retention` | adds the advertised 24-hour expiry boundary and global expiry index to folder-command receipts while preserving databases that already applied `022` |
+| `024_chat_membership_revision_ledger` | append-only membership revision ledger with actor-scoped receipts |
+| `025_synchronized_chat_drafts` | per-account/per-chat synchronized drafts, reply context, CAS/tombstone and encrypted draft events |
+| `026_phone_recovery_and_binding` | phone-password recovery intents (confirmation window, bounded completion) and authenticated legacy-account phone binding |
+| `027_message_transcription_consent` | sender transcription-consent state for voice/audio messages |
+| `028_message_transcript_commands` | receiver-made transcript commands with first-nonce-wins replay receipts |
+| `029_scheduled_messages` | bounded-horizon scheduled text sends, pending list and dispatcher state |
+| `030_privacy_visibility_policies` | account-scoped privacy visibility policies (discoverability, last seen, photo, forwards, voice, calls) |
+| `031_notification_categories` | per-category notification preferences including message-request alerts |
+| `032_chat_invite_links` | bearer invite links with digest-only storage, expiry/max-use bounds and one-time token display |
+| `033_chat_join_request_approval` | join-request queues with approve/deny decisions and realtime fan-out state |
+| `034_chat_ownership_transfer` | two-step ownership-transfer ceremony with revision protection |
+| `035_account_data_exports` | async account export records, manifest/NDJSON categories, TTL and download metadata |
+| `036_account_deletion_state_machine` | account deletion schedule/grace/cancel/sweep state plus `users.deleted_at` tombstone |
+| `037_data_export_retention` | `data_exports.object_deleted_at` retention bookkeeping for expired export objects |
+| `038_call_control_records` | call lifecycle/event/outbox/command and creation receipts for the calls preview |
+| `039_call_room_index` | internal media-room index with snapshot backfill for signed LiveKit webhook reconciliation |
+| `040_device_link_challenges` | QR device-link challenge lifecycle (digest-only secret, expiry, poll counters) |
+| `041_device_link_approval` | device-link approval/denial with approver binding and SAS decision |
+| `042_device_link_redemption` | proof-public-key and redeemed-session columns for single-use QR device-link redemption |
+| `043_device_link_step_up` | passkey-ceremony step-up intents/grants bound to a device-link approval |
+
+Migration inventory re-checked against `services/api/src/infrastructure/migrations.ts`
+on 31 October 2026: the chain ends at `043_device_link_step_up`.
 
 Never edit an applied migration. New changes append a new ID. Before production rolling deploys, adopt expand/backfill/contract compatibility and prove old/new server coexistence.
 

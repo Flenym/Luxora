@@ -91,7 +91,8 @@ Real, tested foundations (not mockups):
 | 🗂 | **Organization** | Chat folders, archive & mute, synchronized drafts, scheduled send, topics foundation, invite links, join-request approval queues |
 | 🛡 | **Safety** | Privacy-filtered discovery, message requests, directed blocks, selected-evidence reports |
 | ⚡ | **Realtime** | Authenticated WebSocket V2 with cursor replay, heartbeat, backpressure, typing & presence |
-| 📦 | **Media staging** | Resumable encrypted upload, authorized storage, byte-range download, quota & orphan handling |
+| 📦 | **Media staging** | Resumable encrypted upload, authorized storage, byte-range download, thumbnails, server-verified WAV duration, quota & orphan handling |
+| 🗄 | **Data dignity** | Account data export (tar.gz + manifest SHA-256) and an account-deletion state machine with a 7-day grace period |
 | 🐳 | **Hardened runtime** | Distroless non-root container, digest-pinned images, Trivy-clean, loopback-first local stack |
 
 ### 🟡 In Development
@@ -101,9 +102,11 @@ Active work — visible in code, not yet shippable as product:
 |  | Area | Direction |
 |---|---|---|
 | 👑 | Ownership transfer | Two-step ceremony with revision protection |
-| 🎙 | Voice messages | End-to-end QA: record → upload → playback → consent-based transcript |
-| 🖼 | Media processing | Server-side thumbnails, waveform / duration extraction, quarantine & transcode pipeline |
+| 🎙 | Voice messages | Client recording/playback/transcript UI and server-side consent/transcript contracts are in; real-device and poor-network QA plus server-verified waveform still open |
+| 🖼 | Media processing | Server-side thumbnails and WAV duration are in; quarantine & transcode pipeline still open |
 | 🔎 | Search completion | Global pagination, contacts policy, permission-first guarantees |
+| 📞 | **Calls (preview)** | Server call control with durable `call.state.changed` realtime, iPhone call banner and LiveKit voice via `CallsStore`, and a web call fallback page. Media only works against a locally configured LiveKit/TURN stack; `GET /v1/capabilities` keeps `features.calls:false` unless that media plane is configured. No push ringing, no CallKit, no production media evidence |
+| 🌐 | **Web** | Public product site (landing, docs, security, download, FAQ, about, blog, status, contact, legal) and a web messenger client that is still under active development in this PR. The public site makes no claim that the client is available |
 
 ### 🔵 Planned
 
@@ -111,7 +114,7 @@ Explicit roadmap phases — **not** working features:
 
 |  | Area | Gate |
 |---|---|---|
-| 📞 | Calls platform | Versioned signaling, SFU / TURN, screen share — only after security review + lab evidence |
+| 📞 | Production calls platform | Push ringing, CallKit, screen share, capacity and relay-cost evidence, independent security review — only after that a call may be shown as working |
 | 🔐 | Private E2EE | Audited 1:1 & group crypto, key transparency, verification UX, independent audit |
 | 🔔 | Real push delivery | APNs / FCM / Web Push credentials, minimized payloads, measured delivery |
 | 📲 | Passkeys for everyone | Public signup / sign-in / management UX after abuse, recovery & interop gates |
@@ -153,12 +156,12 @@ One protocol — native experience everywhere. Strict build order: **server → 
 | Platform | Technology | Status |
 |---|---|---|
 | 🌐 Server / API | Node.js 22 · Fastify · SQLite WAL | 🟢 Runnable foundation — the active focus |
-| 📱 iPhone | Swift 6 · SwiftUI · Keychain | 🟡 Thin integration harness, live contract evidence |
+| 📱 iPhone | Swift 6 · SwiftUI · Keychain · LiveKit SDK | 🟡 Thin integration harness with live contract evidence; call banner and voice behind the media-plane gate |
 | 📲 iPad | Shared Swift foundation | ⚪ Frozen until server + iPhone are stable |
 | 💻 macOS | SwiftUI probe | ⚪ Frozen — portability probe |
 | 🤖 Android | Kotlin · Jetpack Compose | ⚪ Foundation, not API-connected |
-| 🌍 Web | React + Vite | ⚪ Landing + local prototype, not a network client |
-| 🪟💻 Windows / Linux | Hardened Electron shell | ⚪ Packaging probe, no messaging integration |
+| 🌍 Web | React + Vite + React Router | 🟡 Public product site shipped in this PR; web messenger client in development, not yet a shipped client |
+| 🪟💻 Windows / Linux | Hardened Electron shell | ⚪ Packaging probe that loads the web build; no messaging integration |
 
 Details: [CLIENTS.md](CLIENTS.md) · [MOBILE.md](MOBILE.md) · [WEB.md](WEB.md) · [DESKTOP.md](DESKTOP.md)
 
@@ -213,14 +216,14 @@ Nothing here is claimed as done. Each line has a gate, and each gate demands evi
 
 *Runnable local foundation · tested slices · gated later-phase work · not a production service.*
 
-Owner & developer: **Flenym** · CI: Node · Apple Swift · Apple IPA · Security — green on `main`
+Owner & developer: **Flenym** · CI: Node · Apple Swift · Apple IPA · Security — current status and evidence live in [PROJECT_STATE.md](PROJECT_STATE.md)
 
 </div>
 
 - ✅ What works is listed under **Available** above and proven by suites (protocol + API integration tests, Swift contract tests, Simulator journeys).
 - 🚧 What is in progress is listed under **In Development**.
 - 🔵 Everything else is roadmap with explicit gates.
-- ⛔️ Beta-0.1 is **not** E2EE, has **no** working calls, **no** real push delivery, **no** production SMS — and the product says so on every surface.
+- ⛔️ Beta-0.1 is **not** E2EE, has **no** real push delivery and **no** production SMS. Calls exist only as an unreviewed signaling preview with voice against a locally configured LiveKit/TURN media plane; nothing in this build may be presented as a production or audited call feature.
 
 ---
 

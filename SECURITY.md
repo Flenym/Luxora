@@ -8,7 +8,7 @@
 
 > Connections must be protected in transit in shared deployments. Beta-0.1 is **not end-to-end encrypted**: the application processes message plaintext. Optional/required-at-production AES-GCM storage envelopes do not change that trust boundary.
 
-Do not use “only members can read”, “zero knowledge”, “anonymous”, “military-grade”, an unqualified shield/lock, or E2EE/call-security copy for this build. There is no independently audited E2EE or calling implementation.
+Do not use “only members can read”, “zero knowledge”, “anonymous”, “military-grade”, an unqualified shield/lock, or E2EE/call-security copy for this build. There is no independently audited E2EE. Calls have a signaling/grants/LiveKit-voice preview behind configuration, but no independent call-security or media review — WebRTC hop encryption is not Luxora E2EE, and the SFU is inside the media trust boundary.
 
 ## 2. Implemented controls vs missing evidence
 
@@ -87,7 +87,7 @@ Realtime cursor, queue and replay are bound to an authenticated user/session. Cu
 - Desktop: context isolation, sandbox, no Node integration, navigation/external-host allowlist, OS credential vault and signed anti-rollback updater before distribution.
 - All: redact diagnostic bundles, validate deep links, minimize notification plaintext, no secret clipboard convenience.
 
-The Apple thin harness already uses Keychain and real HTTP/WebSocket, but currently stores the access token alongside refresh credentials and has no durable offline database/reconciliation. Android/Web/Desktop remain demo/shell foundations. None yet satisfies the complete connected-client storage/auth/security gate.
+The Apple thin harness already uses Keychain and real HTTP/WebSocket, but currently stores the access token alongside refresh credentials and has no durable offline database/reconciliation. The public web site stores no credentials and makes no API requests; the in-development web messenger client must satisfy the Web requirements above before it may be called available, and its current in-progress API client keeps the access token in `sessionStorage` rather than `localStorage`. The `apps/call-web` fallback page is a diagnostic surface that keeps a bearer token in `sessionStorage`, imports `livekit-client` from a CDN and must not be hosted as a product. Android/Desktop remain demo/shell foundations. None yet satisfies the complete connected-client storage/auth/security gate.
 
 ## 8. Logging and telemetry
 
