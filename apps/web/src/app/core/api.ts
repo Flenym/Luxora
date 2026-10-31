@@ -141,12 +141,35 @@ export function stripTrailingSlashes(value: string): string {
 }
 
 /**
+ * Read the loopback API origin injected by the Electron shell. Only loopback
+ * http(s) origins are honored so a compromised bridge cannot point the client
+ * at an arbitrary remote host; invalid values fall back to same-origin.
+ */
+function desktopApiBaseUrl(): string {
+  try {
+    if (typeof window === "undefined") return "";
+    const value = window.luxoraDesktop?.apiBaseUrl;
+    if (typeof value !== "string" || value.trim().length === 0) return "";
+    const url = new URL(value.trim());
+    const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
+    if (!loopback || (url.protocol !== "http:" && url.protocol !== "https:")) return "";
+    if (url.username !== "" || url.password !== "") return "";
+    return stripTrailingSlashes(url.href);
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Resolve the API base: an explicit option wins, then `VITE_LUXORA_API`
- * (through contract `DEFAULT_API_BASE`), then same-origin `""`.
+ * (through contract `DEFAULT_API_BASE`), then an Electron bridge-provided
+ * loopback origin, then same-origin `""` (browser/Vite proxy).
  */
 export function resolveApiBaseUrl(explicit?: string): string {
   const candidate = explicit ?? DEFAULT_API_BASE ?? "";
-  return stripTrailingSlashes(candidate.trim());
+  const resolved = stripTrailingSlashes(candidate.trim());
+  if (resolved.length > 0) return resolved;
+  return desktopApiBaseUrl();
 }
 
 export function isLuxoraApiError(error: unknown): error is LuxoraApiError {
