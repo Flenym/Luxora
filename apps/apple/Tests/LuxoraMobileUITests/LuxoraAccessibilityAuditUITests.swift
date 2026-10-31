@@ -343,11 +343,6 @@ final class LuxoraAccessibilityAuditUITests: XCTestCase {
 
         var issues: [String] = []
         var quarantinedIssues: [String] = []
-        // Capture one screenshot per audited screen so a potentially
-        // mis-reported contrast issue can be re-measured from the same pixels
-        // the Inspector examined, without taking screenshots inside the audit
-        // handler.
-        let auditScreenshot = XCUIScreen.main.screenshot()
         for auditPass in auditPasses {
             do {
                 try app.performAccessibilityAudit(for: auditPass.type) { issue in
@@ -357,7 +352,7 @@ final class LuxoraAccessibilityAuditUITests: XCTestCase {
                         return true
                     }
                     if auditPass.name == "contrast",
-                       self.isMeasuredContrastFalsePositive(issue, screenshot: auditScreenshot) {
+                       self.isMeasuredContrastFalsePositive(issue) {
                         quarantinedIssues.append("[contrast measured] \(String(describing: issue))")
                         return true
                     }
@@ -436,13 +431,10 @@ final class LuxoraAccessibilityAuditUITests: XCTestCase {
     /// 4.5:1 ratio. This keeps the contrast pass honest: any other low-contrast
     /// element still fails the test.
     @MainActor
-    private func isMeasuredContrastFalsePositive(
-        _ issue: XCUIAccessibilityAuditIssue,
-        screenshot: XCUIScreenshot
-    ) -> Bool {
+    private func isMeasuredContrastFalsePositive(_ issue: XCUIAccessibilityAuditIssue) -> Bool {
         guard let element = issue.element,
               element.label == Self.authFootnoteLabel,
-              let ratio = measuredContrastRatio(for: element, screenshot: screenshot)
+              let ratio = measuredContrastRatio(for: element)
         else { return false }
         print("AUTH_FOOTNOTE_MEASURED_CONTRAST_RATIO \(String(format: "%.2f", ratio))")
         return ratio >= 4.5
@@ -451,12 +443,10 @@ final class LuxoraAccessibilityAuditUITests: XCTestCase {
     /// Computes WCAG contrast of the brightest 10% pixels (text) against the
     /// dominant dark pixels (background) inside the element's rendered frame.
     @MainActor
-    private func measuredContrastRatio(
-        for element: XCUIElement,
-        screenshot: XCUIScreenshot
-    ) -> Double? {
+    private func measuredContrastRatio(for element: XCUIElement) -> Double? {
         let frame = element.frame
         guard frame.width >= 2, frame.height >= 2 else { return nil }
+        let screenshot = XCUIScreen.main.screenshot()
         guard let sourceImage = screenshot.image.cgImage else { return nil }
         let scale = screenshot.image.scale
         let rect = CGRect(
