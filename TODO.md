@@ -200,6 +200,16 @@
 > `GET /v1/calls?chatId=` → `{calls: CallResponse[]}` (`updated_at` DESC, max 50, включая ended для missed-call истории); стор `listCallsForChat` + `CallListQuerySchema`/`CallListResponseSchema`, без миграции; неизвестные чаты и не-участники — один `404` без oracle, без `chatId` → `400`.
 > Тесты локально: `calls-signaling` 9/9 (новый list-тест), API typecheck clean, protocol typecheck+build clean; полный API 101 файл / 740 тестов PASS; матрица 118→119.
 
+> **Дополнение 2026-10-10 (web realtime + звонки-сигнализация, локально зелёный, uncommitted):**
+> web (`apps/web`) подключён к реальному API: `api.ts` (REST), `realtime.ts` (WebSocket v1, `authenticate`, heartbeat, переподключение с паузой, reload после ready), экран входа, список чатов/история/отправка через сервер, демо как опция. Проверено на живом API: отправка → `dispatch message.created` у второго пользователя (sequence 21).
+> Сервер: `call.state.changed` (protocol `CallStateChangedRealtimeEventSchema`) пишется в `commitCallMutation` в одной транзакции со снимком и outbox (`appendEvent` каждому не удалённому участнику); `calls:false` сохранён (нет LiveKit/TURN). Проверено: цикл created→inviting→ringing→connecting→ending→ended доходит до получателя. Тесты: `calls-signaling` 10/10 (новый: доставка участнику, посторонний не получает, нет медиа-материала), матрица realtime 6/6 (событие добавлено в `DURABLE_EVENT_BOUNDARIES`, 26). Полный API 101/741 PASS, protocol 104/104, web typecheck+build PASS.
+> Web звонки: входящий баннер (принять/отклонить), активный баннер (завершить), старт аудиозвонка из шапки; видеозвонок отключён до медиасервера.
+>
+> **Медиа-инфраструктура (локально, Docker):** `docker-compose.calls.yml` поднимает LiveKit SFU, coturn и Caddy (TLS `wss://localhost:7443`, `infra/calls/Caddyfile`). Relay-порты TURN вынесены в `TURN_RELAY_MIN/MAX_PORT` (49160–49200 занят Windows). Сервер: `livekit-room.ts` создаёт комнату LiveKit (`CreateRoom`) перед выдачей join-token, т.к. SFU не делает auto-create. Комната создаётся только после авторизации гранта; при недоступном SFU ответ 503 без токена. Проверено: join-grant выдаёт токен, SFU принимает подключение (`message received`).
+> Тесты: `calls-join-grant` 5/5 (новый: SFU недоступен → 503 без токена), `calls-signaling` 10/10, полный API 101/742 PASS.
+> **iPhone (приоритет, Swift не собирается на Windows — проверка только в Apple CI):** добавлены сигнальный слой звонков: `LuxoraCallsAPIClient.swift` (create/ring/accept/decline/hangup/join-grant, безопасные ошибки без тел ответа), `LuxoraCallRealtimeDecoder.swift` (`call.state.changed` в V2, строгая проверка полей, без media-полей), ветка `callState` в `ApplicationSession` (ack курсора, без UI-эффектов), `CallsStore.swift` (состояние activeCall/incomingCall, правило «кто входящий»), тесты `CallsStoreTests.swift`. Видимый UI звонков НЕ подключён: гейт `features.calls` сервера остаётся закрытым (`calls:false`). Не сделано: LiveKit iOS SDK (голос), CallKit, экран звонка, решение о `calls:true`.
+> **Не сделано (web):** web публикует микрофон через livekit-client (`apps/web/src/media.ts`), но голос не проверен в браузере.
+
 ## Autonomous execution tracker (AUTONOMOUS DEVELOPMENT MODE, 2026-09-13)
 
 `- [ ]` не сделано · `- [~]` в процессе · `- [x]` сделано. Статус — в

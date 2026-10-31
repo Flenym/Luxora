@@ -1,6 +1,6 @@
 # Luxora — PROJECT STATE (autonomous development mode)
 
-**Обновлено:** 2026-09-20 · calls call-list DONE локально (uncommitted); iPhone DeviceLinkStore + client + фиксы (CI PASS все), containment (`bfd1f44`, CI PASS оба); API 101/739 зелёный локально
+**Обновлено:** 2026-10-10 · web подключён к API (сообщения realtime, звонки-сигнализация), серверный `call.state.changed` в realtime (uncommitted); API 101/741 зелёный локально, protocol 17/104, web typecheck+build PASS
 **Владелец:** Flenym · **Релиз:** Beta-0.1 · **Режим:** AUTONOMOUS DEVELOPMENT MODE (не останавливаться, не спрашивать)
 
 ## Текущая архитектура
@@ -21,8 +21,9 @@ Auth (register/login/refresh/sessions, phone OTP + password + recovery + binding
 - **Privacy/blocks UI:** сервер полный; iPhone — список blocked + базовые экраны, полных edit/report flows нет.
 - **Search:** people/messages/files foundations + UI; нет global catalog pagination и offline-индекса.
 - **Realtime multi-device:** V2 outbox + fences работают; полных poor-network/process-death доказательств нет.
-- **Calls:** только изолированный call-control/SFU-TURN domain; signaling и UI отсутствуют.
-- **Web/Desktop/Android:** клиенты существуют, но не являются текущим фокусом; backend универсален.
+- **Calls:** серверная сигнализация работает (create/ring/accept/decline/hangup/invite, realtime `call.state.changed` в одной транзакции с мутацией). Web показывает входящий звонок и управляет состоянием через API. Медиа не подключено: `calls:false` в capabilities, LiveKit/TURN не сконфигурированы, join-grant отдаёт 503. Звонок без медиа честно помечен в UI.
+- **Web:** подключён к API: вход/регистрация, список чатов, история, отправка, realtime-сообщения (проверено на живом сервере), звонки (сигнализация). Демо-режим остался как отдельная опция. Не проверен в браузере вручную.
+- **Desktop/Android:** клиенты существуют, realtime и звонков нет; backend универсален.
 
 ## Что не работает / заблокировано внешними ресурсами
 

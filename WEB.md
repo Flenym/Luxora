@@ -6,7 +6,13 @@
 
 ## 1. What exists
 
-`apps/web` is React + TypeScript + Vite. Route `/` renders a responsive product site; `/app` renders an interactive messenger prototype. It uses the canonical logo, light/dark themes, responsive layouts and extensive synthetic content.
+`apps/web` is React + TypeScript + Vite. The public site has three routes:
+
+- `/` — product landing: hero with a Three.js 3D phone, feature cards, privacy/delivery explanation, CTA;
+- `/docs` and `/docs/:slug` — product documentation (intro, quick start, privacy, features, delivery states, roadmap, security, developers, FAQ), content in `src/docs.ts`;
+- the former `/app` messenger demo has been removed.
+
+Visual style is Telegram-like: dark blue surfaces, blue accent, rounded cards, `prefers-color-scheme` light theme, reduced-motion support. All statements mirror README and ROADMAP; planned features are labelled as not working.
 
 Implemented in local component state:
 
@@ -48,7 +54,11 @@ Output is `apps/web/dist` and is ignored. Building assets does not create a secu
 
 ## 4. Current structure
 
-- `src/App.tsx` — landing, messenger and local state/components.
+- `src/App.tsx` — router, landing and docs layout;
+- `src/Hero3D.tsx` — Three.js scene (phone model, orbiting particles, canvas-drawn chat screen);
+- `src/docs.ts` — documentation content;
+- `src/styles.css` — theme variables, layout, responsive and motion styles.
+- (old notes below, kept for reference) — landing, messenger and local state/components.
 - `src/styles.css` — semantic variables, glass/brand/layout/responsive/motion styles.
 - `src/main.tsx` — React boot.
 - `public/logo.png` — derived canonical brand asset.

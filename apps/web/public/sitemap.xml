@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemap.org/schemas/sitemap/0.9">
+  <url><loc>https://luxora.example/</loc></url>
+  <url><loc>https://luxora.example/download</loc></url>
+  <url><loc>https://luxora.example/security</loc></url>
+  <url><loc>https://luxora.example/docs/introduction</loc></url>
+  <url><loc>https://luxora.example/faq</loc></url>
+  <url><loc>https://luxora.example/about</loc></url>
+  <url><loc>https://luxora.example/blog</loc></url>
+  <url><loc>https://luxora.example/status</loc></url>
+  <url><loc>https://luxora.example/contact</loc></url>
+  <url><loc>https://luxora.example/privacy</loc></url>
+  <url><loc>https://luxora.example/terms</loc></url>
+</urlset>
