@@ -107,8 +107,8 @@ final class CommunityManagementStoreTests: XCTestCase {
         let maxUsesValues = await probe.maxUsesValues
         let nonces = await probe.nonces
         XCTAssertEqual(approvalFlags.first, true)
-        XCTAssertEqual(expirySeconds.first, 86_400)
-        XCTAssertEqual(maxUsesValues.first, 25)
+        XCTAssertEqual(expirySeconds.first, Optional(86_400))
+        XCTAssertEqual(maxUsesValues.first, Optional(25))
         XCTAssertEqual(nonces.count, 1)
 
         store.markCreatedInviteCopied()
@@ -406,7 +406,12 @@ final class CommunityManagementStoreTests: XCTestCase {
         await successorStore.loadPendingOwnershipTransfer(chatID: chatID)
         XCTAssertTrue(successorStore.isSuccessor(chatID: chatID))
         XCTAssertTrue(successorStore.canViewOwnershipTransfer(chatID: chatID))
-        XCTAssertFalse(successorStore.isPendingTransferExpired(chatID: chatID))
+        XCTAssertFalse(
+            successorStore.isPendingTransferExpired(
+                chatID: chatID,
+                now: joinedDate.addingTimeInterval(3_600)
+            )
+        )
 
         let accepted = await successorStore.acceptOwnershipTransfer(chatID: chatID)
         XCTAssertTrue(accepted)
@@ -567,7 +572,7 @@ final class CommunityManagementStoreTests: XCTestCase {
     private var updatedDate: Date { Date(timeIntervalSince1970: 1_786_438_800) }
 
     private func token(seed: Character) -> String {
-        String(repeating: String(seed), count: 43)
+        String(Array(repeating: seed, count: 43))
     }
 
     private func makeManagementStore(

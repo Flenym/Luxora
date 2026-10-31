@@ -88,6 +88,7 @@ jq --exit-status '
     and all($turn.ports[]; .host_ip == "127.0.0.1")
     and ($sfu.healthcheck.test[0] == "CMD")
     and ($turn.healthcheck.test[0] == "CMD")
+    and ($turn.user == "0:0")
     and ($sfu.depends_on.turn.condition == "service_healthy")
 ' "$calls_config" >/dev/null || {
   echo "Calls Compose security invariants failed." >&2

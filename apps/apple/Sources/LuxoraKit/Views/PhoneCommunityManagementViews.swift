@@ -12,7 +12,7 @@ struct PhoneCommunityManagementView: View {
     @Bindable var store: CommunityManagementStore
     @Bindable var communityStore: CommunityStore
     let conversation: Conversation
-    var participantResolver: ((UUID) -> Participant?)?
+    var participantResolver: (UUID) -> Participant? = { _ in nil }
 
     @State private var showsInviteCreator = false
     @State private var showsOwnershipPicker = false
@@ -62,21 +62,21 @@ struct PhoneCommunityManagementView: View {
             )
         }
         .confirmationDialog(
-            Text("Отозвать ссылку-приглашение?"),
+            "Отозвать ссылку-приглашение?",
             isPresented: Binding(
                 get: { revokeCandidate != nil },
                 set: { if !$0 { revokeCandidate = nil } }
             ),
-            titleVisibility: .visible,
-            presenting: revokeCandidate
-        ) { link in
+            titleVisibility: .visible
+        ) {
             Button("Отозвать", role: .destructive) {
-                let linkID = link.id
+                if let linkID = revokeCandidate?.id {
+                    Task { _ = await store.revokeInviteLink(chatID: chatID, linkID: linkID) }
+                }
                 revokeCandidate = nil
-                Task { _ = await store.revokeInviteLink(chatID: chatID, linkID: linkID) }
             }
             Button("Отмена", role: .cancel) { revokeCandidate = nil }
-        } message: { _ in
+        } message: {
             Text("Новые вступления по этой ссылке станут невозможны. Уже вступившие участники останутся.")
         }
         .confirmationDialog(
@@ -157,7 +157,7 @@ struct PhoneCommunityManagementView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(LuxoraTheme.electricBlue)
                 Text(creation.token)
-                    .font(.system(.body, design: .monospaced))
+                    .monospaced()
                     .textSelection(.enabled)
                     .accessibilityIdentifier("community-invite-token")
                 Text("Скопируйте или отправьте его сейчас. Восстановить токен после закрытия невозможно.")
@@ -606,7 +606,7 @@ struct PhoneCommunityManagementView: View {
         if let member = communityStore.members(chatID).first(where: { $0.id == userID }) {
             return member.participant.displayName
         }
-        if let participant = participantResolver?(userID) {
+        if let participant = participantResolver(userID) {
             return participant.displayName
         }
         return "Пользователь \(userID.uuidString.prefix(8))"
@@ -616,7 +616,7 @@ struct PhoneCommunityManagementView: View {
         if let member = communityStore.members(chatID).first(where: { $0.id == userID }) {
             return member.participant
         }
-        return participantResolver?(userID)
+        return participantResolver(userID)
     }
 
     private var roleTitle: String {
@@ -1266,7 +1266,9 @@ struct PhoneCommunityJoinByLinkSheet: View {
     }
 
     private func openJoinedChatIfNeeded(_ outcome: CommunityInviteJoinOutcome?) async {
-        guard case let .joined(membership, _) = outcome else { return }
+        guard let outcome,
+              case let .joined(membership, _) = outcome
+        else { return }
         await refreshCommunities()
         openConversation(membership.chatID)
         dismiss()
