@@ -130,44 +130,45 @@ export async function waitForHttpReady(baseUrl, paths, options = {}) {
 
 const spawnedProcesses = [];
 
-function npmInvocation(prefix, script) {
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  return { command: npm, args: ["--prefix", prefix, "run", script] };
-}
-
-/** Run an npm script synchronously (used only when a dist folder is missing). */
-function runNpmScript(prefixRelPath, script) {
+/**
+ * Run a workspace build synchronously (fallback used only when a dist folder is
+ * missing). The workspace path is passed as the child process `cwd` and the
+ * command is a fixed literal, so no path or user value is ever interpolated
+ * into a shell command string; no manual quoting/escaping is involved.
+ */
+function runWorkspaceBuild(prefixRelPath) {
   const prefix = join(REPO_ROOT, prefixRelPath);
-  const { command } = npmInvocation(prefix, script);
-  // Paths on this repo can contain spaces (OneDrive/Windows), so pass one
-  // explicitly quoted command line to the shell instead of argv items.
-  const quote = (value) => `"${value.replace(/"/gu, '\\"')}"`;
-  const commandLine = `${quote(command)} --prefix ${quote(prefix)} run ${script}`;
-  log(`building missing output: npm --prefix ${prefixRelPath} run ${script}`);
-  const result = spawnSync(commandLine, {
-    cwd: REPO_ROOT,
+  log(`building missing output: ${prefixRelPath}`);
+  const isWindows = process.platform === "win32";
+  const command = isWindows ? "cmd.exe" : "npm";
+  // Windows can only start npm.cmd through cmd.exe; POSIX runs the npm
+  // launcher directly. Both forms take a constant argument list.
+  const args = isWindows ? ["/d", "/s", "/c", "npm run build"] : ["run", "build"];
+  const result = spawnSync(command, args, {
+    cwd: prefix,
     stdio: "inherit",
-    shell: true,
-    timeout: 600_000
+    shell: false,
+    timeout: 600_000,
+    windowsHide: true
   });
   if (result.status !== 0) {
-    throw new Error(`npm --prefix ${prefixRelPath} run ${script} failed with status ${String(result.status)}`);
+    throw new Error(`build of ${prefixRelPath} failed with status ${String(result.status)}`);
   }
 }
 
 export function ensureApiBuild() {
   const serverEntry = join(REPO_ROOT, "services", "api", "dist", "server.js");
   if (existsSync(serverEntry)) return;
-  runNpmScript("packages/protocol", "build");
-  runNpmScript("packages/passkey-domain", "build");
-  runNpmScript("packages/call-control", "build");
-  runNpmScript("services/api", "build");
+  runWorkspaceBuild("packages/protocol");
+  runWorkspaceBuild("packages/passkey-domain");
+  runWorkspaceBuild("packages/call-control");
+  runWorkspaceBuild("services/api");
 }
 
 export function ensureWebBuild() {
   const indexHtml = join(REPO_ROOT, "apps", "web", "dist", "index.html");
   if (existsSync(indexHtml)) return;
-  runNpmScript("apps/web", "build");
+  runWorkspaceBuild("apps/web");
 }
 
 /** Last lines of a captured child log, for failure diagnostics. */

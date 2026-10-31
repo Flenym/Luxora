@@ -435,7 +435,7 @@ final class AccountDataStoreTests: XCTestCase {
         let cancelResult = await store.cancelDeletion()
         XCTAssertTrue(cancelResult)
         XCTAssertFalse(store.isDeletionScheduled)
-        XCTAssertEqual(store.deletion?.state, .none)
+        XCTAssertEqual(store.deletion?.state, AccountDeletionState.none)
         XCTAssertNotNil(store.lastCanceledDeletion)
         let scheduleCalls = await probe.scheduleCallCount
         let cancelCalls = await probe.cancelCallCount

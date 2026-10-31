@@ -24,6 +24,7 @@
  *
  * Never logs tokens or passwords. Set CHROME_PATH to override Chrome detection.
  */
+import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import puppeteer from "puppeteer-core";
@@ -49,8 +50,6 @@ import {
   warn
 } from "./lib/environment.mjs";
 
-const PASSWORD_MIN_LENGTH = 12;
-const REPLY_MENU_PATTERN = /^(reply|ответить)\b/iu;
 const HONEST_CALLS_PATTERN = /(calls? (are )?not connected|not connected|звонк[а-яё]* не подключен)/iu;
 const MAX_CONSOLE_ERRORS_REPORTED = 5;
 
@@ -145,6 +144,16 @@ function makeUsername(prefix, suffix) {
   return `${prefix}${suffix}`.toLowerCase().replace(/[^a-z0-9_]/gu, "").slice(0, 32);
 }
 
+/** CSPRNG-backed token used for account uniqueness and message stamps. */
+function randomToken(bytes = 6) {
+  return randomBytes(bytes).toString("hex");
+}
+
+/** CSPRNG-backed throw-away account password (32 chars; API accepts 12-128). */
+function randomPassword() {
+  return randomBytes(24).toString("base64url");
+}
+
 /**
  * Register a fresh throw-away account. New usernames keep runs independent even
  * against a long-lived local database (attach mode); the bounded 429 loop keeps
@@ -170,7 +179,7 @@ async function registerAccount(apiBase, account, attempts = 4) {
     }
     if (response.status === 409) {
       lastError = "username already taken";
-      account.username = makeUsername("e2e", `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`);
+      account.username = makeUsername("e2e", randomToken(6));
       continue;
     }
     lastError = `HTTP ${response.status} ${truncate(JSON.stringify(response.json ?? {}), 200)}`;
@@ -638,18 +647,18 @@ async function main() {
   assert(capabilities.json?.features?.passwordAuthentication === true, "password authentication is disabled on this API");
   assert(capabilities.json?.features?.messaging === true, "messaging is disabled on this API");
 
-  const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+  const stamp = randomToken(4);
   const accountA = {
     stamp,
     username: makeUsername("e2e", `${stamp}a`),
     displayName: "E2E Alice",
-    password: `e2e-${stamp}-${"x".repeat(PASSWORD_MIN_LENGTH)}`
+    password: randomPassword()
   };
   const accountB = {
     stamp,
     username: makeUsername("e2e", `${stamp}b`),
     displayName: "E2E Bob",
-    password: `e2e-${stamp}-${"y".repeat(PASSWORD_MIN_LENGTH)}`
+    password: randomPassword()
   };
   await registerAccount(apiBase, accountA);
   await registerAccount(apiBase, accountB);
