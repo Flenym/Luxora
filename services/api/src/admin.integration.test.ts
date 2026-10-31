@@ -68,12 +68,14 @@ describe("operator administration surface", () => {
   it("reports operator status without secret material", async () => {
     app = await buildApp({ config: testConfig(), logger: false });
     const alice = await register(app, "admin_alice");
-    const bob = await register(app, "admin_bob");
+    // A second account keeps the operator user count at two; the only chat is
+    // Alice's self Direct (saved messages), which needs no relationship.
+    await register(app, "admin_bob");
     const direct = await app.inject({
       method: "POST",
       url: "/v1/chats",
       headers: { authorization: `Bearer ${alice.accessToken}` },
-      payload: { kind: "direct", userId: bob.id }
+      payload: { kind: "direct", userId: alice.id }
     });
     expect(direct.statusCode, direct.body).toBe(201);
 

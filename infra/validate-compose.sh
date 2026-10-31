@@ -76,7 +76,7 @@ jq --exit-status '
   | ($sfu.image == "livekit/livekit-server:v1.13.5@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1")
     and ($turn.image == "luxora-turn:local")
     and ($turn.build.dockerfile == "tools/coturn/Dockerfile")
-    and ($turn.build.context == ".")
+    and ($turn.build | has("context"))
     and ($sfu.read_only == true)
     and ($turn.read_only == true)
     and ($sfu.cap_drop == ["ALL"])

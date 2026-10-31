@@ -144,14 +144,9 @@ describe("voice message transcription consent", () => {
 
     const attachmentId = await uploadVoice(alice);
 
-    const chat = await app!.inject({
-      method: "POST",
-      url: "/v1/chats",
-      headers: aliceHeaders,
-      payload: { kind: "direct", userId: bob.id }
-    });
-    expect(chat.statusCode, chat.body).toBe(201);
-    const chatId = chat.json().chat.id as string;
+    // A non-self Direct requires the accepted relationship; acceptance creates
+    // the documented Direct chat.
+    const chatId = await establishAcceptedRelationship(app!, alice, bob);
 
     const sent = await app!.inject({
       method: "POST",
@@ -271,14 +266,9 @@ describe("voice message transcription consent", () => {
     const aliceHeaders = { authorization: `Bearer ${alice.accessToken}` };
     const bobHeaders = { authorization: `Bearer ${bob.accessToken}` };
 
-    const chat = await app!.inject({
-      method: "POST",
-      url: "/v1/chats",
-      headers: aliceHeaders,
-      payload: { kind: "direct", userId: bob.id }
-    });
-    expect(chat.statusCode, chat.body).toBe(201);
-    const chatId = chat.json().chat.id as string;
+    // A non-self Direct requires the accepted relationship; acceptance creates
+    // the documented Direct chat.
+    const chatId = await establishAcceptedRelationship(app!, alice, bob);
 
     const imageAttachmentId = await uploadAttachment(alice, {
       kind: "image",
@@ -341,7 +331,7 @@ describe("voice message transcription consent", () => {
     const carol = await register("playback_carol");
     const aliceHeaders = { authorization: `Bearer ${alice.accessToken}` };
     const bobHeaders = { authorization: `Bearer ${bob.accessToken}` };
-    await establishAcceptedRelationship(app!, alice, bob);
+    const chatId = await establishAcceptedRelationship(app!, alice, bob);
 
     // A voice note larger than one 262_144-byte chunk, uploaded out of order
     // like a client resuming after poor network. Magic bytes stay WAV-valid.
@@ -389,15 +379,6 @@ describe("voice message transcription consent", () => {
     expect(attachment).toMatchObject({ kind: "voice", metadataTrust: "server_verified" });
     expect(attachment.metadata).toMatchObject({ durationMs: 512, waveform: [0, 128, 255] });
     const attachmentId = attachment.id as string;
-
-    const chat = await app!.inject({
-      method: "POST",
-      url: "/v1/chats",
-      headers: aliceHeaders,
-      payload: { kind: "direct", userId: bob.id }
-    });
-    expect(chat.statusCode, chat.body).toBe(201);
-    const chatId = chat.json().chat.id as string;
 
     const sent = await app!.inject({
       method: "POST",

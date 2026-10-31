@@ -9,6 +9,7 @@
  * What it proves (one PASS/FAIL line per step):
  *   ops        health live/ready + canonical capabilities contract + cache policy
  *   auth       register/login/refresh rotation + refresh reuse revocation + sessions
+ *   chats      direct guard: no relationship => 403 + no chat; self Direct allowed
  *   discovery  exact lookup, both privacy directions, message-request bootstrap
  *   chats      direct chat via accepted message request
  *   messages   send, nonce idempotency, nonce conflict, list paging, reply, edit
@@ -802,6 +803,47 @@ await step("auth.sessions", async () => {
     "session list is account scoped"
   );
   return `${sessions.length} sessions before revoke`;
+});
+
+// --- chats -----------------------------------------------------------------
+
+await step("chats.direct-guard", async () => {
+  const a = need(ctx.tokens.a, "user A");
+  const c = need(ctx.tokens.c, "user C");
+  const strangerUserId = need(ctx.users.c, "user C profile").id;
+  const before = await api("GET", "/v1/chats", { token: a.accessToken });
+  expectStatus(before, 200, "chats before denied direct");
+  const beforeIds = before.json.items.map((chat) => chat.id);
+
+  // API.md §6: a non-self Direct requires an accepted, unblocked relationship.
+  // A stranger Direct must be denied before any chat/member row is written.
+  const denied = await api("POST", "/v1/chats", {
+    token: a.accessToken,
+    json: { kind: "direct", userId: strangerUserId }
+  });
+  expectStatus(denied, 403, "stranger direct create");
+  expectErrorCode(denied, "FORBIDDEN", "stranger direct create");
+  eq(
+    denied.json.error.details?.reason,
+    "relationship_unavailable",
+    "stranger direct create denial reason"
+  );
+
+  const after = await api("GET", "/v1/chats", { token: a.accessToken });
+  expectStatus(after, 200, "chats after denied direct");
+  eq(after.json.items.length, beforeIds.length, "denied direct create must not add a chat for A");
+  const strangerChats = await api("GET", "/v1/chats", { token: c.accessToken });
+  expectStatus(strangerChats, 200, "chats for user C after denied direct");
+  eq(strangerChats.json.items.length, 0, "denied direct create must not add a chat for C");
+
+  // Self Direct (saved messages) remains documented behavior.
+  const self = await api("POST", "/v1/chats", {
+    token: a.accessToken,
+    json: { kind: "direct", userId: ctx.users.a.id }
+  });
+  expectStatus(self, 201, "self direct create");
+  eq(self.json.chat.kind, "direct", "self direct chat kind");
+  return "stranger direct denied 403 relationship_unavailable; self direct allowed";
 });
 
 // --- discovery / privacy ---------------------------------------------------

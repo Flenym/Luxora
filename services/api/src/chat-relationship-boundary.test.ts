@@ -124,28 +124,53 @@ describe("chat relationship and block boundary", () => {
     });
   }
 
-  it("creates stranger direct chats by default while the nobody privacy gate blocks them", () => {
+  it("rejects non-self direct chats without an accepted, unblocked relationship", () => {
     const alice = createUser("alice");
     const bob = createUser("bob_user");
 
-    // Default privacy ("everyone") mirrors Telegram: strangers open a direct
-    // chat immediately instead of routing through message requests.
-    const strangerChat = service.createChat(alice.id, { kind: "direct", userId: bob.id });
-    expect(strangerChat.kind).toBe("direct");
+    // API.md §6: a stranger cannot open a Direct. The documented path is a
+    // message request followed by recipient acceptance, which creates the
+    // accepted relationship and the Direct together.
+    expectRelationshipUnavailable(() =>
+      service.createChat(alice.id, { kind: "direct", userId: bob.id })
+    );
+    expect(store.listChats(alice.id, 100).items).toHaveLength(0);
+    expect(store.listChats(bob.id, 100).items).toHaveLength(0);
+    expect(store.adminStatus().chatsByKind.direct).toBe(0);
 
+    // A messageRequests=everyone policy does not imply a relationship either.
+    store.updatePrivacySettings(bob.id, { messageRequests: "everyone" }, NOW);
+    expectRelationshipUnavailable(() =>
+      service.createChat(alice.id, { kind: "direct", userId: bob.id })
+    );
+    expect(store.adminStatus().chatsByKind.direct).toBe(0);
+
+    // Self Direct (saved messages) remains allowed.
     const selfChat = service.createChat(alice.id, { kind: "direct", userId: alice.id });
     expect(selfChat.kind).toBe("direct");
 
-    // The recipient can still restrict stranger chats to accepted contacts.
-    store.updatePrivacySettings(bob.id, { messageRequests: "nobody" }, NOW);
-    const carol = createUser("carol_user");
-    expectRelationshipUnavailable(() =>
-      service.createChat(carol.id, { kind: "direct", userId: bob.id })
-    );
-
-    acceptRelationship(carol, bob);
-    const accepted = service.createChat(carol.id, { kind: "direct", userId: bob.id });
+    acceptRelationship(alice, bob);
+    const accepted = service.createChat(alice.id, { kind: "direct", userId: bob.id });
     expect(accepted.kind).toBe("direct");
+
+    // Recreating the accepted Direct returns the existing chat.
+    const recreated = service.createChat(alice.id, { kind: "direct", userId: bob.id });
+    expect(recreated.id).toBe(accepted.id);
+  });
+
+  it("rejects non-self direct creation after an either-direction block", () => {
+    const alice = createUser("alice");
+    const bob = createUser("bob_user");
+    acceptRelationship(alice, bob);
+    block(bob, alice);
+
+    expectRelationshipUnavailable(() =>
+      service.createChat(alice.id, { kind: "direct", userId: bob.id })
+    );
+    expectRelationshipUnavailable(() =>
+      service.createChat(bob.id, { kind: "direct", userId: alice.id })
+    );
+    expect(store.adminStatus().chatsByKind.direct).toBe(0);
   });
 
   it("cuts off active direct-chat mutations after either-direction block but permits own deletion", () => {

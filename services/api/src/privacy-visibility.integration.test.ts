@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LuxoraApp } from "./app.js";
 import { buildApp } from "./app.js";
-import { testConfig } from "./test-helpers.js";
+import { establishAcceptedRelationship, testConfig } from "./test-helpers.js";
 
 const DATA_KEY = Buffer.alloc(32, 67).toString("base64url");
 
@@ -104,15 +104,9 @@ describe("privacy visibility policies", () => {
     expect(lookup.json().profile.avatarUrl).toBeNull();
     expect(lookup.json().profile.lastSeenAt ?? null).toBeNull();
 
-    // Direct delivery still works: strangers are allowed by default.
-    const chat = await app.inject({
-      method: "POST",
-      url: "/v1/chats",
-      headers: auth(bob),
-      payload: { kind: "direct", userId: alice.id }
-    });
-    expect(chat.statusCode, chat.body).toBe(201);
-    const chatId = chat.json().chat.id as string;
+    // Delivery needs the documented accepted relationship; acceptance creates
+    // the Direct chat. The privacy projections above stay stranger-scoped.
+    const chatId = await establishAcceptedRelationship(app, alice, bob);
 
     const sent = await app.inject({
       method: "POST",
@@ -133,7 +127,7 @@ describe("privacy visibility policies", () => {
     expect(forwarded.statusCode, forwarded.body).toBe(201);
     expect(forwarded.json().message.forwardedFrom).toBeNull();
 
-    // A voice note to a contacts-only recipient is refused for strangers.
+    // A voice note to a recipient who refuses voice messages is denied.
     const wavHeader = Buffer.alloc(44);
     wavHeader.write("RIFF", 0);
     wavHeader.writeUInt32LE(4_096 + 36, 4);
@@ -185,6 +179,16 @@ describe("privacy visibility policies", () => {
     });
     expect(voiceCompleted.statusCode, voiceCompleted.body).toBe(200);
     const voiceAttachmentId = voiceCompleted.json().upload.attachment.id as string;
+
+    // A Direct peer is by definition an accepted contact, so a contacts-only
+    // voice policy cannot deny inside a Direct; "nobody" exercises the same
+    // per-sender voice gate at the chat boundary.
+    await app.inject({
+      method: "PATCH",
+      url: "/v1/privacy",
+      headers: auth(alice),
+      payload: { voiceMessages: "nobody" }
+    });
 
     const voiceDenied = await app.inject({
       method: "POST",
