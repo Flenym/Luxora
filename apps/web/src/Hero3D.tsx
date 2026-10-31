@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import PhoneVisual from "./components/PhoneVisual";
 import { useLocale, type Locale } from "./i18n";
 
 const SCREEN_TEXT: Record<Locale, { bubbles: Array<{ text: string; mine: boolean }>; input: string; badge: string }> = {
@@ -95,6 +96,10 @@ function drawScreen(locale: Locale): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
+  // The screen texture is drawn once and never mipmapped; skipping mipmaps
+  // avoids a SwiftShader texStorage warning in headless capture.
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
   return texture;
 }
 
@@ -117,6 +122,7 @@ function phoneShape(w: number, h: number, r: number): THREE.Shape {
 export default function Hero3D() {
   const mountRef = useRef<HTMLDivElement>(null);
   const { locale } = useLocale();
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -125,12 +131,15 @@ export default function Hero3D() {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
-    camera.position.set(0, 0, 9);
+    // Framed so the whole phone and the orbit ring stay inside the canvas
+    // instead of being clipped by the hero edges (the ring may bleed slightly).
+    camera.position.set(0, 0, 11.5);
 
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     } catch {
+      setFailed(true);
       return;
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -172,7 +181,9 @@ export default function Hero3D() {
       new THREE.PlaneGeometry(W - 0.28, H - 0.28),
       new THREE.MeshStandardMaterial({ map: screenTex, roughness: 0.4, metalness: 0 }),
     );
-    screen.position.z = 0.13;
+    // The extruded body's front bevel ends at z ≈ 0.23; the screen must sit in
+    // front of it or the phone renders as a blank slab.
+    screen.position.z = 0.26;
     phone.add(screen);
     scene.add(phone);
 
@@ -254,6 +265,8 @@ export default function Hero3D() {
       renderer.domElement.remove();
     };
   }, [locale]);
+
+  if (failed) return <PhoneVisual />;
 
   return <div className="hero-3d" ref={mountRef} aria-hidden="true" />;
 }

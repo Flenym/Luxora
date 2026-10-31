@@ -51,6 +51,16 @@ function renderBlock(block: Block, i: number) {
       return <CodeBlock key={i} code={block.code} lang={block.lang} />;
     case "note":
       return <div key={i} className="doc-note">{block.text}</div>;
+    case "link":
+      return (
+        <p key={i} className="doc-link">
+          {block.href ? (
+            <a href={block.href} target="_blank" rel="noopener noreferrer">{block.text} ↗</a>
+          ) : (
+            <Link to={block.to ?? "/docs"}>{block.text} →</Link>
+          )}
+        </p>
+      );
   }
 }
 

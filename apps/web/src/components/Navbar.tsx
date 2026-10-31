@@ -1,15 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { Globe, Menu, X } from "lucide-react";
-import { ButtonLink, ComingSoonDialog } from "./ui";
+import { ButtonLink } from "./ui";
 import { useCopy, useLocale } from "../i18n";
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
-  const [openApp, setOpenApp] = useState(false);
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
   const { locale, setLocale } = useLocale();
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const wasOpenRef = useRef(false);
+
   const c = useCopy({
     en: {
       home: "Luxora home",
@@ -22,13 +25,16 @@ export default function Navbar() {
         { to: "/docs", label: "Docs" },
         { to: "/faq", label: "FAQ" },
       ],
-      openApp: "Open Luxora",
+      openApp: "Open messenger",
+      openAppMobile: "Open messenger",
       download: "Download",
       about: "About",
       contact: "Contact",
       openMenu: "Open menu",
       closeMenu: "Close menu",
       language: "Language",
+      switchToEn: "Switch to English",
+      switchToRu: "Switch to Russian",
     },
     ru: {
       home: "Luxora — на главную",
@@ -41,13 +47,16 @@ export default function Navbar() {
         { to: "/docs", label: "Документация" },
         { to: "/faq", label: "FAQ" },
       ],
-      openApp: "Открыть Luxora",
+      openApp: "Открыть мессенджер",
+      openAppMobile: "Открыть мессенджер",
       download: "Скачать",
       about: "О проекте",
       contact: "Контакты",
       openMenu: "Открыть меню",
       closeMenu: "Закрыть меню",
       language: "Язык",
+      switchToEn: "Переключить на английский",
+      switchToRu: "Переключить на русский",
     },
   });
 
@@ -62,31 +71,61 @@ export default function Navbar() {
     setOpen(false);
   }, [pathname]);
 
+  // While the mobile menu is open: focus the first item, lock page scroll and
+  // close on Escape. Focus returns to the toggle when the menu closes.
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    if (!open) {
+      if (wasOpenRef.current) {
+        wasOpenRef.current = false;
+        toggleRef.current?.focus();
+      }
+      return;
+    }
+    wasOpenRef.current = true;
+    menuRef.current?.querySelector<HTMLElement>("a, button")?.focus();
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
     document.addEventListener("keydown", onKey);
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
     };
   }, [open]);
+
+  const isHashActive = (to: string) => {
+    const [path, hashPart] = to.split("#");
+    return pathname === (path || "/") && hash === `#${hashPart}`;
+  };
 
   return (
     <header className={`navbar ${scrolled ? "scrolled" : ""}`}>
       <div className="container navbar-inner">
         <Link to="/" className="brand" aria-label={c.home}>
-          <img src="/logo.png" alt="" width={30} height={30} />
+          <img src="/logo-64.png" alt="" width={30} height={30} />
           <span>Luxora</span>
         </Link>
 
         <nav className="nav-desktop" aria-label={c.main}>
-          {c.links.map((l) => (
-            <NavLink key={l.to} to={l.to} className="nav-link">
-              {l.label}
-            </NavLink>
-          ))}
+          {c.links.map((link) =>
+            link.to.includes("#") ? (
+              <Link
+                key={link.to}
+                to={link.to}
+                className={`nav-link ${isHashActive(link.to) ? "active" : ""}`}
+                aria-current={isHashActive(link.to) ? "page" : undefined}
+              >
+                {link.label}
+              </Link>
+            ) : (
+              <NavLink key={link.to} to={link.to} end={link.to === "/security" || link.to === "/download" || link.to === "/faq"} className="nav-link">
+                {link.label}
+              </NavLink>
+            ),
+          )}
         </nav>
 
         <div className="nav-actions">
@@ -95,6 +134,8 @@ export default function Navbar() {
             <button
               className={`lang-btn ${locale === "en" ? "active" : ""}`}
               aria-pressed={locale === "en"}
+              aria-label={c.switchToEn}
+              lang="en"
               onClick={() => setLocale("en")}
             >
               EN
@@ -103,41 +144,40 @@ export default function Navbar() {
             <button
               className={`lang-btn ${locale === "ru" ? "active" : ""}`}
               aria-pressed={locale === "ru"}
+              aria-label={c.switchToRu}
+              lang="ru"
               onClick={() => setLocale("ru")}
             >
               RU
             </button>
           </div>
-          <button className="btn btn-ghost btn-sm nav-open" onClick={() => setOpenApp(true)}>
-            {c.openApp}
-          </button>
-          <ButtonLink to="/download" size="sm">{c.download}</ButtonLink>
+          <ButtonLink to="/app" size="sm">{c.openApp}</ButtonLink>
+          <ButtonLink to="/download" variant="ghost" size="sm">{c.download}</ButtonLink>
           <button
+            ref={toggleRef}
             className="menu-toggle"
             aria-label={open ? c.closeMenu : c.openMenu}
             aria-expanded={open}
             aria-controls="mobile-menu"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => setOpen((value) => !value)}
           >
             {open ? <X size={22} aria-hidden="true" /> : <Menu size={22} aria-hidden="true" />}
           </button>
         </div>
       </div>
 
-      <div id="mobile-menu" className={`mobile-menu ${open ? "open" : ""}`} hidden={!open}>
+      <div id="mobile-menu" ref={menuRef} className={`mobile-menu ${open ? "open" : ""}`} hidden={!open}>
         <nav aria-label={c.mobile}>
-          {c.links.map((l) => (
-            <NavLink key={l.to} to={l.to} className="mobile-link">
-              {l.label}
+          <NavLink to="/app" className="mobile-link mobile-link-cta">{c.openAppMobile}</NavLink>
+          {c.links.map((link) => (
+            <NavLink key={link.to} to={link.to} className="mobile-link">
+              {link.label}
             </NavLink>
           ))}
-          <NavLink to="/download" className="mobile-link mobile-link-cta">{c.download}</NavLink>
           <NavLink to="/about" className="mobile-link">{c.about}</NavLink>
           <NavLink to="/contact" className="mobile-link">{c.contact}</NavLink>
         </nav>
       </div>
-
-      <ComingSoonDialog platform="Web" open={openApp} onClose={() => setOpenApp(false)} />
     </header>
   );
 }

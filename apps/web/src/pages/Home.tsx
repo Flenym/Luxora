@@ -1,6 +1,6 @@
-import { ArrowRight, BookOpen, Check, CheckCheck, Lock, Phone, Shield, Sparkles, Users, Video, Mic, Pin, Layers, Bell } from "lucide-react";
+import { ArrowRight, BookOpen, Check, CheckCheck, Lock, Phone, Search, Shield, Sparkles, Users, Video, Mic, Pin, Layers, Bell } from "lucide-react";
 import { Link } from "react-router-dom";
-import Hero3D from "../Hero3D";
+import HeroStage from "../components/HeroStage";
 import { ButtonLink, Container, Eyebrow, Reveal, Section, Tag, useMeta } from "../components/ui";
 import { useCopy } from "../i18n";
 
@@ -10,13 +10,15 @@ export default function Home() {
   const c = useCopy({
     en: {
       metaTitle: "Luxora — A better way to communicate",
-      metaDesc: "Luxora is a modern messenger designed for simple, fast and beautiful communication. Currently in development.",
+      metaDesc: "Luxora is a modern messenger designed for simple, fast and beautiful communication. Beta-0.1, in active development: the web messenger preview works today, native apps are not released yet.",
       badge: "Beta-0.1 · In development",
       titleA: "A better way to",
       titleB: "communicate.",
       lead: "A modern messenger designed for simple, fast and beautiful communication. Built with privacy and clarity in mind.",
-      download: "Download Luxora",
-      explore: "Explore Luxora",
+      openApp: "Open messenger",
+      download: "Download",
+      heroNote: "The web messenger preview works today. Native apps are not released yet.",
+      platformsLabel: "Planned platforms:",
       platforms: "Windows · macOS · Linux · iOS · Android · Web",
       msgEyebrow: "Messaging",
       msgTitle: "Conversations, made simple.",
@@ -24,9 +26,11 @@ export default function Home() {
       msgSub: "Private and group conversations",
       msgText: "Talk one-on-one or with a group. Replies, forwards, edits and pinned messages are planned for the first release.",
       planned: "Planned",
+      inDevelopment: "In development",
       replies: "Replies and forwards",
       edits: "Edit history",
       pins: "Pinned messages",
+      mockCaption: "Interface preview — a local demo, not a live production build.",
       allEyebrow: "Everything",
       allTitle: "Your world, in one place.",
       folders: "Folders and drafts",
@@ -37,6 +41,8 @@ export default function Home() {
       reactionsText: "React to messages and keep the conversation moving.",
       calls: "Voice & video",
       callsText: "Voice and video calls. Released only after a security review.",
+      search: "Search",
+      searchText: "Find conversations and messages quickly. Search is in development.",
       comingSoon: "Coming Soon",
       media: "Media and files",
       mediaText: "Share photos, videos and files. Resumable uploads are in development.",
@@ -56,9 +62,10 @@ export default function Home() {
       platTitle: "Built for every device.",
       platLead: "Planned platforms. None of them are released yet.",
       ctaTitle: "Luxora is on its way.",
-      ctaLead: "Read the docs, follow the updates, or get in touch.",
+      ctaLead: "Open the web messenger preview, read the docs, or follow the updates.",
       docs: "Documentation",
       updates: "Updates",
+      messenger: "Open messenger",
       chatWelcome: "Welcome to Luxora.",
       chatOut: "Clean, fast and calm. Exactly what I wanted.",
       chatIn: "Statuses only show what the protocol confirms.",
@@ -69,13 +76,15 @@ export default function Home() {
     },
     ru: {
       metaTitle: "Luxora — Лучший способ общаться",
-      metaDesc: "Luxora — современный мессенджер для простого, быстрого и красивого общения. Сейчас в разработке.",
+      metaDesc: "Luxora — современный мессенджер для простого, быстрого и красивого общения. Beta-0.1, в активной разработке: веб-мессенджер уже доступен в превью, нативные приложения пока не выпущены.",
       badge: "Beta-0.1 · В разработке",
       titleA: "Лучший способ",
       titleB: "общаться.",
       lead: "Современный мессенджер для простого, быстрого и красивого общения. Создан с вниманием к приватности и ясности.",
-      download: "Скачать Luxora",
-      explore: "Узнать больше",
+      openApp: "Открыть мессенджер",
+      download: "Скачать",
+      heroNote: "Веб-мессенджер уже доступен в превью. Нативные приложения пока не выпущены.",
+      platformsLabel: "Запланированы платформы:",
       platforms: "Windows · macOS · Linux · iOS · Android · Web",
       msgEyebrow: "Переписки",
       msgTitle: "Общение без лишнего.",
@@ -83,9 +92,11 @@ export default function Home() {
       msgSub: "Личные чаты и группы",
       msgText: "Общайтесь один на один или в группе. Ответы, пересылка, правки и закреплённые сообщения запланированы для первого релиза.",
       planned: "Запланировано",
+      inDevelopment: "В разработке",
       replies: "Ответы и пересылка",
       edits: "История правок",
       pins: "Закреплённые сообщения",
+      mockCaption: "Превью интерфейса — локальная демонстрация, а не рабочий продакшен-билд.",
       allEyebrow: "Всё",
       allTitle: "Ваш мир в одном месте.",
       folders: "Папки и черновики",
@@ -96,6 +107,8 @@ export default function Home() {
       reactionsText: "Реагируйте на сообщения и держите разговор живым.",
       calls: "Голос и видео",
       callsText: "Голосовые и видеозвонки. Выйдут только после проверки безопасности.",
+      search: "Поиск",
+      searchText: "Быстро находите чаты и сообщения. Поиск в разработке.",
       comingSoon: "Скоро",
       media: "Медиа и файлы",
       mediaText: "Отправляйте фото, видео и файлы. Загрузка с возобновлением в разработке.",
@@ -115,9 +128,10 @@ export default function Home() {
       platTitle: "Для любого устройства.",
       platLead: "Запланированные платформы. Ни одна пока не выпущена.",
       ctaTitle: "Luxora уже в пути.",
-      ctaLead: "Читайте документацию, следите за обновлениями или свяжитесь с нами.",
+      ctaLead: "Откройте веб-мессенджер в превью, читайте документацию или следите за обновлениями.",
       docs: "Документация",
       updates: "Обновления",
+      messenger: "Открыть мессенджер",
       chatWelcome: "Добро пожаловать в Luxora.",
       chatOut: "Чисто, быстро и спокойно. Именно то, что нужно.",
       chatIn: "Статусы показывают только то, что подтвердил протокол.",
@@ -141,15 +155,18 @@ export default function Home() {
             </h1>
             <p className="lead">{c.lead}</p>
             <div className="cta-row">
-              <ButtonLink to="/download" icon={<ArrowRight size={18} aria-hidden="true" />}>
-                {c.download}
+              <ButtonLink to="/app" icon={<ArrowRight size={18} aria-hidden="true" />}>
+                {c.openApp}
               </ButtonLink>
-              <ButtonLink to="/about" variant="ghost">{c.explore}</ButtonLink>
+              <ButtonLink to="/download" variant="ghost">{c.download}</ButtonLink>
             </div>
-            <p className="platform-line">{c.platforms}</p>
+            <p className="hero-note">{c.heroNote}</p>
+            <p className="platform-line">
+              <span className="platform-line-label">{c.platformsLabel}</span> {c.platforms}
+            </p>
           </Reveal>
           <Reveal delay={150} className="hero-visual">
-            <Hero3D />
+            <HeroStage />
           </Reveal>
         </Container>
       </section>
@@ -173,6 +190,7 @@ export default function Home() {
             </Reveal>
             <Reveal delay={120} className="mock-card">
               <ChatMock c={c} />
+              <p className="mock-caption">{c.mockCaption}</p>
             </Reveal>
           </div>
         </Container>
@@ -185,35 +203,41 @@ export default function Home() {
             <h2 className="display">{c.allTitle}</h2>
           </Reveal>
           <div className="bento">
-            <Reveal className="bento-card span-2">
+            <Reveal className="bento-card">
               <Layers size={22} aria-hidden="true" className="accent-icon" />
               <h3>{c.folders}</h3>
               <p>{c.foldersText}</p>
               <Tag>{c.planned}</Tag>
             </Reveal>
-            <Reveal delay={80} className="bento-card">
+            <Reveal delay={60} className="bento-card">
               <Users size={22} aria-hidden="true" className="accent-icon" />
               <h3>{c.groups}</h3>
               <p>{c.groupsText}</p>
               <Tag>{c.planned}</Tag>
             </Reveal>
-            <Reveal delay={160} className="bento-card">
+            <Reveal delay={120} className="bento-card">
               <Pin size={22} aria-hidden="true" className="accent-icon" />
               <h3>{c.reactions}</h3>
               <p>{c.reactionsText}</p>
               <Tag>{c.planned}</Tag>
             </Reveal>
-            <Reveal delay={80} className="bento-card">
+            <Reveal delay={60} className="bento-card">
               <Phone size={22} aria-hidden="true" className="accent-icon" />
               <h3>{c.calls}</h3>
               <p>{c.callsText}</p>
               <Tag tone="soon">{c.comingSoon}</Tag>
             </Reveal>
-            <Reveal delay={160} className="bento-card span-2">
+            <Reveal delay={120} className="bento-card">
               <Video size={22} aria-hidden="true" className="accent-icon" />
               <h3>{c.media}</h3>
               <p>{c.mediaText}</p>
               <Tag>{c.planned}</Tag>
+            </Reveal>
+            <Reveal delay={180} className="bento-card">
+              <Search size={22} aria-hidden="true" className="accent-icon" />
+              <h3>{c.search}</h3>
+              <p>{c.searchText}</p>
+              <Tag>{c.inDevelopment}</Tag>
             </Reveal>
           </div>
         </Container>
@@ -267,13 +291,13 @@ export default function Home() {
             <h2 className="display">{c.platTitle}</h2>
             <p className="lead">{c.platLead}</p>
           </Reveal>
+          {/* Plain links: platform availability must never depend on an
+              IntersectionObserver callback to become visible. */}
           <div className="platform-chips">
-            {platforms.map((p, i) => (
-              <Reveal key={p} delay={i * 60}>
-                <Link to="/download" className="chip">
-                  {p} <Tag tone="soon">{c.comingSoon}</Tag>
-                </Link>
-              </Reveal>
+            {platforms.map((platform) => (
+              <Link key={platform} to="/download" className="chip">
+                {platform} <Tag tone="soon">{c.comingSoon}</Tag>
+              </Link>
             ))}
           </div>
         </Container>
@@ -286,7 +310,8 @@ export default function Home() {
             <h2 className="display">{c.ctaTitle}</h2>
             <p className="lead">{c.ctaLead}</p>
             <div className="cta-row center">
-              <ButtonLink to="/docs" icon={<BookOpen size={18} aria-hidden="true" />}>{c.docs}</ButtonLink>
+              <ButtonLink to="/app" icon={<ArrowRight size={18} aria-hidden="true" />}>{c.messenger}</ButtonLink>
+              <ButtonLink to="/docs" variant="ghost" icon={<BookOpen size={18} aria-hidden="true" />}>{c.docs}</ButtonLink>
               <ButtonLink to="/blog" variant="ghost">{c.updates}</ButtonLink>
             </div>
           </Reveal>

@@ -1,101 +1,139 @@
-import { useState, type FormEvent } from "react";
-import { Check } from "lucide-react";
-import { Container, PageHero, Section, useMeta } from "../components/ui";
+import { BookOpen, Code, MessageSquare, ShieldAlert } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Container, ExternalLink, GITHUB_ISSUES_URL, GITHUB_REPO_URL, PageHero, Reveal, Section, Tag, useMeta } from "../components/ui";
 import { useCopy } from "../i18n";
 
-type Copy = ReturnType<typeof useContactCopy>;
-
-function useContactCopy() {
-  return useCopy({
+export default function Contact() {
+  const c = useCopy({
     en: {
-      meta: ["Contact — Luxora", "Get in touch with the Luxora team."],
+      meta: [
+        "Contact — Luxora",
+        "How to reach the Luxora project today: GitHub issues for bugs and feedback. There is no email inbox or phone number published yet.",
+      ],
       eyebrow: "Contact",
       title: "Say hello.",
-      lead: "Questions, feedback or partnership ideas. Messages are not sent anywhere yet.",
-      name: "Name",
-      email: "Email",
-      message: "Message",
-      send: "Send message",
-      thanksTitle: "Thanks for reaching out.",
-      thanksText: "We have received your message.",
-      errName: "Please enter your name.",
-      errEmail: "Please enter a valid email.",
-      errMessage: "Please write a message.",
+      lead: "Luxora is a small open project without a support team yet. The honest way to reach it today is GitHub.",
+      noFormTitle: "No contact form, no fake inbox",
+      noFormText:
+        "There is no email address, phone number or support desk for Luxora yet. A message form would have nowhere to go, so this page does not pretend otherwise. The channels below are real.",
+      channels: [
+        {
+          title: "Bugs, questions and feedback",
+          text: "Open an issue in the public repository. Feature requests and documentation corrections are welcome there too.",
+          link: GITHUB_ISSUES_URL,
+          label: "Open a GitHub issue",
+        },
+        {
+          title: "Security reports",
+          text: "Private reporting is not configured yet. Open an issue without exploit details and ask for a private channel; do not publish reproduction steps.",
+          link: GITHUB_ISSUES_URL,
+          label: "See how to report",
+        },
+        {
+          title: "Source and roadmap",
+          text: "The repository contains the code, ROADMAP.md and SECURITY.md — the canonical answer to most questions about Luxora.",
+          link: GITHUB_REPO_URL,
+          label: "Open the repository",
+        },
+      ],
+      docsTitle: "Before you write",
+      docsText: "Many answers already exist in the documentation, the FAQ and the project status page.",
+      docs: "Documentation",
+      faq: "FAQ",
+      status: "Project status",
+      ownerNote: "Project owner & developer: Flenym.",
     },
     ru: {
-      meta: ["Контакты — Luxora", "Свяжитесь с командой Luxora."],
+      meta: [
+        "Контакты — Luxora",
+        "Как связаться с проектом Luxora сегодня: issues на GitHub для ошибок и отзывов. Почтовый адрес и телефон пока не публикуются.",
+      ],
       eyebrow: "Контакты",
       title: "Напишите нам.",
-      lead: "Вопросы, отзывы или идеи для партнёрства. Сообщения пока никуда не отправляются.",
-      name: "Имя",
-      email: "Email",
-      message: "Сообщение",
-      send: "Отправить",
-      thanksTitle: "Спасибо, что написали.",
-      thanksText: "Мы получили ваше сообщение.",
-      errName: "Укажите имя.",
-      errEmail: "Укажите корректный email.",
-      errMessage: "Напишите сообщение.",
+      lead: "Luxora — небольшой открытый проект без службы поддержки. Честный способ связаться сегодня — GitHub.",
+      noFormTitle: "Без формы и без выдуманного почтового ящика",
+      noFormText:
+        "У Luxora пока нет ни email, ни телефона, ни службы поддержки. Форма сообщений вела бы в пустоту, поэтому эта страница не притворяется, что она работает. Каналы ниже — настоящие.",
+      channels: [
+        {
+          title: "Ошибки, вопросы и отзывы",
+          text: "Откройте issue в публичном репозитории. Запросы функций и исправления документации тоже принимаются там.",
+          link: GITHUB_ISSUES_URL,
+          label: "Открыть issue на GitHub",
+        },
+        {
+          title: "Сообщения о безопасности",
+          text: "Приватный канал пока не настроен. Откройте issue без деталей эксплуатации и попросите приватный канал; не публикуйте шаги воспроизведения.",
+          link: GITHUB_ISSUES_URL,
+          label: "Как сообщить",
+        },
+        {
+          title: "Исходники и дорожная карта",
+          text: "В репозитории есть код, ROADMAP.md и SECURITY.md — канонический ответ на большинство вопросов о Luxora.",
+          link: GITHUB_REPO_URL,
+          label: "Открыть репозиторий",
+        },
+      ],
+      docsTitle: "Перед тем как писать",
+      docsText: "Многие ответы уже есть в документации, FAQ и на странице статуса проекта.",
+      docs: "Документация",
+      faq: "FAQ",
+      status: "Статус проекта",
+      ownerNote: "Владелец и разработчик проекта: Flenym.",
     },
   });
-}
-
-export default function Contact() {
-  const c: Copy = useContactCopy();
   useMeta(c.meta[0], c.meta[1]);
-  const [sent, setSent] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget);
-    const next: Record<string, string> = {};
-    if (!String(data.get("name") ?? "").trim()) next.name = c.errName;
-    const email = String(data.get("email") ?? "").trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) next.email = c.errEmail;
-    if (!String(data.get("message") ?? "").trim()) next.message = c.errMessage;
-    setErrors(next);
-    if (Object.keys(next).length === 0) setSent(true);
-  };
+  const icons = [MessageSquare, ShieldAlert, Code];
 
   return (
     <>
       <PageHero eyebrow={c.eyebrow} title={c.title} lead={c.lead} />
       <Section>
         <Container className="narrow-text">
-          {sent ? (
-            <div className="thanks" role="status">
-              <span className="icon-box"><Check size={22} aria-hidden="true" /></span>
-              <h2>{c.thanksTitle}</h2>
-              <p>{c.thanksText}</p>
+          <Reveal>
+            <div className="notice-card">
+              <Tag tone="soon">Beta-0.1</Tag>
+              <h2 className="section-gap">{c.noFormTitle}</h2>
+              <p>{c.noFormText}</p>
             </div>
-          ) : (
-            <form className="form" onSubmit={onSubmit} noValidate>
-              <Field id="name" label={c.name} error={errors.name} />
-              <Field id="email" label={c.email} type="email" error={errors.email} />
-              <Field id="message" label={c.message} multiline error={errors.message} />
-              <button type="submit" className="btn btn-primary btn-md">{c.send}</button>
-            </form>
-          )}
+          </Reveal>
+          <div className="contact-channels">
+            {c.channels.map((channel, index) => {
+              const Icon = icons[index];
+              return (
+                <Reveal key={channel.title} delay={index * 60}>
+                  <article className="contact-card">
+                    <span className="icon-box"><Icon size={22} aria-hidden="true" /></span>
+                    <h2>{channel.title}</h2>
+                    <p>{channel.text}</p>
+                    <ExternalLink href={channel.link} className="text-link">
+                      {channel.label} ↗
+                    </ExternalLink>
+                  </article>
+                </Reveal>
+              );
+            })}
+          </div>
+        </Container>
+      </Section>
+      <Section alt>
+        <Container className="narrow-text">
+          <Reveal>
+            <h2 className="display">{c.docsTitle}</h2>
+            <p className="lead">{c.docsText}</p>
+            <div className="cta-row">
+              <Link to="/docs" className="btn btn-primary btn-md">
+                <BookOpen size={18} aria-hidden="true" />
+                {c.docs}
+              </Link>
+              <Link to="/faq" className="btn btn-ghost btn-md">{c.faq}</Link>
+              <Link to="/status" className="btn btn-ghost btn-md">{c.status}</Link>
+            </div>
+            <p className="muted section-gap">{c.ownerNote}</p>
+          </Reveal>
         </Container>
       </Section>
     </>
-  );
-}
-
-function Field({ id, label, type = "text", multiline = false, error }: { id: string; label: string; type?: string; multiline?: boolean; error?: string }) {
-  const common = {
-    id,
-    name: id,
-    "aria-invalid": !!error,
-    "aria-describedby": error ? `${id}-error` : undefined,
-    className: "input",
-  };
-  return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
-      {multiline ? <textarea rows={6} {...common} /> : <input type={type} {...common} />}
-      {error && <small id={`${id}-error`} className="field-error">{error}</small>}
-    </div>
   );
 }

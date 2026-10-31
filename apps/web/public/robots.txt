@@ -1,4 +1,8 @@
+# https://luxora.app/robots.txt
+# The messenger at /app is a private preview surface and is not indexed.
+
 User-agent: *
 Allow: /
+Disallow: /app
 
-Sitemap: https://luxora.example/sitemap.xml
+Sitemap: https://luxora.app/sitemap.xml

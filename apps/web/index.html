@@ -3,19 +3,88 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#000000" />
     <meta name="author" content="Flenym" />
     <meta name="application-name" content="Luxora" />
-    <meta name="description" content="Luxora is a modern messenger designed for simple, fast and beautiful communication. Currently in development." />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+    <title>Luxora — A better way to communicate</title>
+    <meta
+      name="description"
+      content="Luxora is a modern messenger designed for simple, fast and beautiful communication. Beta-0.1 is in active development: an early web messenger preview works from source, native apps are not released yet."
+    />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://luxora.app/" />
+
+    <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Luxora" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="ru_RU" />
+    <meta property="og:url" content="https://luxora.app/" />
     <meta property="og:title" content="Luxora — A better way to communicate" />
-    <meta property="og:description" content="Luxora is a modern messenger designed for simple, fast and beautiful communication. Currently in development." />
-    <meta property="og:image" content="/logo.png" />
-    <meta name="twitter:card" content="summary" />
-    <link rel="icon" type="image/png" href="/logo.png" />
-    <link rel="apple-touch-icon" href="/logo.png" />
-    <title>Luxora — A better way to communicate</title>
+    <meta
+      property="og:description"
+      content="A modern messenger designed for simple, fast and beautiful communication. Beta-0.1: Cloud preview mode, not end-to-end encrypted; native apps are not released yet."
+    />
+    <meta property="og:image" content="https://luxora.app/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Luxora — Beta-0.1, in development, Cloud preview" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Luxora — A better way to communicate" />
+    <meta
+      name="twitter:description"
+      content="A modern messenger designed for simple, fast and beautiful communication. Beta-0.1: Cloud preview mode, not end-to-end encrypted; native apps are not released yet."
+    />
+    <meta name="twitter:image" content="https://luxora.app/og.png" />
+    <meta name="twitter:image:alt" content="Luxora — Beta-0.1, in development, Cloud preview" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/logo-32.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/logo-64.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/logo-192.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://luxora.app/#website",
+            "url": "https://luxora.app/",
+            "name": "Luxora",
+            "inLanguage": ["en", "ru"],
+            "publisher": { "@id": "https://luxora.app/#person" }
+          },
+          {
+            "@type": "Person",
+            "@id": "https://luxora.app/#person",
+            "name": "Flenym",
+            "url": "https://github.com/Flenym",
+            "roleName": "Owner & developer"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://luxora.app/#software",
+            "name": "Luxora",
+            "applicationCategory": "CommunicationApplication",
+            "operatingSystem": "Windows, macOS, Linux, iOS, Android, Web",
+            "description": "Luxora is a modern messenger in active development (Beta-0.1). Beta builds run in Cloud preview mode and are not end-to-end encrypted. The web messenger is a developer preview; native apps are not released yet.",
+            "url": "https://luxora.app/",
+            "image": "https://luxora.app/og.png",
+            "softwareVersion": "Beta-0.1",
+            "creativeWorkStatus": "In development",
+            "author": { "@id": "https://luxora.app/#person" },
+            "publisher": { "@id": "https://luxora.app/#person" },
+            "license": "https://github.com/Flenym/Luxora/blob/main/LICENSE"
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
